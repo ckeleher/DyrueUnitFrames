@@ -29,8 +29,46 @@ local Errors = ns.Errors
 -- Steps exist for renames, restructures and value-format changes only.
 --------------------------------------------------------------------------------
 
+local BARS = { "health", "power", "mana" }
+
 local steps = {
-	-- [1] = function(profile) ... return profile end,
+	--- 1 -> 2: the cosmetic defaults changed.
+	--
+	-- Bars went from Blizzard's gradient statusbar to a flat fill, the 1px gap
+	-- between bars went to 0, and the frame backdrop went from on to off. Those
+	-- are Defaults changes, which means they only reach a NEW profile --
+	-- EnsureProfile fills missing keys and never overwrites stored ones. Without
+	-- this step an existing profile keeps the old look on every frame forever.
+	--
+	-- Only values still matching the v1 default are touched. If you deliberately
+	-- picked Blizzard's texture or set a deliberate gap, that survives; the
+	-- trade is that a deliberate choice which happens to equal the old default
+	-- gets moved with everything else, and there is no way to tell those apart
+	-- after the fact.
+	[1] = function(profile)
+		for _, cfg in pairs(profile.units or {}) do
+			for i = 1, #BARS do
+				local bar = cfg[BARS[i]]
+				if bar and bar.texture == "Blizzard" then
+					bar.texture = "Dyrue Flat"
+				end
+			end
+
+			if cfg.power and cfg.power.spacing == 1 then cfg.power.spacing = 0 end
+			if cfg.mana and cfg.mana.spacing == 1 then cfg.mana.spacing = 0 end
+
+			-- Only the untouched black-at-60% backdrop, since that is the one
+			-- that was silently masking the bar background opacity controls.
+			local background = cfg.background
+			if background and background.enabled == true then
+				local c = background.color
+				if c and c.r == 0 and c.g == 0 and c.b == 0 and c.a == 0.6 then
+					background.enabled = false
+				end
+			end
+		end
+		return profile
+	end,
 }
 
 Migrate.steps = steps

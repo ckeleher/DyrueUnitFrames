@@ -465,21 +465,70 @@ local function testMigration()
 
 	-- A missing migration step backs the profile up rather than discarding it.
 	local db = {}
-	local orphan = { schemaVersion = Defaults.SCHEMA_VERSION - 1, marker = "precious" }
-	if orphan.schemaVersion >= 1 then
-		success = Migrate:Run(orphan, db)
-		check("migrate/missing step fails safely", not success)
-		local backedUp = false
-		for _, snapshot in pairs(db.backup or {}) do
-			if snapshot.marker == "precious" then backedUp = true end
-		end
-		check("migrate/old settings are backed up", backedUp)
-		equal("migrate/defaults loaded after failure", orphan.schemaVersion, Defaults.SCHEMA_VERSION)
-	else
-		ok("migrate/missing step (not reachable at schema 1)")
-		ok("migrate/backup (not reachable at schema 1)")
-		ok("migrate/defaults (not reachable at schema 1)")
+	local orphan = { schemaVersion = 0, marker = "precious" }
+	success = Migrate:Run(orphan, db)
+	check("migrate/missing step fails safely", not success)
+	local backedUp = false
+	for _, snapshot in pairs(db.backup or {}) do
+		if snapshot.marker == "precious" then backedUp = true end
 	end
+	check("migrate/old settings are backed up", backedUp)
+	equal("migrate/defaults loaded after failure", orphan.schemaVersion, Defaults.SCHEMA_VERSION)
+
+	-- Step 1 -> 2: the cosmetic defaults changed, and Defaults:EnsureProfile
+	-- never overwrites a stored value, so an existing profile would otherwise
+	-- keep the old look on every frame forever.
+	local v1 = { schemaVersion = 1, units = {} }
+	for _, key in ipairs({ "player", "target", "party1", "pet", "targettarget" }) do
+		v1.units[key] = {
+			width = 200, height = 46,
+			anchor = { to = "UIParent", point = "CENTER", relativePoint = "CENTER", x = 0, y = 0 },
+			background = { enabled = true, color = { r = 0, g = 0, b = 0, a = 0.6 }, inset = 0 },
+			health = { texture = "Blizzard" },
+			power = { texture = "Blizzard", spacing = 1 },
+			mana = { texture = "Blizzard", spacing = 1 },
+		}
+	end
+	-- One frame the user has deliberately customised.
+	v1.units.target.health.texture = "Smooth"
+	v1.units.target.power.spacing = 6
+	v1.units.pet.background.color = { r = 0.2, g = 0, b = 0, a = 0.9 }
+
+	success = Migrate:Run(v1, {})
+	check("migrate/v1 profile migrates", success)
+	equal("migrate/stamped as v2", v1.schemaVersion, 2)
+
+	local stale = {}
+	for _, key in ipairs({ "player", "party1", "targettarget" }) do
+		local cfg = v1.units[key]
+		if cfg.health.texture ~= "Dyrue Flat" then stale[#stale + 1] = key .. ".health.texture" end
+		if cfg.power.texture ~= "Dyrue Flat" then stale[#stale + 1] = key .. ".power.texture" end
+		if cfg.mana.texture ~= "Dyrue Flat" then stale[#stale + 1] = key .. ".mana.texture" end
+		if cfg.power.spacing ~= 0 then stale[#stale + 1] = key .. ".power.spacing" end
+		if cfg.mana.spacing ~= 0 then stale[#stale + 1] = key .. ".mana.spacing" end
+		if cfg.background.enabled ~= false then stale[#stale + 1] = key .. ".background" end
+	end
+	if #stale == 0 then
+		ok("migrate/every unit is carried forward, not just the player")
+	else
+		fail("migrate/every unit is carried forward, not just the player",
+			table.concat(stale, ", "))
+	end
+
+	-- Deliberate choices survive.
+	equal("migrate/custom texture untouched", v1.units.target.health.texture, "Smooth")
+	equal("migrate/custom spacing untouched", v1.units.target.power.spacing, 6)
+	check("migrate/custom backdrop colour keeps the backdrop on",
+		v1.units.pet.background.enabled == true)
+
+	-- Positions are never touched by a cosmetic migration.
+	equal("migrate/layout untouched", v1.units.player.width, 200)
+	equal("migrate/anchor untouched", v1.units.player.anchor.point, "CENTER")
+
+	-- Running it again is a no-op.
+	success = Migrate:Run(v1, {})
+	check("migrate/re-running is a no-op", success)
+	equal("migrate/still v2", v1.schemaVersion, 2)
 end
 
 --------------------------------------------------------------------------------
@@ -1371,15 +1420,33 @@ local function testTextures()
 	equal("texture/power default", cfg.power.texture, "Dyrue Flat")
 	equal("texture/mana default", cfg.mana.texture, "Dyrue Flat")
 
+	-- The cosmetic defaults live in the shared unit template, so they must
+	-- reach EVERY unit, not just the player. A per-unit override quietly
+	-- reintroducing one of them is exactly the regression to guard against.
+	local offenders = {}
 	for _, def in ipairs(ns.Registry:SortedAvailable()) do
 		local unitCfg = ns:UnitConfig(def.key)
-		if unitCfg.health.texture ~= "Dyrue Flat" then
-			fail("texture/every unit defaults to the flat texture",
-				def.key .. " uses " .. tostring(unitCfg.health.texture))
-			return
+		for _, bar in ipairs({ "health", "power", "mana" }) do
+			if unitCfg[bar].texture ~= "Dyrue Flat" then
+				offenders[#offenders + 1] = def.key .. "." .. bar .. "=" .. tostring(unitCfg[bar].texture)
+			end
+		end
+		if unitCfg.power.spacing ~= 0 then
+			offenders[#offenders + 1] = def.key .. ".power.spacing=" .. tostring(unitCfg.power.spacing)
+		end
+		if unitCfg.mana.spacing ~= 0 then
+			offenders[#offenders + 1] = def.key .. ".mana.spacing=" .. tostring(unitCfg.mana.spacing)
+		end
+		if unitCfg.background.enabled ~= false then
+			offenders[#offenders + 1] = def.key .. ".background.enabled=true"
 		end
 	end
-	ok("texture/every unit defaults to the flat texture")
+	if #offenders == 0 then
+		ok("texture/every unit gets the flat texture, no gap and no backdrop")
+	else
+		fail("texture/every unit gets the flat texture, no gap and no backdrop",
+			table.concat(offenders, ", "))
+	end
 
 	-- The texture must resolve to a real path, not nil.
 	local path = ns:Texture("Dyrue Flat")

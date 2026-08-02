@@ -22,7 +22,9 @@ ns.Defaults = Defaults
 
 local type, pairs, ipairs, next = type, pairs, ipairs, next
 
-Defaults.SCHEMA_VERSION = 1
+-- 2: flat bar texture, no gap between bars, frame backdrop off by default.
+-- Core/Migrate.lua step [1] carries existing profiles forward.
+Defaults.SCHEMA_VERSION = 2
 
 --------------------------------------------------------------------------------
 -- Table helpers
