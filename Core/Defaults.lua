@@ -67,7 +67,10 @@ Defaults.Fill = ensure
 -- Shared fragments
 --------------------------------------------------------------------------------
 
-local DEFAULT_BAR_TEXTURE = "Blizzard"
+-- Registered by Core/Core.lua against base-game media, so the shipped default
+-- never depends on another addon being installed. Anything else in
+-- LibSharedMedia remains selectable per bar.
+local DEFAULT_BAR_TEXTURE = "Dyrue Flat"
 local DEFAULT_FONT = "Friz Quadrata TT"
 
 local function color(r, g, b, a)

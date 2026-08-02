@@ -1316,7 +1316,156 @@ local function testSlashCommands()
 end
 
 --------------------------------------------------------------------------------
--- 23. No stray globals
+-- 23. Opacity, scale and strata reach the frame
+--------------------------------------------------------------------------------
+
+local function testFrameAppearance()
+	local player = ns.frames.player
+	local layout = ns.Options.table.args.units.args.player.args.layout.args.size.args
+
+	-- Opacity
+	equal("appearance/opacity control exists", layout.alpha.type, "range")
+	layout.alpha.set(nil, 0.5)
+	equal("appearance/opacity stored", ns:UnitConfig("player").alpha, 0.5)
+	equal("appearance/opacity getter round-trips", layout.alpha.get(nil), 0.5)
+	equal("appearance/opacity reaches the frame", player:GetAlpha(), 0.5)
+
+	layout.alpha.set(nil, 0.25)
+	equal("appearance/opacity updates again", player:GetAlpha(), 0.25)
+
+	-- Every other frame must be unaffected
+	equal("appearance/opacity is per-unit", ns.frames.target:GetAlpha(), 1)
+
+	layout.alpha.set(nil, 1)
+	equal("appearance/opacity restored", player:GetAlpha(), 1)
+
+	-- Scale
+	layout.scale.set(nil, 1.5)
+	equal("appearance/scale stored", ns:UnitConfig("player").scale, 1.5)
+	equal("appearance/scale reaches the frame", player:GetEffectiveScale(), 1.5)
+	layout.scale.set(nil, 1)
+
+	-- Strata
+	layout.strata.set(nil, "HIGH")
+	equal("appearance/strata reaches the frame", player:GetFrameStrata(), "HIGH")
+	layout.strata.set(nil, "MEDIUM")
+
+	-- A change made in combat must still land on the frame afterwards.
+	stub.inCombat = true
+	layout.alpha.set(nil, 0.4)
+	equal("appearance/opacity deferred in combat", player:GetAlpha(), 1)
+	stub.inCombat = false
+	ns.CombatQueue:Flush()
+	equal("appearance/opacity applied on combat exit", player:GetAlpha(), 0.4)
+	layout.alpha.set(nil, 1)
+end
+
+--------------------------------------------------------------------------------
+-- 24. Bar textures
+--------------------------------------------------------------------------------
+
+local function testTextures()
+	local cfg = ns:UnitConfig("player")
+
+	equal("texture/health default", cfg.health.texture, "Dyrue Flat")
+	equal("texture/power default", cfg.power.texture, "Dyrue Flat")
+	equal("texture/mana default", cfg.mana.texture, "Dyrue Flat")
+
+	for _, def in ipairs(ns.Registry:SortedAvailable()) do
+		local unitCfg = ns:UnitConfig(def.key)
+		if unitCfg.health.texture ~= "Dyrue Flat" then
+			fail("texture/every unit defaults to the flat texture",
+				def.key .. " uses " .. tostring(unitCfg.health.texture))
+			return
+		end
+	end
+	ok("texture/every unit defaults to the flat texture")
+
+	-- The texture must resolve to a real path, not nil.
+	local path = ns:Texture("Dyrue Flat")
+	check("texture/flat texture resolves", type(path) == "string" and #path > 0)
+
+	-- The flat texture must come from base-game media, not from another addon.
+	check("texture/flat texture is base-game media",
+		path:find("Interface\\") == 1 and not path:find("AddOns"), path)
+
+	-- An unknown texture name must fall back rather than blanking the bar.
+	local fallback = ns:Texture("No Such Texture At All")
+	check("texture/unknown name falls back", type(fallback) == "string" and #fallback > 0)
+
+	-- And it must actually reach the bar and its background.
+	local health = ns.frames.player.elements.health
+	equal("texture/applied to the health bar", health.bar:GetStatusBarTexture(), path)
+	equal("texture/applied to the bar background", health.bg:GetTexture(), path)
+	equal("texture/applied to the power bar",
+		ns.frames.player.elements.power.bar:GetStatusBarTexture(), path)
+
+	-- Changing it through the options must apply.
+	local option = ns.Options.table.args.units.args.player.args.health.args.texture
+	option.set(nil, "Blizzard")
+	equal("texture/option change applies",
+		health.bar:GetStatusBarTexture(), ns:Texture("Blizzard"))
+	option.set(nil, "Dyrue Flat")
+	equal("texture/option change reverts", health.bar:GetStatusBarTexture(), path)
+end
+
+--------------------------------------------------------------------------------
+-- 25. Portrait placement, including the lazily created 3D model
+--------------------------------------------------------------------------------
+
+local function testPortrait()
+	local player = ns.frames.player
+	local cfg = ns:UnitConfig("player")
+	local portrait = ns.Options.table.args.units.args.player.args.portrait.args
+
+	equal("portrait/defaults to none", cfg.portrait.mode, "none")
+	check("portrait/not built while off", player.elements.portrait == nil)
+
+	-- 2D
+	portrait.mode.set(nil, "2d")
+	local el = player.elements.portrait
+	check("portrait/2D builds", el ~= nil)
+	equal("portrait/2D sized", el.texture:GetWidth(), cfg.portrait.width)
+	equal("portrait/2D opacity applied", el.texture:GetAlpha(), 1)
+
+	portrait.alpha.set(nil, 0.4)
+	equal("portrait/2D opacity slider works", el.texture:GetAlpha(), 0.4)
+	portrait.alpha.set(nil, 1)
+
+	portrait.width.set(nil, 64)
+	equal("portrait/2D width slider works", el.texture:GetWidth(), 64)
+
+	-- 3D. The model is created lazily on first render, which is AFTER Layout
+	-- has run, so it has to be placed at creation or it arrives with no size,
+	-- no anchor and no alpha — and its opacity slider looks dead.
+	portrait.mode.set(nil, "3d")
+	portrait.alpha.set(nil, 0.6)
+	player:FullUpdate()
+
+	el = player.elements.portrait
+	check("portrait/3D model created", el.model ~= nil)
+	equal("portrait/lazily created model is sized", el.model:GetWidth(), 64)
+	equal("portrait/lazily created model is anchored", el.model:GetNumPoints(), 1)
+	equal("portrait/lazily created model has its opacity", el.model:GetAlpha(), 0.6)
+
+	-- And a later slider move still reaches it.
+	portrait.alpha.set(nil, 0.2)
+	equal("portrait/3D opacity slider works after creation", el.model:GetAlpha(), 0.2)
+
+	-- An invisible unit must fall back to 2D rather than showing a dead model.
+	stub.units.player.visible = false
+	player:FullUpdate()
+	check("portrait/out-of-range unit falls back to 2D", el.texture:IsShown())
+	check("portrait/model hidden on fallback", not el.model:IsShown())
+	stub.units.player.visible = true
+
+	portrait.mode.set(nil, "none")
+	portrait.alpha.set(nil, 1)
+	portrait.width.set(nil, 40)
+end
+
+--------------------------------------------------------------------------------
+-- 25. No stray globals
 --
 -- A leaked global in an addon is how two addons quietly break each other.
 --------------------------------------------------------------------------------
@@ -1386,6 +1535,9 @@ local suites = {
 	{ "derived-identity", testDerivedIdentity },
 	{ "tools-and-modes", testToolsAndModes },
 	{ "slash-commands", testSlashCommands },
+	{ "frame-appearance", testFrameAppearance },
+	{ "textures", testTextures },
+	{ "portrait", testPortrait },
 	{ "global-leaks", testNoGlobalLeaks },
 }
 

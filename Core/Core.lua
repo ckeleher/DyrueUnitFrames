@@ -72,7 +72,20 @@ end
 
 --------------------------------------------------------------------------------
 -- Media
+--
+-- The default bar texture is registered here, under our own name, pointing at
+-- base-game media. Flat textures with better names exist ("Clean" from
+-- WeakAuras, ElvUI's "Solid"), but defaulting to one of those would make the
+-- addon's out-of-the-box appearance depend on a completely unrelated addon
+-- being installed and loaded first. ChatFrameBackground is a solid white fill
+-- that has shipped with the game since vanilla.
+--
+-- LibSharedMedia keys by name, so this adds an entry rather than replacing
+-- anyone's. Every other registered texture stays available in the dropdown.
 --------------------------------------------------------------------------------
+
+ns.FLAT_TEXTURE = "Dyrue Flat"
+LSM:Register("statusbar", ns.FLAT_TEXTURE, [[Interface\ChatFrame\ChatFrameBackground]])
 
 function ns:Texture(name)
 	return LSM:Fetch("statusbar", name or "Blizzard", true)

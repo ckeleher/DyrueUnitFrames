@@ -50,6 +50,36 @@ function element.Build(frame)
 	return el
 end
 
+--------------------------------------------------------------------------------
+-- Geometry
+--------------------------------------------------------------------------------
+
+--- Size, anchor and alpha for one portrait widget.
+--
+-- File-local rather than a closure inside Layout, because the 3D model is
+-- created lazily — the first time 3D mode actually renders — which is after
+-- Layout has already run. It has to be placed at creation time too, or it comes
+-- into the world with no size, no anchor and no alpha, and stays that way until
+-- something else happens to trigger a re-layout.
+local function place(frame, el, cfg, widget)
+	widget:ClearAllPoints()
+	widget:SetSize(cfg.width or 40, cfg.height or 40)
+
+	if cfg.placement == "outside" then
+		-- Its own space beside the frame, so the bars keep the full width.
+		if cfg.side == "RIGHT" then
+			widget:SetPoint("LEFT", frame.content, "RIGHT", cfg.x or 0, cfg.y or 0)
+		else
+			widget:SetPoint("RIGHT", frame.content, "LEFT", -(cfg.x or 0), cfg.y or 0)
+		end
+	else
+		widget:SetPoint(cfg.point or "LEFT", frame.content, cfg.relativePoint or "LEFT",
+			cfg.x or 0, cfg.y or 0)
+	end
+
+	widget:SetAlpha(cfg.alpha or 1)
+end
+
 local function ensureModel(frame, el)
 	if el.model then return el.model end
 
@@ -63,35 +93,16 @@ local function ensureModel(frame, el)
 	model:SetFrameLevel(frame.content:GetFrameLevel())
 	model:Hide()
 	el.model = model
+
+	local cfg = frame.cfg and frame.cfg.portrait
+	if cfg then place(frame, el, cfg, model) end
+
 	return model
 end
 
---------------------------------------------------------------------------------
--- Geometry
---------------------------------------------------------------------------------
-
 function element.Layout(frame, el, cfg)
-	local width, height = cfg.width or 40, cfg.height or 40
-
-	local function place(widget)
-		widget:ClearAllPoints()
-		widget:SetSize(width, height)
-		if cfg.placement == "outside" then
-			-- Its own space beside the frame, so the bars keep the full width.
-			if cfg.side == "RIGHT" then
-				widget:SetPoint("LEFT", frame.content, "RIGHT", cfg.x or 0, cfg.y or 0)
-			else
-				widget:SetPoint("RIGHT", frame.content, "LEFT", -(cfg.x or 0), cfg.y or 0)
-			end
-		else
-			widget:SetPoint(cfg.point or "LEFT", frame.content, cfg.relativePoint or "LEFT",
-				cfg.x or 0, cfg.y or 0)
-		end
-		widget:SetAlpha(cfg.alpha or 1)
-	end
-
-	place(el.texture)
-	if el.model then place(el.model) end
+	place(frame, el, cfg, el.texture)
+	if el.model then place(frame, el, cfg, el.model) end
 
 	local mode = cfg.mode or "none"
 	if mode == "none" then

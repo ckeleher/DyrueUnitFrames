@@ -89,6 +89,10 @@ function methods:GetLeft() return self.__left end
 function methods:GetBottom() return self.__bottom end
 function methods:GetEffectiveScale() return self.__scale or 1 end
 function methods:SetScale(v) self.__scale = v end
+function methods:SetAlpha(v) self.__alpha = v end
+function methods:GetAlpha() return self.__alpha or 1 end
+function methods:SetFrameStrata(v) self.__strata = v end
+function methods:GetFrameStrata() return self.__strata or "MEDIUM" end
 function methods:GetFrameLevel() return self.__level end
 function methods:SetFrameLevel(v) self.__level = v end
 
@@ -163,6 +167,8 @@ function methods:SetValue(v) self.__value = v end
 function methods:GetValue() return self.__value end
 function methods:SetTexture(t) self.__texture = t return true end
 function methods:GetTexture() return self.__texture end
+function methods:SetStatusBarTexture(t) self.__statusBarTexture = t return true end
+function methods:GetStatusBarTexture() return self.__statusBarTexture end
 
 function methods:GetFrameCPUUsage() return 0 end
 
@@ -484,10 +490,34 @@ libs["AceConfig-3.0"] = { RegisterOptionsTable = function(_, name, tbl) stub.opt
 libs["AceConfigDialog-3.0"] = { AddToBlizOptions = function() return newWidget("Frame") end, Open = noop, OpenFrames = {} }
 libs["AceConfigRegistry-3.0"] = { NotifyChange = noop }
 libs["AceDBOptions-3.0"] = { GetOptionsTable = function() return { type = "group", name = "Profiles", args = {} } end }
-libs["LibSharedMedia-3.0"] = {
-	Fetch = function(_, kind, key, silent) return "Interface\\Media\\" .. tostring(kind) .. "\\" .. tostring(key) end,
-	HashTable = function() return { Blizzard = "Interface\\TargetingFrame\\UI-StatusBar" } end,
-	Register = noop,
+-- Modelled properly rather than stubbed to a constant, so that "unknown media
+-- name falls back instead of blanking the bar" is actually testable.
+local media = {
+	statusbar = { Blizzard = "Interface\\TargetingFrame\\UI-StatusBar" },
+	font = { ["Friz Quadrata TT"] = "Fonts\\FRIZQT__.TTF" },
 }
+
+libs["LibSharedMedia-3.0"] = {
+	Register = function(_, kind, key, path)
+		media[kind] = media[kind] or {}
+		media[kind][key] = path
+		return true
+	end,
+	Fetch = function(_, kind, key, silent)
+		local path = media[kind] and media[kind][key]
+		if path then return path end
+		if silent then return nil end
+		return media[kind] and next(media[kind]) and select(2, next(media[kind])) or nil
+	end,
+	HashTable = function(_, kind) return media[kind] or {} end,
+	List = function(_, kind)
+		local list = {}
+		for key in pairs(media[kind] or {}) do list[#list + 1] = key end
+		table.sort(list)
+		return list
+	end,
+	IsValid = function(_, kind, key) return media[kind] and media[kind][key] ~= nil end,
+}
+stub.media = media
 
 return stub
