@@ -211,7 +211,10 @@ local function unit(overrides)
 		power = {
 			enabled = true,
 			height = 10,
-			spacing = 1,
+			-- 0 so the bars tile into one solid block. Any gap shows straight
+			-- through to the game world unless the frame background is on, so a
+			-- separator is something to opt into rather than the default.
+			spacing = 0,
 			texture = DEFAULT_BAR_TEXTURE,
 			colorMode = "power",       -- power | static | class
 			color = color(0.2, 0.4, 1),
@@ -229,7 +232,7 @@ local function unit(overrides)
 			enabled = false,
 			mode = "append",           -- append | reserve
 			height = 8,
-			spacing = 1,
+			spacing = 0,
 			widthMode = "inherit",     -- inherit | custom
 			width = 200,
 			texture = DEFAULT_BAR_TEXTURE,

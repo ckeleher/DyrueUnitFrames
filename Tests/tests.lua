@@ -1410,7 +1410,64 @@ local function testTextures()
 end
 
 --------------------------------------------------------------------------------
--- 25. Draw order
+-- 25. Bar stack tiling
+--
+-- With the frame backdrop off by default, any gap between bars is a slit
+-- straight through to the game world rather than a separator. The default
+-- layout must therefore tile exactly.
+--------------------------------------------------------------------------------
+
+local function barGeometry(bar)
+	local _, _, _, x, y = bar:GetPoint(1)
+	return x, y, bar:GetWidth(), bar:GetHeight()
+end
+
+local function testBarStack()
+	local player = ns.frames.player
+	local cfg = ns:UnitConfig("player")
+
+	equal("barstack/power spacing defaults to zero", cfg.power.spacing, 0)
+	equal("barstack/mana spacing defaults to zero", cfg.mana.spacing, 0)
+
+	local hx, hy, hw, hh = barGeometry(player.elements.health.bar)
+	local px, py, pw, ph = barGeometry(player.elements.power.bar)
+
+	equal("barstack/health starts at the top", hy, 0)
+	equal("barstack/health starts at the left", hx, 0)
+	equal("barstack/power starts exactly where health ends", py, -hh)
+	equal("barstack/bars share the frame width", hw, pw)
+	equal("barstack/bars span the frame width", hw, cfg.width)
+	equal("barstack/stack exactly fills the frame height", hh + ph, cfg.height)
+
+	-- A user-set separator must still work.
+	local spacing = ns.Options.table.args.units.args.player.args.power.args.spacing
+	spacing.set(nil, 4)
+	local _, gapY, _, gapH = barGeometry(player.elements.power.bar)
+	local _, _, _, newHealthHeight = barGeometry(player.elements.health.bar)
+	equal("barstack/separator is honoured when asked for", gapY, -(newHealthHeight + 4))
+	equal("barstack/frame height still exactly consumed",
+		newHealthHeight + 4 + gapH, cfg.height)
+	spacing.set(nil, 0)
+
+	-- Reserve-mode mana takes its slot out of the health bar, still with no gap.
+	cfg.mana.enabled = true
+	cfg.mana.mode = "reserve"
+	ns:BumpSerial()
+	ns:RefreshUnit("player")
+
+	local _, _, _, reservedHealth = barGeometry(player.elements.health.bar)
+	equal("barstack/reserve mode shortens health by exactly the mana slot",
+		reservedHealth, cfg.height - cfg.power.height - cfg.mana.height)
+
+	cfg.mana.mode = "append"
+	cfg.mana.enabled = false
+	ns.Defaults:ResetUnit(ns:Profile(), "player")
+	ns:BumpSerial()
+	ns:RefreshUnit("player")
+end
+
+--------------------------------------------------------------------------------
+-- 26. Draw order
 --
 -- Frame level beats draw layer in WoW: everything a child frame draws sits
 -- above EVERY layer of its parent, OVERLAY included. Text on frame.content is
@@ -1685,6 +1742,7 @@ local suites = {
 	{ "slash-commands", testSlashCommands },
 	{ "frame-appearance", testFrameAppearance },
 	{ "textures", testTextures },
+	{ "bar-stack", testBarStack },
 	{ "draw-order", testDrawOrder },
 	{ "bar-background", testBarBackground },
 	{ "portrait", testPortrait },
