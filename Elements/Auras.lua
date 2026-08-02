@@ -394,6 +394,7 @@ local function layoutGroup(frame, el, group, cfg, name)
 		perRow * size + (perRow - 1) * (cfg.spacingX or 0),
 		rows * size + (rows - 1) * (cfg.spacingY or 0))
 
+	group.frame:SetFrameLevel(ns:Level(frame, "AURAS"))
 	group.frame:ClearAllPoints()
 	local widget = groupAnchorWidget(frame, el, cfg.anchorTo, name)
 	group.frame:SetPoint(cfg.point or "BOTTOMLEFT", widget, cfg.relativePoint or "TOPLEFT",
@@ -559,7 +560,7 @@ function element.Build(frame)
 			entryPool = {},
 			cells = {},
 		}
-		el[name].frame:SetFrameLevel(frame.content:GetFrameLevel() + 3)
+		el[name].frame:SetFrameLevel(ns:Level(frame, "AURAS"))
 	end
 	return el
 end

@@ -35,7 +35,7 @@ function element.Build(frame)
 	local el = {}
 
 	el.bar = CreateFrame("StatusBar", nil, frame.content)
-	el.bar:SetFrameLevel(frame.content:GetFrameLevel() + 1)
+	el.bar:SetFrameLevel(ns:Level(frame, "BARS"))
 
 	el.bg = el.bar:CreateTexture(nil, "BACKGROUND")
 	el.bg:SetAllPoints(el.bar)
@@ -60,6 +60,7 @@ end
 -- element, so health, power and shapeshift mana cannot disagree about who owns
 -- which strip of the frame.
 function element.SetGeometry(frame, el, x, y, width, height)
+	el.bar:SetFrameLevel(ns:Level(frame, "BARS"))
 	el.bar:ClearAllPoints()
 	el.bar:SetPoint("TOPLEFT", frame.content, "TOPLEFT", x, y)
 	el.bar:SetSize(width, height)

@@ -89,8 +89,8 @@ local function ensureModel(frame, el)
 		return nil
 	end
 
-	-- Behind the bars, which sit at content level + 1.
-	model:SetFrameLevel(frame.content:GetFrameLevel())
+	-- Behind the bars, so an inside-placed portrait reads as a backdrop.
+	model:SetFrameLevel(ns:Level(frame, "PORTRAIT"))
 	model:Hide()
 	el.model = model
 

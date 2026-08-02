@@ -123,7 +123,7 @@ function element.Build(frame)
 	local el = {}
 
 	el.bar = CreateFrame("StatusBar", nil, frame.content)
-	el.bar:SetFrameLevel(frame.content:GetFrameLevel() + 1)
+	el.bar:SetFrameLevel(ns:Level(frame, "BARS"))
 	el.bar:Hide()
 
 	el.bg = el.bar:CreateTexture(nil, "BACKGROUND")
@@ -147,6 +147,7 @@ function element.Layout(frame, el, cfg)
 end
 
 function element.SetGeometry(frame, el, x, y, width, height)
+	el.bar:SetFrameLevel(ns:Level(frame, "BARS"))
 	el.bar:ClearAllPoints()
 	el.bar:SetPoint("TOPLEFT", frame.content, "TOPLEFT", x, y)
 	el.bar:SetSize(width, height)

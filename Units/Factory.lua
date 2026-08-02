@@ -155,6 +155,11 @@ function methods:ApplyLayout()
 	self:SetAlpha(cfg.alpha or 1)
 	self:SetFrameStrata(cfg.strata or "MEDIUM")
 
+	-- Changing strata can reset explicitly-set child frame levels, and the
+	-- whole draw order depends on those, so re-assert them here.
+	self.content:SetFrameLevel(self:GetFrameLevel() + 1)
+	self.overlay:SetFrameLevel(ns:Level(self, "OVERLAY"))
+
 	self:ClearAllPoints()
 	local relative, point, relativePoint, x, y = ns.Anchoring:Resolve(self.unitKey)
 	self:SetPoint(point, relative, relativePoint, x, y)
@@ -435,9 +440,16 @@ function Factory:Create(def)
 
 	frame.background = frame.content:CreateTexture(nil, "BACKGROUND")
 
+	-- Text, highlights and borders need a frame of their own ABOVE the bars.
+	-- Putting them on frame.content at OVERLAY is not enough: the bars are
+	-- child frames, and a child frame outranks every layer of its parent.
+	frame.overlay = CreateFrame("Frame", nil, frame.content)
+	frame.overlay:SetAllPoints(frame.content)
+	frame.overlay:SetFrameLevel(ns:Level(frame, "OVERLAY"))
+
 	frame.borderEdges = {}
 	for i = 1, 4 do
-		local edge = frame.content:CreateTexture(nil, "OVERLAY", nil, 1)
+		local edge = frame.overlay:CreateTexture(nil, "ARTWORK", nil, 1)
 		edge:Hide()
 		frame.borderEdges[i] = edge
 	end

@@ -112,7 +112,7 @@ function element.Layout(frame, el, cfg)
 		local fontString = el.strings[i]
 
 		if not fontString then
-			fontString = frame.content:CreateFontString(nil, "OVERLAY")
+			fontString = frame.overlay:CreateFontString(nil, "OVERLAY")
 			el.strings[i] = fontString
 		end
 

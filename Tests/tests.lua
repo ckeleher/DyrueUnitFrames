@@ -1410,7 +1410,83 @@ local function testTextures()
 end
 
 --------------------------------------------------------------------------------
--- 25. Bar background brightness and opacity
+-- 25. Draw order
+--
+-- Frame level beats draw layer in WoW: everything a child frame draws sits
+-- above EVERY layer of its parent, OVERLAY included. Text on frame.content is
+-- therefore invisible behind the bars, which are child frames. This suite pins
+-- the whole ordering so that never silently regresses.
+--------------------------------------------------------------------------------
+
+local function testDrawOrder()
+	local player = ns.frames.player
+
+	local contentLevel = player.content:GetFrameLevel()
+	local overlayLevel = player.overlay:GetFrameLevel()
+	local barLevel = player.elements.health.bar:GetFrameLevel()
+
+	check("draworder/bars above the content", barLevel > contentLevel,
+		barLevel .. " vs " .. contentLevel)
+	check("draworder/overlay above the bars", overlayLevel > barLevel,
+		overlayLevel .. " vs " .. barLevel)
+	equal("draworder/power bar shares the bar band",
+		player.elements.power.bar:GetFrameLevel(), barLevel)
+
+	-- The actual bug: font strings parented to content are covered by the bars.
+	local fontString = player.elements.text.strings[1]
+	equal("draworder/text is parented to the overlay", fontString:GetParent(), player.overlay)
+	check("draworder/text draws above the bars",
+		fontString:GetParent():GetFrameLevel() > barLevel)
+
+	-- Highlight outlines and border edges had the same problem.
+	equal("draworder/border edges on the overlay",
+		player.borderEdges[1]:GetParent(), player.overlay)
+
+	ns:UnitConfig("player").highlight.targetEnabled = true
+	ns:BumpSerial()
+	ns:RefreshUnit("player")
+	local highlight = player.elements.highlight
+	check("draworder/highlight built", highlight ~= nil)
+	if highlight then
+		equal("draworder/highlight outlines on the overlay",
+			highlight.target.edges[1]:GetParent(), player.overlay)
+	end
+
+	-- Auras sit between the bars and the overlay.
+	local target = ns.frames.target
+	local auraLevel = target.elements.auras.buffs.frame:GetFrameLevel()
+	check("draworder/auras above the bars",
+		auraLevel > target.elements.health.bar:GetFrameLevel())
+	check("draworder/auras below the overlay",
+		auraLevel < target.overlay:GetFrameLevel())
+
+	-- An inside-placed portrait belongs behind the bars, as a backdrop.
+	local portraitOption = ns.Options.table.args.units.args.player.args.portrait.args
+	portraitOption.mode.set(nil, "3d")
+	player:FullUpdate()
+	local model = player.elements.portrait and player.elements.portrait.model
+	check("draworder/3D portrait model created", model ~= nil)
+	if model then
+		check("draworder/portrait behind the bars", model:GetFrameLevel() < barLevel,
+			model:GetFrameLevel() .. " vs " .. barLevel)
+	end
+	portraitOption.mode.set(nil, "none")
+
+	-- A strata change must not silently reshuffle any of this.
+	local strata = ns.Options.table.args.units.args.player.args.layout.args.size.args.strata
+	strata.set(nil, "HIGH")
+	check("draworder/survives a strata change",
+		player.overlay:GetFrameLevel() > player.elements.health.bar:GetFrameLevel()
+		and player.elements.health.bar:GetFrameLevel() > player.content:GetFrameLevel())
+	strata.set(nil, "MEDIUM")
+
+	ns.Defaults:ResetUnit(ns:Profile(), "player")
+	ns:BumpSerial()
+	ns:RefreshUnit("player")
+end
+
+--------------------------------------------------------------------------------
+-- 26. Bar background brightness and opacity
 --------------------------------------------------------------------------------
 
 local function testBarBackground()
@@ -1488,7 +1564,10 @@ local function testPortrait()
 	local portrait = ns.Options.table.args.units.args.player.args.portrait.args
 
 	equal("portrait/defaults to none", cfg.portrait.mode, "none")
-	check("portrait/not built while off", player.elements.portrait == nil)
+	-- Widgets are kept once built -- WoW cannot destroy a frame, so elements are
+	-- pooled and hidden rather than discarded. "Off" means absent from the
+	-- active set, which is what stops it being laid out and updated.
+	check("portrait/not active while off", player.activeElements.portrait == nil)
 
 	-- 2D
 	portrait.mode.set(nil, "2d")
@@ -1606,6 +1685,7 @@ local suites = {
 	{ "slash-commands", testSlashCommands },
 	{ "frame-appearance", testFrameAppearance },
 	{ "textures", testTextures },
+	{ "draw-order", testDrawOrder },
 	{ "bar-background", testBarBackground },
 	{ "portrait", testPortrait },
 	{ "global-leaks", testNoGlobalLeaks },

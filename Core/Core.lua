@@ -56,6 +56,36 @@ function ns:RegisterElement(name, def)
 end
 
 --------------------------------------------------------------------------------
+-- Draw order
+--
+-- Frame level beats draw layer: anything a child frame draws appears above
+-- EVERY layer of its parent, OVERLAY included. Bars are child frames, so text
+-- and highlights cannot simply live on frame.content at OVERLAY -- the bars
+-- would cover them completely.
+--
+-- Hence one scheme, in one place, expressed as offsets from frame.content:
+--
+--   PORTRAIT  behind the bars, so an inside-placed portrait reads as a backdrop
+--   BARS      health, power, shapeshift mana
+--   AURAS     icon groups
+--   OVERLAY   text, highlight outlines, border edges -- above all of it
+--
+-- Gaps are deliberate: they leave room to slot something in without renumbering.
+--------------------------------------------------------------------------------
+
+ns.LEVELS = {
+	PORTRAIT = 0,
+	BARS = 2,
+	AURAS = 4,
+	OVERLAY = 6,
+}
+
+--- Frame level for one band of a unit frame.
+function ns:Level(frame, band)
+	return frame.content:GetFrameLevel() + (ns.LEVELS[band] or 0)
+end
+
+--------------------------------------------------------------------------------
 -- Frame registry
 --------------------------------------------------------------------------------
 

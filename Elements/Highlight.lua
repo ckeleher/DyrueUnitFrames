@@ -70,8 +70,8 @@ end
 
 function element.Build(frame)
 	return {
-		target = buildOutline(frame.content, 2),
-		mouseover = buildOutline(frame.content, 3),
+		target = buildOutline(frame.overlay, 2),
+		mouseover = buildOutline(frame.overlay, 3),
 	}
 end
 
