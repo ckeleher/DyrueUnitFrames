@@ -119,6 +119,23 @@ local steps = {
 		end
 		return profile
 	end,
+
+	--- 4 -> 5: health and power bars dimmed to 0.8.
+	--
+	-- The shapeshift mana bar is deliberately not touched. Its color is one you
+	-- pick directly rather than one the game hands us, and it was already a
+	-- muted blue.
+	[4] = function(profile)
+		for _, cfg in pairs(profile.units or {}) do
+			for _, key in ipairs({ "health", "power" }) do
+				local bar = cfg[key]
+				if bar and bar.brightness == 1 then
+					bar.brightness = 0.8
+				end
+			end
+		end
+		return profile
+	end,
 }
 
 Migrate.steps = steps

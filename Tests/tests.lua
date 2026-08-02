@@ -596,6 +596,30 @@ local function testMigration()
 	equal("migrate/custom static color kept", v3.units.party1.health.colorMode, "static")
 	equal("migrate/custom color value kept", v3.units.party1.health.color.r, 1)
 
+	-- Step 4 -> 5: health and power dimmed, shapeshift mana left alone.
+	local v4 = {
+		schemaVersion = 4,
+		general = { blizzardFrames = "hide", blizzardParty = true },
+		units = {
+			player = {
+				health = { colorMode = "class", brightness = 1 },
+				power = { brightness = 1 },
+				mana = { brightness = 1 },
+			},
+			target = {
+				health = { colorMode = "class", brightness = 0.5 },
+				power = { brightness = 1 },
+				mana = { brightness = 1 },
+			},
+		},
+	}
+	success = Migrate:Run(v4, {})
+	check("migrate/v4 profile migrates", success)
+	equal("migrate/health dimmed to 0.8", v4.units.player.health.brightness, 0.8)
+	equal("migrate/power dimmed to 0.8", v4.units.player.power.brightness, 0.8)
+	equal("migrate/shapeshift mana left at full", v4.units.player.mana.brightness, 1)
+	equal("migrate/a chosen brightness is kept", v4.units.target.health.brightness, 0.5)
+
 	-- Running it again is a no-op.
 	success = Migrate:Run(v1, {})
 	check("migrate/re-running is a no-op", success)
@@ -1594,9 +1618,9 @@ local function testBrightness()
 
 	local bar, bg = player.elements.health.bar, player.elements.health.bg
 
-	equal("brightness/defaults to 1", cfg.health.brightness, 1)
+	equal("brightness/health defaults to 0.8", cfg.health.brightness, 0.8)
 	local r, g, b = bar:GetStatusBarColor()
-	near("brightness/1 leaves the color alone", g, 0.8)
+	near("brightness/the 0.8 default is applied", g, 0.8 * 0.8)
 
 	health.brightness.set(nil, 0.5)
 	r, g, b = bar:GetStatusBarColor()
@@ -1636,7 +1660,7 @@ local function testBrightness()
 
 	-- Power and shapeshift mana have their own independent controls.
 	local power = ns.Options.table.args.units.args.player.args.power.args
-	equal("brightness/power defaults to 1", cfg.power.brightness, 1)
+	equal("brightness/power defaults to 0.8", cfg.power.brightness, 0.8)
 	local powerBefore = select(2, player.elements.power.bar:GetStatusBarColor())
 	power.brightness.set(nil, 0.5)
 	near("brightness/power scales independently",
@@ -1645,15 +1669,25 @@ local function testBrightness()
 		select(2, bar:GetStatusBarColor()), classG)
 	power.brightness.set(nil, 1)
 
-	equal("brightness/mana defaults to 1", cfg.mana.brightness, 1)
+	-- The shapeshift mana bar keeps full brightness: its color is one you
+	-- pick rather than one the game hands us, and it was already muted.
+	equal("brightness/mana stays at 1", cfg.mana.brightness, 1)
+
+	-- Back to defaults before the sweep: the suite has been moving the player's
+	-- brightness around and the sweep asserts the shipped values.
+	ns.Defaults:ResetUnit(ns:Profile(), "player")
+	ns:BumpSerial()
+	ns:RefreshUnit("player")
 
 	-- Every unit gets the control, not just the player.
 	local missing = {}
 	for _, def in ipairs(ns.Registry:SortedAvailable()) do
 		local unitCfg = ns:UnitConfig(def.key)
 		for _, key in ipairs({ "health", "power", "mana" }) do
-			if unitCfg[key].brightness ~= 1 then
-				missing[#missing + 1] = def.key .. "." .. key
+			local expected = (key == "mana") and 1 or 0.8
+			if unitCfg[key].brightness ~= expected then
+				missing[#missing + 1] = string.format("%s.%s=%s", def.key, key,
+					tostring(unitCfg[key].brightness))
 			end
 		end
 		local args = ns.Options.table.args.units.args[def.key].args
@@ -1818,6 +1852,7 @@ local function testBarBackground()
 	-- A known bar color so the maths is checkable.
 	cfg.health.colorMode = "static"
 	cfg.health.color = { r = 0, g = 1, b = 0, a = 1 }
+	cfg.health.brightness = 1     -- isolate this suite from the brightness default
 	ns:BumpSerial()
 	ns:RefreshUnit("player")
 

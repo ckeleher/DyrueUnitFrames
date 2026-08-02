@@ -25,8 +25,9 @@ local type, pairs, ipairs, next = type, pairs, ipairs, next
 -- 2: flat bar texture, no gap between bars, frame backdrop off by default.
 -- 3: Blizzard's own unit frames, party frames included, hidden by default.
 -- 4: health bars class-colored by default.
+-- 5: health and power bars dimmed to 0.8 brightness.
 -- Core/Migrate.lua carries existing profiles forward one step at a time.
-Defaults.SCHEMA_VERSION = 4
+Defaults.SCHEMA_VERSION = 5
 
 --------------------------------------------------------------------------------
 -- Table helpers
@@ -207,7 +208,11 @@ local function unit(overrides)
 			-- asks for and is one dropdown away.
 			colorMode = "class",       -- static | class | reaction | gradient
 			color = color(0, 0.9, 0.1),
-			brightness = 1,            -- scales whatever color the mode resolves to
+			-- Class colors and the game's power colors are chosen to be legible
+			-- as small text on a dark background, which makes them harsh as a
+			-- large block of flat fill. 0.8 takes the edge off without losing
+			-- which class is which.
+			brightness = 0.8,          -- scales whatever color the mode resolves to
 			npcFallback = "reaction",  -- what class mode falls back to for NPCs
 			bgMultiplier = 0.25,
 			bgAlpha = 1,
@@ -228,7 +233,7 @@ local function unit(overrides)
 			texture = DEFAULT_BAR_TEXTURE,
 			colorMode = "power",       -- power | static | class
 			color = color(0.2, 0.4, 1),
-			brightness = 1,
+			brightness = 0.8,
 			overrides = {},            -- per power token, e.g. RAGE = {r=,g=,b=}
 			useOverrides = false,
 			bgMultiplier = 0.25,
