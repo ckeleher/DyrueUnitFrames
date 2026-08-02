@@ -136,6 +136,34 @@ local steps = {
 		end
 		return profile
 	end,
+
+	--- 5 -> 6: the shapeshift mana bar gets a readout of current mana.
+	--
+	-- Text elements are a user-owned list, which EnsureProfile seeds once and
+	-- then leaves alone -- that is what makes deleting one stick. So a new
+	-- default text has to be appended here or it never reaches an existing
+	-- profile.
+	--
+	-- Only added where the mana bar is actually enabled, and only if there is
+	-- no text anchored to it already, so running it against a profile that has
+	-- one cannot produce a duplicate.
+	[5] = function(profile)
+		for _, cfg in pairs(profile.units or {}) do
+			if cfg.mana and cfg.mana.enabled and type(cfg.texts) == "table" then
+				local existing = false
+				for i = 1, #cfg.texts do
+					if cfg.texts[i] and cfg.texts[i].anchorTo == "mana" then
+						existing = true
+						break
+					end
+				end
+				if not existing then
+					cfg.texts[#cfg.texts + 1] = Defaults.ManaText()
+				end
+			end
+		end
+		return profile
+	end,
 }
 
 Migrate.steps = steps

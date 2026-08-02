@@ -83,21 +83,42 @@ end
 -- Anchoring
 --------------------------------------------------------------------------------
 
---- Resolve an anchorTo key to a live widget, falling back to the frame body
--- when the requested bar is disabled or hidden.
+--- Resolve an anchorTo key to a live widget.
+--
+-- @return widget, available
+--
+-- `available` is false when the text was anchored to a bar that is not
+-- currently showing, and the caller hides the text rather than dropping it onto
+-- the frame body. That matters most for the shapeshift mana bar, which appears
+-- and disappears with form: a mana readout left floating at the frame's edge in
+-- caster form -- on top of the power text -- is worse than no readout. The same
+-- reasoning applies to any bar the user has turned off.
 local function anchorWidget(frame, key)
 	local elements = frame.elements
-	if key == "health" and elements.health and elements.health.bar:IsShown() then
-		return elements.health.bar
-	elseif key == "power" and elements.power and elements.power.bar:IsShown() then
-		return elements.power.bar
-	elseif key == "mana" and elements.mana and elements.mana.bar:IsShown() then
-		return elements.mana.bar
-	elseif key == "portrait" and elements.portrait then
-		local widget = ns.elements.portrait.GetAnchorWidget(elements.portrait, frame.cfg.portrait)
-		if widget and widget:IsShown() then return widget end
+
+	if key == "health" then
+		local el = elements.health
+		if el and el.bar:IsShown() then return el.bar, true end
+		return frame.content, false
+	elseif key == "power" then
+		local el = elements.power
+		if el and el.bar:IsShown() then return el.bar, true end
+		return frame.content, false
+	elseif key == "mana" then
+		local el = elements.mana
+		if el and el.bar:IsShown() then return el.bar, true end
+		return frame.content, false
+	elseif key == "portrait" then
+		local el = elements.portrait
+		if el then
+			local widget = ns.elements.portrait.GetAnchorWidget(el, frame.cfg.portrait)
+			if widget and widget:IsShown() then return widget, true end
+		end
+		return frame.content, false
 	end
-	return frame.content
+
+	-- "frame" -- always there.
+	return frame.content, true
 end
 
 --------------------------------------------------------------------------------
@@ -116,14 +137,15 @@ function element.Layout(frame, el, cfg)
 			el.strings[i] = fontString
 		end
 
-		if text.enabled == false then
+		local widget, available = anchorWidget(frame, text.anchorTo)
+
+		if text.enabled == false or not available then
 			fontString:Hide()
 		else
 			fontString:Show()
 			ns:SetFont(fontString, text.font, text.size, text.outline, text.shadow)
 
 			fontString:ClearAllPoints()
-			local widget = anchorWidget(frame, text.anchorTo)
 			fontString:SetPoint(text.point or "LEFT", widget, text.relativePoint or text.point or "LEFT",
 				text.x or 0, text.y or 0)
 

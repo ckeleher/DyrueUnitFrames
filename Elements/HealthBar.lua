@@ -91,4 +91,12 @@ function element.Update(frame, el, cfg)
 	el.bg:SetVertexColor(br, bg, bb, ba)
 end
 
+--- Turning the bar off in the options has to actually take it off screen.
+-- ApplyConfig calls Disable and nothing else for an element it no longer
+-- wants -- Layout is skipped -- so without this the bar keeps whatever
+-- visibility it last had.
+function element.Disable(frame, el)
+	el.bar:Hide()
+end
+
 ns:RegisterElement("health", element)

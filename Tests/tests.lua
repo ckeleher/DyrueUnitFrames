@@ -620,6 +620,37 @@ local function testMigration()
 	equal("migrate/shapeshift mana left at full", v4.units.player.mana.brightness, 1)
 	equal("migrate/a chosen brightness is kept", v4.units.target.health.brightness, 0.5)
 
+	-- Step 5 -> 6: the mana readout is appended to profiles that lack it.
+	local v5 = {
+		schemaVersion = 5,
+		general = { blizzardFrames = "hide", blizzardParty = true },
+		units = {
+			player = {
+				mana = { enabled = true, brightness = 1 },
+				texts = { { anchorTo = "health", format = "[name]" } },
+			},
+			-- Already has one: must not gain a duplicate.
+			focus = {
+				mana = { enabled = true, brightness = 1 },
+				texts = { { anchorTo = "mana", format = "[mana:perc]" } },
+			},
+			-- Mana bar disabled: nothing to anchor to, so nothing is added.
+			target = {
+				mana = { enabled = false, brightness = 1 },
+				texts = { { anchorTo = "health", format = "[name]" } },
+			},
+		},
+	}
+	success = Migrate:Run(v5, {})
+	check("migrate/v5 profile migrates", success)
+	equal("migrate/mana readout appended", #v5.units.player.texts, 2)
+	equal("migrate/appended text is anchored to the mana bar",
+		v5.units.player.texts[2].anchorTo, "mana")
+	equal("migrate/no duplicate where one exists", #v5.units.focus.texts, 1)
+	equal("migrate/existing mana text untouched",
+		v5.units.focus.texts[1].format, "[mana:perc]")
+	equal("migrate/nothing added where the bar is off", #v5.units.target.texts, 1)
+
 	-- Running it again is a no-op.
 	success = Migrate:Run(v1, {})
 	check("migrate/re-running is a no-op", success)
@@ -1600,7 +1631,78 @@ local function testTextures()
 end
 
 --------------------------------------------------------------------------------
--- 25. Bar brightness
+-- 25. Shapeshift mana readout
+--
+-- The bar appears and disappears with form, so its text has to as well.
+--------------------------------------------------------------------------------
+
+local function findManaText(frame)
+	local cfg = ns:UnitConfig(frame.unitKey)
+	for i = 1, #cfg.texts do
+		if cfg.texts[i].anchorTo == "mana" then
+			return i, frame.elements.text.strings[i]
+		end
+	end
+end
+
+local function testManaText()
+	local player = ns.frames.player
+	local cfg = ns:UnitConfig("player")
+
+	local index, fontString = findManaText(player)
+	check("manatext/player ships with a mana readout", index ~= nil)
+	if not index then return end
+
+	equal("manatext/reads current mana", cfg.texts[index].format, "[mana:cur:short]")
+	equal("manatext/matches the power bar's placement", cfg.texts[index].point,
+		cfg.texts[3].point)
+	equal("manatext/matches the power bar's size", cfg.texts[index].size, cfg.texts[3].size)
+
+	-- Caster form: displayed power IS mana, so the bar is hidden and the text
+	-- must go with it rather than floating over the power text.
+	stub.units.player.powerType = 0
+	stub.units.player.powerToken = "MANA"
+	player:FullUpdate()
+	check("manatext/bar hidden in caster form", not player.elements.mana.shown)
+	check("manatext/text hidden with the bar", not fontString:IsShown())
+
+	-- Shifted: rage displayed, mana pool retained.
+	stub.units.player.powerType = 1
+	stub.units.player.powerToken = "RAGE"
+	player:FullUpdate()
+	check("manatext/bar shown while shifted", player.elements.mana.shown)
+	check("manatext/text shown with the bar", fontString:IsShown())
+	-- :short, matching the power bar the user asked it to mirror.
+	equal("manatext/shows true mana, not displayed power", fontString:GetText(), "3.0k")
+
+	-- And it tracks the value.
+	stub.units.player.powers[0] = 1500
+	stub.fire("UNIT_POWER_UPDATE", "player")
+	equal("manatext/tracks mana changes", fontString:GetText(), "1.5k")
+	stub.units.player.powers[0] = 3000
+
+	-- Anchored to the bar itself, not to the frame body.
+	local _, relative = fontString:GetPoint(1)
+	equal("manatext/anchored to the mana bar", relative, player.elements.mana.bar)
+
+	-- The same rule protects any bar-anchored text: turn the power bar off and
+	-- its readout goes too, rather than landing on the frame edge.
+	local powerText = player.elements.text.strings[3]
+	check("manatext/power text visible while the bar is", powerText:IsShown())
+	cfg.power.enabled = false
+	ns:BumpSerial()
+	ns:RefreshUnit("player")
+	check("manatext/power text hidden with its bar",
+		not player.elements.text.strings[3]:IsShown())
+	cfg.power.enabled = true
+
+	ns.Defaults:ResetUnit(ns:Profile(), "player")
+	ns:BumpSerial()
+	ns:RefreshUnit("player")
+end
+
+--------------------------------------------------------------------------------
+-- 26. Bar brightness
 --------------------------------------------------------------------------------
 
 local function testBrightness()
@@ -2041,6 +2143,7 @@ local suites = {
 	{ "slash-commands", testSlashCommands },
 	{ "frame-appearance", testFrameAppearance },
 	{ "textures", testTextures },
+	{ "mana-text", testManaText },
 	{ "brightness", testBrightness },
 	{ "bar-stack", testBarStack },
 	{ "draw-order", testDrawOrder },

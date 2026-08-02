@@ -89,4 +89,10 @@ function element.Update(frame, el, cfg)
 	el.bg:SetVertexColor(br, bg, bb, ba)
 end
 
+--- See the note in Elements/HealthBar.lua: Disable is the only thing called
+-- for an element that is no longer wanted.
+function element.Disable(frame, el)
+	el.bar:Hide()
+end
+
 ns:RegisterElement("power", element)

@@ -26,8 +26,9 @@ local type, pairs, ipairs, next = type, pairs, ipairs, next
 -- 3: Blizzard's own unit frames, party frames included, hidden by default.
 -- 4: health bars class-colored by default.
 -- 5: health and power bars dimmed to 0.8 brightness.
+-- 6: current mana shown on the shapeshift mana bar.
 -- Core/Migrate.lua carries existing profiles forward one step at a time.
-Defaults.SCHEMA_VERSION = 5
+Defaults.SCHEMA_VERSION = 6
 
 --------------------------------------------------------------------------------
 -- Table helpers
@@ -328,6 +329,17 @@ local function fullTexts(healthFormat)
 	}
 end
 
+--- The shapeshift mana readout, matching the power bar's.
+--
+-- Anchored to the mana bar rather than to the frame, so it appears and
+-- disappears with it: Elements/Text hides a text whose anchor bar is not
+-- showing rather than dropping it onto the frame body.
+local function manaText()
+	return text({ name = L["Mana"], format = "[mana:cur:short]", anchorTo = "mana",
+		point = "RIGHT", relativePoint = "RIGHT", x = -4, justify = "RIGHT", size = 10 })
+end
+Defaults.ManaText = manaText
+
 local function targetTexts()
 	local t = {
 		text({ name = L["Level"], format = "[level][shortclassification]", anchorTo = "health",
@@ -365,7 +377,13 @@ local function buildUnits()
 	u.player = unit({
 		width = 220, height = 48,
 		anchor = { to = "UIParent", point = "TOPRIGHT", relativePoint = "CENTER", x = -180, y = -140 },
-		texts = fullTexts("[hp:cur:short] / [hp:max:short]"),
+		texts = (function()
+			-- Only the player ships with the shapeshift mana bar enabled, so it
+			-- is the only unit that ships with a readout for it.
+			local t = fullTexts("[hp:cur:short] / [hp:max:short]")
+			t[#t + 1] = manaText()
+			return t
+		end)(),
 		mana = { enabled = true },
 		highlight = { targetEnabled = false },
 	})
