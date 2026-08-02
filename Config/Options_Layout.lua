@@ -215,6 +215,14 @@ local function healthGroup(def)
 		gradient2 = Options.GradientColor(L["Gradient: middle"], 16, gradient, 2, apply, { hidden = notGradient }),
 		gradient3 = Options.GradientColor(L["Gradient: full"], 17, gradient, 3, apply, { hidden = notGradient }),
 
+		brightness = {
+			type = "range", order = 18, name = L["Brightness"],
+			desc = L["Scales whatever colour the mode above resolves to, so it works the same on a class colour, a reaction colour or a gradient. The bar's background follows it, since the background is derived from the bar colour."],
+			min = 0, max = 2, step = 0.05,
+			get = function() return health().brightness end,
+			set = function(_, v) health().brightness = v; apply() end,
+		},
+
 		stateHeader = { type = "header", order = 20, name = L["States"] },
 		dimWhenDead = {
 			type = "toggle", order = 21, name = L["Dim when dead"],
@@ -319,6 +327,14 @@ local function powerGroup(def)
 			end,
 		},
 
+		brightness = {
+			type = "range", order = 14, name = L["Brightness"],
+			desc = L["Scales whatever colour the mode above resolves to, so it works the same on a class colour, a reaction colour or a gradient. The bar's background follows it, since the background is derived from the bar colour."],
+			min = 0, max = 2, step = 0.05,
+			get = function() return power().brightness end,
+			set = function(_, v) power().brightness = v; apply() end,
+		},
+
 		bgHeader = { type = "header", order = 20, name = L["Background"] },
 		bgMultiplier = {
 			type = "range", order = 21, name = L["Background brightness"],
@@ -407,6 +423,13 @@ local function manaGroup(def)
 		}),
 		texture = textureOption(L["Texture"], 8, mana, apply),
 		color = Options.Color(L["Colour"], 9, mana, "color", apply),
+		brightness = {
+			type = "range", order = 10, name = L["Brightness"],
+			desc = L["Scales whatever colour the mode above resolves to, so it works the same on a class colour, a reaction colour or a gradient. The bar's background follows it, since the background is derived from the bar colour."],
+			min = 0, max = 2, step = 0.05,
+			get = function() return mana().brightness end,
+			set = function(_, v) mana().brightness = v; apply() end,
+		},
 
 		tickerHeader = { type = "header", order = 20, name = L["Update reliability"] },
 		tickerExplain = {

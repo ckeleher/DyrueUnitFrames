@@ -200,6 +200,7 @@ local function unit(overrides)
 			texture = DEFAULT_BAR_TEXTURE,
 			colorMode = "static",      -- static | class | reaction | gradient
 			color = color(0, 0.9, 0.1),
+			brightness = 1,            -- scales whatever colour the mode resolves to
 			npcFallback = "reaction",  -- what class mode falls back to for NPCs
 			bgMultiplier = 0.25,
 			bgAlpha = 1,
@@ -220,6 +221,7 @@ local function unit(overrides)
 			texture = DEFAULT_BAR_TEXTURE,
 			colorMode = "power",       -- power | static | class
 			color = color(0.2, 0.4, 1),
+			brightness = 1,
 			overrides = {},            -- per power token, e.g. RAGE = {r=,g=,b=}
 			useOverrides = false,
 			bgMultiplier = 0.25,
@@ -239,6 +241,7 @@ local function unit(overrides)
 			width = 200,
 			texture = DEFAULT_BAR_TEXTURE,
 			color = color(0.25, 0.45, 0.95),
+			brightness = 1,
 			bgMultiplier = 0.25,
 			bgAlpha = 1,
 			-- SPEC §FR-2.5. "auto" runs the fallback ticker only while the bar

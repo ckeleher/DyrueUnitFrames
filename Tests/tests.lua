@@ -1477,7 +1477,105 @@ local function testTextures()
 end
 
 --------------------------------------------------------------------------------
--- 25. Bar stack tiling
+-- 25. Bar brightness
+--------------------------------------------------------------------------------
+
+local function testBrightness()
+	local player = ns.frames.player
+	local cfg = ns:UnitConfig("player")
+	local health = ns.Options.table.args.units.args.player.args.health.args
+
+	-- A known colour so the arithmetic is checkable.
+	cfg.health.colorMode = "static"
+	cfg.health.color = { r = 0.4, g = 0.8, b = 0.2, a = 1 }
+	cfg.health.bgMultiplier = 0.5
+	cfg.health.bgAlpha = 1
+	ns:BumpSerial()
+	ns:RefreshUnit("player")
+
+	local bar, bg = player.elements.health.bar, player.elements.health.bg
+
+	equal("brightness/defaults to 1", cfg.health.brightness, 1)
+	local r, g, b = bar:GetStatusBarColor()
+	near("brightness/1 leaves the colour alone", g, 0.8)
+
+	health.brightness.set(nil, 0.5)
+	r, g, b = bar:GetStatusBarColor()
+	near("brightness/halved red", r, 0.2)
+	near("brightness/halved green", g, 0.4)
+	near("brightness/halved blue", b, 0.1)
+
+	-- The background derives from the bar colour, so it must follow.
+	near("brightness/background follows the bar", select(2, bg:GetVertexColor()), 0.4 * 0.5)
+
+	health.brightness.set(nil, 1.5)
+	r, g, b = bar:GetStatusBarColor()
+	near("brightness/above 1 brightens", g, 1.0)   -- 0.8 * 1.5 clamps to 1
+	near("brightness/unclamped channel still scales", r, 0.6)
+
+	health.brightness.set(nil, 2)
+	r, g, b = bar:GetStatusBarColor()
+	near("brightness/clamped at 1", g, 1)
+	check("brightness/clamp never exceeds 1", r <= 1 and g <= 1 and b <= 1)
+
+	health.brightness.set(nil, 0)
+	r, g, b = bar:GetStatusBarColor()
+	check("brightness/zero is honoured and not swallowed by an or-default",
+		r == 0 and g == 0 and b == 0)
+
+	health.brightness.set(nil, 1)
+
+	-- It applies to whatever the mode resolved, not just to a static colour.
+	cfg.health.colorMode = "class"
+	ns:BumpSerial()
+	ns:RefreshUnit("player")
+	local classR, classG, classB = bar:GetStatusBarColor()
+	health.brightness.set(nil, 0.5)
+	r, g, b = bar:GetStatusBarColor()
+	near("brightness/scales a class colour too", g, classG * 0.5)
+	health.brightness.set(nil, 1)
+
+	-- Power and shapeshift mana have their own independent controls.
+	local power = ns.Options.table.args.units.args.player.args.power.args
+	equal("brightness/power defaults to 1", cfg.power.brightness, 1)
+	local powerBefore = select(2, player.elements.power.bar:GetStatusBarColor())
+	power.brightness.set(nil, 0.5)
+	near("brightness/power scales independently",
+		select(2, player.elements.power.bar:GetStatusBarColor()), powerBefore * 0.5)
+	near("brightness/health unaffected by the power slider",
+		select(2, bar:GetStatusBarColor()), classG)
+	power.brightness.set(nil, 1)
+
+	equal("brightness/mana defaults to 1", cfg.mana.brightness, 1)
+
+	-- Every unit gets the control, not just the player.
+	local missing = {}
+	for _, def in ipairs(ns.Registry:SortedAvailable()) do
+		local unitCfg = ns:UnitConfig(def.key)
+		for _, key in ipairs({ "health", "power", "mana" }) do
+			if unitCfg[key].brightness ~= 1 then
+				missing[#missing + 1] = def.key .. "." .. key
+			end
+		end
+		local args = ns.Options.table.args.units.args[def.key].args
+		if not args.health.args.brightness or not args.power.args.brightness
+			or not args.mana.args.brightness then
+			missing[#missing + 1] = def.key .. " (no slider)"
+		end
+	end
+	if #missing == 0 then
+		ok("brightness/present on every bar of every unit")
+	else
+		fail("brightness/present on every bar of every unit", table.concat(missing, ", "))
+	end
+
+	ns.Defaults:ResetUnit(ns:Profile(), "player")
+	ns:BumpSerial()
+	ns:RefreshUnit("player")
+end
+
+--------------------------------------------------------------------------------
+-- 26. Bar stack tiling
 --
 -- With the frame backdrop off by default, any gap between bars is a slit
 -- straight through to the game world rather than a separator. The default
@@ -1809,6 +1907,7 @@ local suites = {
 	{ "slash-commands", testSlashCommands },
 	{ "frame-appearance", testFrameAppearance },
 	{ "textures", testTextures },
+	{ "brightness", testBrightness },
 	{ "bar-stack", testBarStack },
 	{ "draw-order", testDrawOrder },
 	{ "bar-background", testBarBackground },

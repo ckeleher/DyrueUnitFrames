@@ -141,6 +141,7 @@ function element.Layout(frame, el, cfg)
 	el.bg:SetTexture(texture)
 
 	local r, g, b = Colors:Unpack(cfg.color)
+	r, g, b = Colors:Brighten(r, g, b, cfg.brightness)
 	el.bar:SetStatusBarColor(r, g, b)
 	local br, bgc, bb, ba = Colors:Background(r, g, b, cfg.bgMultiplier, cfg.bgAlpha)
 	el.bg:SetVertexColor(br, bgc, bb, ba)

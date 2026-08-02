@@ -82,6 +82,7 @@ function element.Update(frame, el, cfg)
 	end
 
 	local r, g, b = Colors:PowerBar(unit, cfg, token, frame)
+	r, g, b = Colors:Brighten(r, g, b, cfg.brightness)
 	el.bar:SetStatusBarColor(r, g, b)
 
 	local br, bg, bb, ba = Colors:Background(r, g, b, cfg.bgMultiplier, cfg.bgAlpha)

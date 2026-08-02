@@ -201,6 +201,29 @@ function Colors:PowerBar(unit, cfg, powerToken, frame)
 end
 
 --------------------------------------------------------------------------------
+-- Brightness
+--------------------------------------------------------------------------------
+
+--- Scale a resolved bar colour. Applied before anything downstream, so a bar's
+-- background -- which derives from the bar colour -- tracks it automatically
+-- and the two never drift apart.
+--
+-- Clamped, because SetStatusBarColor above 1 is meaningless: pushing a bright
+-- colour further just saturates it, and silently letting the stored number run
+-- past the point where it does anything is worse than capping it.
+function Colors:Brighten(r, g, b, brightness)
+	if not brightness or brightness == 1 then return r, g, b end
+
+	r, g, b = r * brightness, g * brightness, b * brightness
+
+	if r > 1 then r = 1 elseif r < 0 then r = 0 end
+	if g > 1 then g = 1 elseif g < 0 then g = 0 end
+	if b > 1 then b = 1 elseif b < 0 then b = 0 end
+
+	return r, g, b
+end
+
+--------------------------------------------------------------------------------
 -- Bar backgrounds
 --------------------------------------------------------------------------------
 

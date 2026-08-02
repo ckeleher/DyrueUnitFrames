@@ -81,6 +81,7 @@ function element.Update(frame, el, cfg)
 	el.bar:SetValue(maximum > 0 and current or 0)
 
 	local r, g, b = Colors:HealthBar(unit, cfg, frame)
+	r, g, b = Colors:Brighten(r, g, b, cfg.brightness)
 	if dead and cfg.dimWhenDead then
 		r, g, b = r * 0.35, g * 0.35, b * 0.35
 	end
