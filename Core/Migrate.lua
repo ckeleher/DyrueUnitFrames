@@ -164,6 +164,21 @@ local steps = {
 		end
 		return profile
 	end,
+
+	--- 6 -> 7: portraits sit beside the frame rather than behind the bars.
+	--
+	-- "inside" draws the portrait under the health bar, and since the bars are
+	-- an opaque flat fill covering the whole frame, that hid it almost
+	-- entirely. Only moved where it is still on the old default.
+	[6] = function(profile)
+		for _, cfg in pairs(profile.units or {}) do
+			local portrait = cfg.portrait
+			if portrait and portrait.placement == "inside" then
+				portrait.placement = "outside"
+			end
+		end
+		return profile
+	end,
 }
 
 Migrate.steps = steps

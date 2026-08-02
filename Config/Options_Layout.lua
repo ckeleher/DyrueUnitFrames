@@ -507,13 +507,22 @@ local function portraitGroup(def)
 			name = L["|cffffcc002D is the more robust choice.|r Model frames are the least reliable widget in the API: they go stale on unit changes, lose their camera on loading screens, and will not load for units out of range. All of that is handled here and a model that will not load falls back to 2D silently - but the option to avoid the whole category exists, and it is this one."],
 		},
 
+		shape = {
+			type = "select", order = 9, name = L["Shape"],
+			desc = L["The game's portrait art is round -- its corners are transparent. Square crops to the largest fully opaque part of it, which zooms in slightly. Native shows it exactly as the game provides it, corners and all."],
+			hidden = function() return portrait().mode ~= "2d" end,
+			values = { square = L["Square"], native = L["Native (round)"] },
+			get = function() return portrait().shape end,
+			set = function(_, v) portrait().shape = v; apply() end,
+		},
 		placement = {
 			type = "select", order = 10, name = L["Placement"],
 			hidden = isNone,
 			values = {
-				inside = L["Inside the frame (behind the bars)"],
-				outside = L["Outside the frame"],
+				outside = L["Beside the frame"],
+				inside = L["Over the frame (behind the bars)"],
 			},
+			desc = L["The bars are an opaque fill covering the whole frame, so 'over the frame' hides the portrait almost completely unless you make the bars translucent."],
 			get = function() return portrait().placement end,
 			set = function(_, v) portrait().placement = v; apply() end,
 		},

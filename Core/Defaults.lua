@@ -27,8 +27,9 @@ local type, pairs, ipairs, next = type, pairs, ipairs, next
 -- 4: health bars class-colored by default.
 -- 5: health and power bars dimmed to 0.8 brightness.
 -- 6: current mana shown on the shapeshift mana bar.
+-- 7: portraits placed beside the frame instead of behind the bars.
 -- Core/Migrate.lua carries existing profiles forward one step at a time.
-Defaults.SCHEMA_VERSION = 6
+Defaults.SCHEMA_VERSION = 7
 
 --------------------------------------------------------------------------------
 -- Table helpers
@@ -269,8 +270,15 @@ local function unit(overrides)
 		-- SPEC §4.7
 		portrait = {
 			mode = "none",             -- none | 2d | 3d
-			placement = "inside",      -- inside | outside
+			-- Beside the frame rather than behind the bars. "inside" puts the
+			-- portrait under the health bar, where a flat opaque fill hides it
+			-- almost completely.
+			placement = "outside",     -- inside | outside
 			side = "LEFT",             -- outside placement side
+			-- 2D only. The game's portrait art has a circular alpha, so "square"
+			-- crops to the inscribed square -- the largest fully opaque region --
+			-- rather than trying to un-round the texture, which is not possible.
+			shape = "square",          -- square | native
 			width = 40,
 			height = 40,
 			alpha = 1,

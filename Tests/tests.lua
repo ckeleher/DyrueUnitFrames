@@ -2027,10 +2027,32 @@ local function testPortrait()
 	-- active set, which is what stops it being laid out and updated.
 	check("portrait/not active while off", player.activeElements.portrait == nil)
 
+	equal("portrait/placed beside the frame by default", cfg.portrait.placement, "outside")
+	equal("portrait/square by default", cfg.portrait.shape, "square")
+
 	-- 2D
 	portrait.mode.set(nil, "2d")
 	local el = player.elements.portrait
 	check("portrait/2D builds", el ~= nil)
+
+	-- Square crops to the inscribed square of the game's round portrait art.
+	local left, right, top, bottom = el.texture:GetTexCoord()
+	check("portrait/square crops inward", left > 0 and left < 0.25, tostring(left))
+	near("portrait/square crop is symmetric", right, 1 - left)
+	near("portrait/square crop is the same on both axes", top, left)
+
+	portrait.shape.set(nil, "native")
+	player:FullUpdate()
+	left, right = el.texture:GetTexCoord()
+	equal("portrait/native uses the full texture", left, 0)
+	equal("portrait/native right edge", right, 1)
+	portrait.shape.set(nil, "square")
+	player:FullUpdate()
+
+	-- Beside the frame, not over it.
+	local point, relative, relativePoint = el.texture:GetPoint(1)
+	equal("portrait/anchored to the frame's left edge", point, "RIGHT")
+	equal("portrait/relative to the content's left", relativePoint, "LEFT")
 	equal("portrait/2D sized", el.texture:GetWidth(), cfg.portrait.width)
 	equal("portrait/2D opacity applied", el.texture:GetAlpha(), 1)
 

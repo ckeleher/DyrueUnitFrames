@@ -171,6 +171,11 @@ function methods:SetValue(v) self.__value = v end
 function methods:GetValue() return self.__value end
 function methods:SetTexture(t) self.__texture = t return true end
 function methods:GetTexture() return self.__texture end
+function methods:SetTexCoord(l, r, t, b) self.__texCoord = { l, r, t, b } end
+function methods:GetTexCoord()
+	local c = self.__texCoord or { 0, 1, 0, 1 }
+	return c[1], c[2], c[3], c[4]
+end
 function methods:SetStatusBarTexture(t) self.__statusBarTexture = t return true end
 function methods:GetStatusBarTexture() return self.__statusBarTexture end
 
