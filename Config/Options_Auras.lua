@@ -315,7 +315,7 @@ local function buildGroup(def, groupKey, order, label, isDebuff)
 	if not isDebuff and unitKey == "player" then
 		args.cancelNote = {
 			type = "description", order = 63,
-			name = L["|cffffcc00Right-click cancels your own buffs on this frame.|r Cancelling is a protected action, so it goes through a secure attribute that can only be updated outside combat. Out of combat it is exact; during a fight the mapping can be one aura stale."],
+			name = L["|cffffcc00Right-click cancels your own buffs on this frame.|r Canceling is a protected action, so it goes through a secure attribute that can only be updated outside combat. Out of combat it is exact; during a fight the mapping can be one aura stale."],
 		}
 	end
 

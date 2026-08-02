@@ -350,7 +350,7 @@ local function buildTextGroup(def, index, rebuildParent)
 			difficultyNote = {
 				type = "description", order = 32,
 				hidden = function() return text().colorMode ~= "difficulty" end,
-				name = L["Uses the game's own GetCreatureDifficultyColor, so grey/green/yellow/orange/red match the default UI exactly and stay matched if Blizzard ever adjusts them. For non-standard thresholds, switch to Rules and test level.difference."],
+				name = L["Uses the game's own GetCreatureDifficultyColor, so gray/green/yellow/orange/red match the default UI exactly and stay matched if Blizzard ever adjusts them. For non-standard thresholds, switch to Rules and test level.difference."],
 			},
 			color = Options.Color(L["Color"], 33, text, "color", apply, {
 				desc = L["Also the fallback when no rule matches."],

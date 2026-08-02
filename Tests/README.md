@@ -59,7 +59,7 @@ differentiation · every slash command · global namespace leaks.
 ## What it cannot cover
 
 Anything that needs a real client: actual rendering, 3D model frames, real
-protected-function behaviour and taint, CPU and memory budgets, and whether the
+protected-function behavior and taint, CPU and memory budgets, and whether the
 API assumptions in `Documents/COMPAT_FINDINGS.md` are correct in the first
 place. A green run means the logic is consistent, not that the addon works —
 `Probe/DyrueUnitFrames_Probe` answers the second question.

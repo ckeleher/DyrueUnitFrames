@@ -253,11 +253,11 @@ rule, aura group and config control covers it for free.
 
 ---
 
-## Licence
+## License
 
 MIT — see `LICENSE`. The embedded libraries keep their own terms; see
 `Libs/LICENSE.md`.
 
 This is a clean-room implementation. Shadowed Unit Frames is All Rights
-Reserved; its behaviour and UX ideas were referenced, its source was not read
+Reserved; its behavior and UX ideas were referenced, its source was not read
 while writing the corresponding code.

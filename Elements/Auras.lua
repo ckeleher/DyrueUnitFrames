@@ -249,7 +249,7 @@ end
 --
 -- Consequence, stated plainly: attribute updates are routed through
 -- CombatQueue, so while you are in combat the overlays keep whatever aura
--- index they had when combat started. Cancelling a buff mid-fight may
+-- index they had when combat started. Canceling a buff mid-fight may
 -- therefore cancel a neighbouring one. Out of combat it is exact.
 --------------------------------------------------------------------------------
 
@@ -404,7 +404,7 @@ local function layoutGroup(frame, el, group, cfg, name)
 
 	-- Cells are laid out on the BASE size so rows stay aligned even when own
 	-- auras are scaled up; the larger button simply overflows its cell,
-	-- centred (FR-5.3).
+	-- centered (FR-5.3).
 	group.cells = group.cells or {}
 	local cells = group.cells
 	for i = #cells, 1, -1 do cells[i] = nil end

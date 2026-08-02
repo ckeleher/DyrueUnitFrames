@@ -20,7 +20,7 @@ local floor, abs = math.floor, math.abs
 local tconcat = table.concat
 
 --------------------------------------------------------------------------------
--- Number formatting (SPEC §4.3.2 "Formatting behaviour")
+-- Number formatting (SPEC §4.3.2 "Formatting behavior")
 --------------------------------------------------------------------------------
 
 local function general()

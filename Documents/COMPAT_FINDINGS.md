@@ -193,7 +193,7 @@ Recorded as they are made, so the reasoning survives.
 | §5.8 AceDB defaults | AceDB is used for profile management only; the schema is deep-filled by `Defaults:EnsureProfile` | AceDB implements defaults with `__index` metatables, under which a *deleted* color rule or text element comes back on next login. User-editable lists need real ownership |
 | §FR-2.3 append mode | The appended mana bar hangs below the button's own bounds rather than growing the button | Growing a secure button is a protected operation. Hanging the bar outside means a druid shifting form mid-fight sees mana immediately instead of at `PLAYER_REGEN_ENABLED`. Reserve mode is unaffected and keeps everything inside the frame |
 | §FR-5.9 right-click cancel | Secure attribute on a separate overlay button, updated through `CombatQueue` | Aura icons must be shown and hidden constantly in combat, which a protected frame cannot do. Splitting insecure icon from secure overlay is the only arrangement that satisfies both. Cost: in combat the overlay can be one aura stale |
-| §5.7 incremental aura updates | `updateInfo` is used to *skip* no-op updates; the normal path is a full rescan | The spec calls this an optimisation, not a blocker. Maintaining a parallel instance-ID store is a real bug surface and buys nothing measurable at Classic's aura counts |
+| §5.7 incremental aura updates | `updateInfo` is used to *skip* no-op updates; the normal path is a full rescan | The spec calls this an optimization, not a blocker. Maintaining a parallel instance-ID store is a real bug surface and buys nothing measurable at Classic's aura counts |
 | §5.1 file layout | A `Tests/` directory was added | A headless suite that runs the addon against a stubbed API in a real Lua 5.1 interpreter. Not in the spec's layout, but the project's entire premise is that the last one kept breaking, and this makes step 6 of the patch-day playbook cost thirty seconds instead of an evening |
 
 ---
@@ -218,4 +218,4 @@ headless suite caught it on its first run.
 nullary trampoline, with the slots saved and restored so a `Guard` nested inside
 a `Dispatch` is safe. It allocates nothing, which is why a closure was not used.
 
-Some WoW builds may have backported the 5.2 behaviour. Do not rely on it.
+Some WoW builds may have backported the 5.2 behavior. Do not rely on it.

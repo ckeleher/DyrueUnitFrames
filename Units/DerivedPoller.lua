@@ -119,7 +119,7 @@ end
 -- Lifecycle
 --------------------------------------------------------------------------------
 
-function DerivedPoller:Initialise()
+function DerivedPoller:Initialize()
 	self:Reconfigure()
 
 	-- Frames that are already visible at load (a derived frame can be shown

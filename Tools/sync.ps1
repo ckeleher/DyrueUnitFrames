@@ -43,7 +43,7 @@ function Find-WowRoot {
         if (Test-Path $c) { return $c }
     }
 
-    # Last resort: look for a flavour folder a few levels down each fixed drive.
+    # Last resort: look for a flavor folder a few levels down each fixed drive.
     foreach ($drive in (Get-PSDrive -PSProvider FileSystem).Root) {
         $hit = Get-ChildItem -Path $drive -Filter "_classic_era_" -Directory -Recurse -Depth 3 -ErrorAction SilentlyContinue |
                Select-Object -First 1
@@ -54,9 +54,9 @@ function Find-WowRoot {
 }
 
 function Get-AddOnDirs([string]$root) {
-    $flavours = @("_classic_era_", "_anniversary_", "_classic_", "_classic_ptr_", "_classic_beta_")
+    $flavors = @("_classic_era_", "_anniversary_", "_classic_", "_classic_ptr_", "_classic_beta_")
     $dirs = @()
-    foreach ($f in $flavours) {
+    foreach ($f in $flavors) {
         $path = Join-Path $root "$f\Interface\AddOns"
         if (Test-Path $path) { $dirs += $path }
     }

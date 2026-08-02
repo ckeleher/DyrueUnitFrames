@@ -246,7 +246,7 @@ local function testDefaults()
 	check("defaults/target has aura groups enabled", profile.units.target.auras.buffs.enabled)
 	check("defaults/derived units ship auras off", not profile.units.targettarget.auras.buffs.enabled)
 
-	-- The behaviour AceDB's metatable defaults would have broken: a deleted
+	-- The behavior AceDB's metatable defaults would have broken: a deleted
 	-- text element must STAY deleted across a re-fill.
 	local before = #profile.units.player.texts
 	table.remove(profile.units.player.texts, 1)
@@ -494,7 +494,7 @@ local function testMigration()
 			mana = { texture = "Blizzard", spacing = 1 },
 		}
 	end
-	-- One frame the user has deliberately customised.
+	-- One frame the user has deliberately customized.
 	v1.units.target.health.texture = "Smooth"
 	v1.units.target.power.spacing = 6
 	v1.units.pet.background.color = { r = 0.2, g = 0, b = 0, a = 0.9 }
@@ -1016,7 +1016,7 @@ local function testDragMode()
 	local ui = _G.UIParent
 	ui.__left, ui.__bottom = 0, 0
 	ui.__w, ui.__h = 1920, 1080
-	frame.__left, frame.__bottom = 1060, 640    -- centre would be 1060+110, 640+24
+	frame.__left, frame.__bottom = 1060, 640    -- center would be 1060+110, 640+24
 	frame.__w, frame.__h = 220, 48
 
 	local overlay
@@ -1028,7 +1028,7 @@ local function testDragMode()
 	overlay.dragging = true
 	overlay.__scripts.OnDragStop(overlay)
 
-	-- Frame centre (1170, 664) minus UIParent centre (960, 540)
+	-- Frame center (1170, 664) minus UIParent center (960, 540)
 	near("drag/x written back", ns:UnitConfig("target").anchor.x, 210)
 	near("drag/y written back", ns:UnitConfig("target").anchor.y, 124)
 
@@ -1278,7 +1278,7 @@ local function testDerivedIdentity()
 
 	-- The shared poller catches it on the next tick instead.
 	for _, ticker in ipairs(stub.tickers) do
-		if not ticker.cancelled and ticker.interval == 0.25 then ticker.callback() end
+		if not ticker.canceled and ticker.interval == 0.25 then ticker.callback() end
 	end
 	equal("derived/poller picks up the change", nameString:GetText(), "Third")
 
@@ -1548,7 +1548,7 @@ local function testBrightness()
 
 	health.brightness.set(nil, 0)
 	r, g, b = bar:GetStatusBarColor()
-	check("brightness/zero is honoured and not swallowed by an or-default",
+	check("brightness/zero is honored and not swallowed by an or-default",
 		r == 0 and g == 0 and b == 0)
 
 	health.brightness.set(nil, 1)
@@ -1637,7 +1637,7 @@ local function testBarStack()
 	spacing.set(nil, 4)
 	local _, gapY, _, gapH = barGeometry(player.elements.power.bar)
 	local _, _, _, newHealthHeight = barGeometry(player.elements.health.bar)
-	equal("barstack/separator is honoured when asked for", gapY, -(newHealthHeight + 4))
+	equal("barstack/separator is honored when asked for", gapY, -(newHealthHeight + 4))
 	equal("barstack/frame height still exactly consumed",
 		newHealthHeight + 4 + gapH, cfg.height)
 	spacing.set(nil, 0)
@@ -1766,11 +1766,11 @@ local function testBarBackground()
 	-- Zero is a legitimate value and must not be swallowed by an `or` default.
 	health.bgAlpha.set(nil, 0)
 	r, g, b, a = bg:GetVertexColor()
-	equal("background/zero opacity is honoured", a, 0)
+	equal("background/zero opacity is honored", a, 0)
 
 	health.bgMultiplier.set(nil, 0)
 	r, g, b, a = bg:GetVertexColor()
-	equal("background/zero brightness is honoured", g, 0)
+	equal("background/zero brightness is honored", g, 0)
 
 	-- Power bar has its own independent pair.
 	local power = ns.Options.table.args.units.args.player.args.power.args
@@ -1877,7 +1877,7 @@ local function testNoGlobalLeaks()
 	for key, value in pairs(_G) do
 		if type(key) == "string" and key:find("Dyrue") and not allowed[key] then
 			-- Frames are named DyrueUF_* by design; the game puts named frames
-			-- in _G and that is the documented behaviour, not a leak.
+			-- in _G and that is the documented behavior, not a leak.
 			if not key:find("^DyrueUF_") and key ~= "DyrueUnitFramesHiddenHolder"
 				and key ~= "DyrueUnitFramesProbeDB" then
 				leaked[#leaked + 1] = key

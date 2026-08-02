@@ -162,7 +162,7 @@ function PartyGroup:Apply()
 	end
 end
 
-function PartyGroup:Initialise()
+function PartyGroup:Initialize()
 	if eventFrame then
 		self:Apply()
 		return

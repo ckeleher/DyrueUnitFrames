@@ -407,7 +407,7 @@ local function portraitProbe()
 		unitVisible = UnitIsVisible(unit),
 	}
 
-	out("Two squares should now be visible above centre screen: 2D on the left,")
+	out("Two squares should now be visible above center screen: 2D on the left,")
 	out("3D on the right. Change target, take a loading screen, and target something")
 	out("at maximum range, re-running /dufprobe portrait each time.")
 	out("/dufprobe portraitoff hides them.")

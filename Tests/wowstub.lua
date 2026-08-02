@@ -176,7 +176,7 @@ function methods:GetStatusBarTexture() return self.__statusBarTexture end
 
 function methods:GetFrameCPUUsage() return 0 end
 
--- Anything not modelled above is a no-op that returns nothing. Memoised so
+-- Anything not modeled above is a no-op that returns nothing. Memoised so
 -- repeated lookups do not allocate.
 widgetMT = {
 	__index = function(t, key)
@@ -252,9 +252,9 @@ end
 
 _G.C_Timer = {
 	NewTicker = function(interval, callback)
-		local t = { interval = interval, callback = callback, cancelled = false }
-		function t:Cancel() self.cancelled = true end
-		function t:IsCancelled() return self.cancelled end
+		local t = { interval = interval, callback = callback, canceled = false }
+		function t:Cancel() self.canceled = true end
+		function t:IsCancelled() return self.canceled end
 		stub.tickers[#stub.tickers + 1] = t
 		return t
 	end,
@@ -267,7 +267,7 @@ _G.C_Timer = {
 function stub.activeTickers()
 	local n = 0
 	for _, t in ipairs(stub.tickers) do
-		if not t.cancelled then n = n + 1 end
+		if not t.canceled then n = n + 1 end
 	end
 	return n
 end
@@ -494,7 +494,7 @@ libs["AceConfig-3.0"] = { RegisterOptionsTable = function(_, name, tbl) stub.opt
 libs["AceConfigDialog-3.0"] = { AddToBlizOptions = function() return newWidget("Frame") end, Open = noop, OpenFrames = {} }
 libs["AceConfigRegistry-3.0"] = { NotifyChange = noop }
 libs["AceDBOptions-3.0"] = { GetOptionsTable = function() return { type = "group", name = "Profiles", args = {} } end }
--- Modelled properly rather than stubbed to a constant, so that "unknown media
+-- Modeled properly rather than stubbed to a constant, so that "unknown media
 -- name falls back instead of blanking the bar" is actually testable.
 local media = {
 	statusbar = { Blizzard = "Interface\\TargetingFrame\\UI-StatusBar" },

@@ -283,8 +283,8 @@ local function generalGroup()
 		},
 	}
 
-	args.behaviour = {
-		type = "group", order = 40, inline = true, name = L["Behaviour"],
+	args.behavior = {
+		type = "group", order = 40, inline = true, name = L["Behavior"],
 		args = {
 			unitTooltips = {
 				type = "toggle", order = 1, name = L["Tooltips on unit frames"],

@@ -33,7 +33,7 @@ local element = {
 --
 -- Historically UNIT_POWER_UPDATE for the mana type has not fired reliably
 -- while shapeshifted. One shared ticker services every visible mana bar, and
--- it is cancelled the moment the last one hides — bounded cost, no idle
+-- it is canceled the moment the last one hides — bounded cost, no idle
 -- overhead, which is the standing rule for the three permitted tickers
 -- (SPEC §5.7).
 --

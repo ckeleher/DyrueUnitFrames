@@ -4,7 +4,7 @@
 --
 -- This is the ONLY file permitted to:
 --   * call a version-sensitive API,
---   * branch on client flavour,
+--   * branch on client flavor,
 --   * touch a Blizzard-owned frame.
 --
 -- Everything else in the addon goes through the accessors below. When Blizzard

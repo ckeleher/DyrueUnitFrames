@@ -237,8 +237,8 @@ end
 
 function addon:OnEnable()
 	ns.Factory:CreateAll()
-	ns.PartyGroup:Initialise()
-	ns.DerivedPoller:Initialise()
+	ns.PartyGroup:Initialize()
+	ns.DerivedPoller:Initialize()
 	ns.Anchoring:ApplyAll()
 
 	self:RegisterEvent("PLAYER_ENTERING_WORLD", "OnEnteringWorld")
