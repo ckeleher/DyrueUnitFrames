@@ -239,7 +239,24 @@ local function testDefaults()
 	Defaults:EnsureProfile(profile)
 
 	check("defaults/units built", profile.units ~= nil and profile.units.player ~= nil)
-	equal("defaults/health is green", profile.units.player.health.color.g, 0.9)
+	equal("defaults/health is class colored", profile.units.player.health.colorMode, "class")
+	equal("defaults/NPCs fall back to reaction", profile.units.player.health.npcFallback, "reaction")
+	equal("defaults/the spec's green is still the stored color",
+		profile.units.player.health.color.g, 0.9)
+
+	-- Every unit, not just the player -- target and focus used to override to
+	-- reaction and no longer should.
+	local notClass = {}
+	for key, cfg in pairs(profile.units) do
+		if cfg.health.colorMode ~= "class" then
+			notClass[#notClass + 1] = key .. "=" .. tostring(cfg.health.colorMode)
+		end
+	end
+	if #notClass == 0 then
+		ok("defaults/every unit is class colored")
+	else
+		fail("defaults/every unit is class colored", table.concat(notClass, ", "))
+	end
 	equal("defaults/party pets disabled", profile.units.partypet1.enabled, false)
 	equal("defaults/blizzard frames hidden", profile.general.blizzardFrames, "hide")
 	equal("defaults/blizzard party frames hidden too", profile.general.blizzardParty, true)
@@ -552,6 +569,32 @@ local function testMigration()
 	}
 	Migrate:Run(already, {})
 	equal("migrate/already hiding stays hiding", already.general.blizzardFrames, "hide")
+
+	-- Step 3 -> 4: health bars default to class color, and the two old defaults
+	-- differed by unit.
+	local v3 = {
+		schemaVersion = 3,
+		general = { blizzardFrames = "hide", blizzardParty = true },
+		units = {
+			player = { health = { colorMode = "static", color = { r = 0, g = 0.9, b = 0.1 } } },
+			target = { health = { colorMode = "reaction", color = { r = 0, g = 0.9, b = 0.1 } } },
+			focus  = { health = { colorMode = "reaction", color = { r = 0, g = 0.9, b = 0.1 } } },
+			-- Deliberate choices that must survive.
+			pet    = { health = { colorMode = "reaction", color = { r = 0, g = 0.9, b = 0.1 } } },
+			party1 = { health = { colorMode = "static", color = { r = 1, g = 0, b = 1 } } },
+		},
+	}
+	success = Migrate:Run(v3, {})
+	check("migrate/v3 profile migrates", success)
+	equal("migrate/static spec-green becomes class", v3.units.player.health.colorMode, "class")
+	equal("migrate/target reaction becomes class", v3.units.target.health.colorMode, "class")
+	equal("migrate/focus reaction becomes class", v3.units.focus.health.colorMode, "class")
+	-- "reaction" was never the default on the pet frame, so it was chosen.
+	equal("migrate/reaction kept where it was never the default",
+		v3.units.pet.health.colorMode, "reaction")
+	-- A static color that is not the spec green was chosen too.
+	equal("migrate/custom static color kept", v3.units.party1.health.colorMode, "static")
+	equal("migrate/custom color value kept", v3.units.party1.health.color.r, 1)
 
 	-- Running it again is a no-op.
 	success = Migrate:Run(v1, {})
@@ -909,6 +952,34 @@ local function testOptions()
 	equal("options/typed value stored", ns:UnitConfig("player").anchor.x, 1234)
 	equal("options/getter reflects it", x.get(nil), 1234)
 	x.set(nil, 0)
+
+	-- The color swatch is only offered when something reads it.
+	local healthArgs = tree.args.units.args.player.args.health.args
+	local healthCfg = ns:UnitConfig("player").health
+
+	healthCfg.colorMode = "class"
+	healthCfg.npcFallback = "reaction"
+	check("options/swatch hidden in class mode with a reaction fallback",
+		healthArgs.color.hidden())
+
+	healthCfg.npcFallback = "static"
+	check("options/swatch shown when it is the NPC fallback",
+		not healthArgs.color.hidden())
+	equal("options/swatch is relabelled as the NPC fallback",
+		healthArgs.color.name(), "Color for NPCs")
+
+	healthCfg.colorMode = "static"
+	check("options/swatch shown in static mode", not healthArgs.color.hidden())
+	equal("options/swatch is plainly the color in static mode",
+		healthArgs.color.name(), "Color")
+
+	healthCfg.colorMode = "reaction"
+	check("options/swatch hidden in reaction mode", healthArgs.color.hidden())
+	healthCfg.colorMode = "gradient"
+	check("options/swatch hidden in gradient mode", healthArgs.color.hidden())
+
+	healthCfg.colorMode = "static"
+	healthCfg.npcFallback = "reaction"
 
 	-- Color round trip
 	local color = tree.args.units.args.player.args.health.args.color

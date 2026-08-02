@@ -24,8 +24,9 @@ local type, pairs, ipairs, next = type, pairs, ipairs, next
 
 -- 2: flat bar texture, no gap between bars, frame backdrop off by default.
 -- 3: Blizzard's own unit frames, party frames included, hidden by default.
+-- 4: health bars class-colored by default.
 -- Core/Migrate.lua carries existing profiles forward one step at a time.
-Defaults.SCHEMA_VERSION = 3
+Defaults.SCHEMA_VERSION = 4
 
 --------------------------------------------------------------------------------
 -- Table helpers
@@ -199,7 +200,12 @@ local function unit(overrides)
 			enabled = true,
 			height = 0,                -- 0 = fill whatever the other bars leave
 			texture = DEFAULT_BAR_TEXTURE,
-			colorMode = "static",      -- static | class | reaction | gradient
+			-- SPEC §FR-4.1 specifies static green as the default. Class color is
+			-- shipped instead: it tells you at a glance who you are looking at,
+			-- and it degrades to reaction color for NPCs rather than to
+			-- something meaningless. `color` below is still the green the spec
+			-- asks for and is one dropdown away.
+			colorMode = "class",       -- static | class | reaction | gradient
 			color = color(0, 0.9, 0.1),
 			brightness = 1,            -- scales whatever color the mode resolves to
 			npcFallback = "reaction",  -- what class mode falls back to for NPCs
@@ -363,7 +369,6 @@ local function buildUnits()
 		width = 220, height = 48,
 		anchor = { to = "UIParent", point = "TOPLEFT", relativePoint = "CENTER", x = 180, y = -140 },
 		texts = targetTexts(),
-		health = { colorMode = "reaction" },
 		auras = {
 			buffs = auraGroup({ enabled = true, maxShown = 32, perRow = 8, rows = 4 }),
 			debuffs = auraGroup({
@@ -391,7 +396,6 @@ local function buildUnits()
 	u.focus = unit({
 		width = 180, height = 40,
 		anchor = { to = "UIParent", point = "CENTER", relativePoint = "CENTER", x = 0, y = 180 },
-		health = { colorMode = "reaction" },
 		texts = fullTexts("[hp:perc]%"),
 	})
 
@@ -406,7 +410,6 @@ local function buildUnits()
 		u["party" .. i] = unit({
 			width = 180, height = 40,
 			anchor = { to = "UIParent", point = "TOPLEFT", relativePoint = "LEFT", x = 30, y = 120 - (i - 1) * 48 },
-			health = { colorMode = "class" },
 			power = { height = 8 },
 			texts = fullTexts("[hp:cur:short] / [hp:max:short]"),
 		})

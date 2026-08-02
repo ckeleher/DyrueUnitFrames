@@ -31,6 +31,9 @@ local Errors = ns.Errors
 
 local BARS = { "health", "power", "mana" }
 
+-- Units whose health bar shipped as "reaction" before schema 4.
+local REACTION_BY_DEFAULT = { target = true, focus = true }
+
 local steps = {
 	--- 1 -> 2: the cosmetic defaults changed.
 	--
@@ -85,6 +88,33 @@ local steps = {
 			end
 			if general.blizzardParty == false then
 				general.blizzardParty = true
+			end
+		end
+		return profile
+	end,
+
+	--- 3 -> 4: health bars are class-colored by default.
+	--
+	-- Two old defaults to move, and they differed by unit: target and focus
+	-- shipped as "reaction", everything else as static green. Each is only
+	-- touched where it was actually the default for THAT unit, so a "reaction"
+	-- deliberately chosen on, say, the pet frame is left alone -- it was never
+	-- the default there.
+	[3] = function(profile)
+		for key, cfg in pairs(profile.units or {}) do
+			local health = cfg.health
+			if health then
+				if REACTION_BY_DEFAULT[key] then
+					if health.colorMode == "reaction" then
+						health.colorMode = "class"
+					end
+				elseif health.colorMode == "static" then
+					-- Only the untouched spec green.
+					local c = health.color
+					if c and c.r == 0 and c.g == 0.9 and c.b == 0.1 then
+						health.colorMode = "class"
+					end
+				end
 			end
 		end
 		return profile

@@ -171,6 +171,22 @@ local function healthGroup(def)
 
 	local function notGradient() return health().colorMode ~= "gradient" end
 
+	-- The swatch is only shown when something actually reads it: as the color
+	-- itself in static mode, or as the NPC fallback in class mode. Reaction and
+	-- gradient use neither, and leaving a live-looking color picker next to a
+	-- mode that ignores it is how you get someone changing it and concluding
+	-- the addon is broken.
+	local function swatchUnused()
+		local mode = health().colorMode
+		if mode == "static" then return false end
+		if mode == "class" then return health().npcFallback ~= "static" end
+		return true
+	end
+
+	local function swatchName()
+		return health().colorMode == "class" and L["Color for NPCs"] or L["Color"]
+	end
+
 	local args = {
 		notice = Options.CombatNotice(0),
 		enabled = {
@@ -200,17 +216,17 @@ local function healthGroup(def)
 			get = function() return health().colorMode end,
 			set = function(_, v) health().colorMode = v; apply() end,
 		},
-		color = Options.Color(L["Color"], 12, health, "color", apply, {
-			hidden = function() return health().colorMode == "gradient" end,
-		}),
 		npcFallback = {
-			type = "select", order = 13, name = L["NPCs use"],
-			desc = L["Class colors only ever apply to actual players. NPCs fall through to this."],
+			type = "select", order = 12, name = L["NPCs use"],
+			desc = L["Class colors only ever apply to actual players, so NPCs fall through to this."],
 			hidden = function() return health().colorMode ~= "class" end,
-			values = { reaction = L["Reaction color"], static = L["The single color above"] },
+			values = { reaction = L["Reaction color"], static = L["A fixed color"] },
 			get = function() return health().npcFallback end,
-			set = function(_, v) health().npcFallback = v; apply() end,
+			set = function(_, v) health().npcFallback = v; apply(); Options:Notify() end,
 		},
+		color = Options.Color(swatchName, 13, health, "color", apply, {
+			hidden = swatchUnused,
+		}),
 		gradient1 = Options.GradientColor(L["Gradient: empty"], 15, gradient, 1, apply, { hidden = notGradient }),
 		gradient2 = Options.GradientColor(L["Gradient: middle"], 16, gradient, 2, apply, { hidden = notGradient }),
 		gradient3 = Options.GradientColor(L["Gradient: full"], 17, gradient, 3, apply, { hidden = notGradient }),
