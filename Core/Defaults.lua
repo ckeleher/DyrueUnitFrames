@@ -175,8 +175,13 @@ local function unit(overrides)
 		},
 		detached = false,              -- party frames: opt out of group layout
 
+		-- Off by default. The bars fill the frame exactly unless you give one a
+		-- fixed height, so this backdrop is invisible in the default layout --
+		-- except that it sits behind the bars and masks their own background
+		-- opacity, which makes that control look broken. Turn it on when you
+		-- have deliberately left space for it to show through.
 		background = {
-			enabled = true,
+			enabled = false,
 			color = color(0, 0, 0, 0.6),
 			inset = 0,
 		},

@@ -155,6 +155,10 @@ function methods:GetStatusBarColor()
 	return c[1], c[2], c[3], c[4]
 end
 function methods:SetVertexColor(r, g, b, a) self.__vertexColor = { r, g, b, a } end
+function methods:GetVertexColor()
+	local c = self.__vertexColor or {}
+	return c[1], c[2], c[3], c[4]
+end
 function methods:SetColorTexture(r, g, b, a) self.__color = { r, g, b, a } end
 function methods:SetTextColor(r, g, b, a) self.__textColor = { r, g, b, a } end
 function methods:GetTextColor()

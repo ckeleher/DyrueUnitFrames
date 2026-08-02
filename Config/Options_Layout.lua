@@ -114,6 +114,10 @@ local function layoutGroup(def)
 	}
 
 	local backgroundArgs = {
+		note = {
+			type = "description", order = 0,
+			name = L["Fills the whole frame, behind the bars. With the default layout the bars cover the frame exactly, so this only shows if you give a bar a fixed height and leave a gap. Note that it sits behind the bar backgrounds, so turning it on will mask their opacity settings."],
+		},
 		enabled = {
 			type = "toggle", order = 1, name = L["Enable"],
 			get = function() return background().enabled end,
@@ -220,7 +224,11 @@ local function healthGroup(def)
 		offlineColor = Options.Color(L["Offline colour"], 22, health, "offlineColor", apply),
 		tapColor = Options.Color(L["Tapped by someone else"], 23, health, "tapColor", apply),
 
-		bgHeader = { type = "header", order = 30, name = L["Background"] },
+		bgHeader = { type = "header", order = 30, name = L["Background (the depleted part of the bar)"] },
+		bgNote = {
+			type = "description", order = 30.5,
+			name = L["These control the empty portion of the bar, not the filled portion. If nothing appears to change, check that the frame background under the Layout tab is off -- it sits behind the bars and will mask any transparency set here."],
+		},
 		bgMultiplier = {
 			type = "range", order = 31, name = L["Background brightness"],
 			desc = L["A fraction of the bar's own colour, so a class-coloured bar keeps a matching background."],
@@ -230,6 +238,7 @@ local function healthGroup(def)
 		},
 		bgAlpha = {
 			type = "range", order = 32, name = L["Background opacity"],
+			desc = L["0 makes the empty part of the bar fully transparent."],
 			min = 0, max = 1, step = 0.01,
 			get = function() return health().bgAlpha end,
 			set = function(_, v) health().bgAlpha = v; apply() end,

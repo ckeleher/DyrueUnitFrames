@@ -1410,7 +1410,76 @@ local function testTextures()
 end
 
 --------------------------------------------------------------------------------
--- 25. Portrait placement, including the lazily created 3D model
+-- 25. Bar background brightness and opacity
+--------------------------------------------------------------------------------
+
+local function testBarBackground()
+	local player = ns.frames.player
+	local cfg = ns:UnitConfig("player")
+	local health = ns.Options.table.args.units.args.player.args.health.args
+
+	-- A known bar colour so the maths is checkable.
+	cfg.health.colorMode = "static"
+	cfg.health.color = { r = 0, g = 1, b = 0, a = 1 }
+	ns:BumpSerial()
+	ns:RefreshUnit("player")
+
+	local bg = player.elements.health.bg
+
+	health.bgMultiplier.set(nil, 0.5)
+	health.bgAlpha.set(nil, 1)
+	local r, g, b, a = bg:GetVertexColor()
+	near("background/brightness scales the bar colour", g, 0.5)
+	near("background/opacity at full", a, 1)
+
+	health.bgAlpha.set(nil, 0.3)
+	r, g, b, a = bg:GetVertexColor()
+	near("background/opacity reaches the texture", a, 0.3)
+	near("background/brightness unaffected by opacity", g, 0.5)
+
+	-- Zero is a legitimate value and must not be swallowed by an `or` default.
+	health.bgAlpha.set(nil, 0)
+	r, g, b, a = bg:GetVertexColor()
+	equal("background/zero opacity is honoured", a, 0)
+
+	health.bgMultiplier.set(nil, 0)
+	r, g, b, a = bg:GetVertexColor()
+	equal("background/zero brightness is honoured", g, 0)
+
+	-- Power bar has its own independent pair.
+	local power = ns.Options.table.args.units.args.player.args.power.args
+	power.bgAlpha.set(nil, 0.7)
+	local powerBg = player.elements.power.bg
+	near("background/power opacity is independent", select(4, powerBg:GetVertexColor()), 0.7)
+	near("background/health opacity unchanged", select(4, bg:GetVertexColor()), 0)
+
+	-- The filled portion of the bar is deliberately NOT affected: background
+	-- settings describe the depleted part only.
+	local barR, barG, barB = player.elements.health.bar:GetStatusBarColor()
+	near("background/bar fill colour untouched", barG, 1)
+
+	-- The frame backdrop must default to OFF. It sits behind the bars, so
+	-- leaving it on makes every bar-background opacity setting above look like
+	-- it does nothing.
+	check("background/frame backdrop defaults off", cfg.background.enabled == false)
+	check("background/frame backdrop texture hidden", not player.background:IsShown())
+
+	-- Turning it on must still work.
+	local layout = ns.Options.table.args.units.args.player.args.layout.args.background.args
+	layout.enabled.set(nil, true)
+	check("background/frame backdrop can be turned on", player.background:IsShown())
+	layout.enabled.set(nil, false)
+
+	health.bgMultiplier.set(nil, 0.25)
+	health.bgAlpha.set(nil, 1)
+	power.bgAlpha.set(nil, 1)
+	ns.Defaults:ResetUnit(ns:Profile(), "player")
+	ns:BumpSerial()
+	ns:RefreshUnit("player")
+end
+
+--------------------------------------------------------------------------------
+-- 26. Portrait placement, including the lazily created 3D model
 --------------------------------------------------------------------------------
 
 local function testPortrait()
@@ -1537,6 +1606,7 @@ local suites = {
 	{ "slash-commands", testSlashCommands },
 	{ "frame-appearance", testFrameAppearance },
 	{ "textures", testTextures },
+	{ "bar-background", testBarBackground },
 	{ "portrait", testPortrait },
 	{ "global-leaks", testNoGlobalLeaks },
 }
