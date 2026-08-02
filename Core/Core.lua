@@ -316,6 +316,8 @@ function ns:FirstRunMessage()
 	Errors:Print(string.format(L["v%s loaded. |cffffcc00/duf|r opens the options."], ns.version))
 	if ns:General().blizzardFrames == "none" then
 		Errors:Print(L["Blizzard's own unit frames are being left alone. Hide them in Edit Mode if this client offers it, or run |cffffcc00/duf blizzard hide|r to have DyrueUnitFrames do it."])
+	else
+		Errors:Print(L["Blizzard's own unit frames have been hidden. |cffffcc00/duf blizzard none|r puts them back if you would rather manage them in Edit Mode."])
 	end
 	if Compat.hasSecretValues then
 		Errors:Print("|cffff5555" .. L["This client exposes Secret Values, which SPEC §1.3 assumed Classic would not. Text may be degraded. Please report this."] .. "|r")

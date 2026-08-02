@@ -41,12 +41,11 @@ Nothing needs to be installed separately.
 
 ## First run
 
-Blizzard's own unit frames are **left alone by default**. These clients have
-Edit Mode, and hiding frames through Edit Mode is strictly lower risk than an
-addon reaching into them.
+Blizzard's own unit frames are **hidden by default**, party frames included.
 
-- Try Edit Mode first.
-- If it cannot hide them, run `/duf blizzard hide`.
+If you would rather manage them through Edit Mode — which these clients have,
+and which is lower risk because it involves no addon reaching into Blizzard's
+UI at all — run `/duf blizzard none` and hide them there instead.
 
 Then `/duf` to open the options, or `/duf test` to show every frame with
 stand-in data so you can lay everything out while standing in a city.

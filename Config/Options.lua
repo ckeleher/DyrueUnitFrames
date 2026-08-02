@@ -210,11 +210,11 @@ local function generalGroup()
 		args = {
 			explain = {
 				type = "description", order = 1,
-				name = L["These clients have Edit Mode, which may be able to hide Blizzard's unit frames natively. That is lower risk than DyrueUnitFrames touching them, so the default is to leave them alone. Check Edit Mode first; if it cannot do it, switch this to Hide."],
+				name = L["Hidden by default, since the default frames sitting on top of these ones is not a usable starting point. If you would rather drive it from Edit Mode -- which these clients have, and which is the lower-risk option because it does not involve an addon reaching into Blizzard's UI at all -- set this to 'Leave alone' and hide them there instead."],
 			},
 			mode = {
 				type = "select", order = 2, name = L["Blizzard unit frames"],
-				values = { none = L["Leave alone (recommended)"], hide = L["Hide"] },
+				values = { none = L["Leave alone"], hide = L["Hide"] },
 				get = function() return general().blizzardFrames end,
 				set = function(_, value)
 					general().blizzardFrames = value

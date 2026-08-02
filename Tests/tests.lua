@@ -241,7 +241,8 @@ local function testDefaults()
 	check("defaults/units built", profile.units ~= nil and profile.units.player ~= nil)
 	equal("defaults/health is green", profile.units.player.health.color.g, 0.9)
 	equal("defaults/party pets disabled", profile.units.partypet1.enabled, false)
-	equal("defaults/blizzard frames left alone", profile.general.blizzardFrames, "none")
+	equal("defaults/blizzard frames hidden", profile.general.blizzardFrames, "hide")
+	equal("defaults/blizzard party frames hidden too", profile.general.blizzardParty, true)
 	check("defaults/target has aura groups enabled", profile.units.target.auras.buffs.enabled)
 	check("defaults/derived units ship auras off", not profile.units.targettarget.auras.buffs.enabled)
 
@@ -478,7 +479,11 @@ local function testMigration()
 	-- Step 1 -> 2: the cosmetic defaults changed, and Defaults:EnsureProfile
 	-- never overwrites a stored value, so an existing profile would otherwise
 	-- keep the old look on every frame forever.
-	local v1 = { schemaVersion = 1, units = {} }
+	local v1 = {
+		schemaVersion = 1,
+		units = {},
+		general = { blizzardFrames = "none", blizzardParty = false },
+	}
 	for _, key in ipairs({ "player", "target", "party1", "pet", "targettarget" }) do
 		v1.units[key] = {
 			width = 200, height = 46,
@@ -496,7 +501,7 @@ local function testMigration()
 
 	success = Migrate:Run(v1, {})
 	check("migrate/v1 profile migrates", success)
-	equal("migrate/stamped as v2", v1.schemaVersion, 2)
+	equal("migrate/stamped at the target version", v1.schemaVersion, Defaults.SCHEMA_VERSION)
 
 	local stale = {}
 	for _, key in ipairs({ "player", "party1", "targettarget" }) do
@@ -525,10 +530,33 @@ local function testMigration()
 	equal("migrate/layout untouched", v1.units.player.width, 200)
 	equal("migrate/anchor untouched", v1.units.player.anchor.point, "CENTER")
 
+	-- Step 2 -> 3: Blizzard's frames now ship hidden.
+	-- The chain must run EVERY step, not just the first one.
+	equal("migrate/v1 chain ran every step", v1.general.blizzardFrames, "hide")
+	equal("migrate/party frames hidden by the chain", v1.general.blizzardParty, true)
+
+	local v2 = {
+		schemaVersion = 2,
+		units = {},
+		general = { blizzardFrames = "none", blizzardParty = false },
+	}
+	success = Migrate:Run(v2, {})
+	check("migrate/v2 profile migrates", success)
+	equal("migrate/blizzard frames flipped to hide", v2.general.blizzardFrames, "hide")
+	equal("migrate/blizzard party flipped on", v2.general.blizzardParty, true)
+
+	-- An explicit "hide" is already correct and must not be disturbed.
+	local already = {
+		schemaVersion = 2, units = {},
+		general = { blizzardFrames = "hide", blizzardParty = true },
+	}
+	Migrate:Run(already, {})
+	equal("migrate/already hiding stays hiding", already.general.blizzardFrames, "hide")
+
 	-- Running it again is a no-op.
 	success = Migrate:Run(v1, {})
 	check("migrate/re-running is a no-op", success)
-	equal("migrate/still v2", v1.schemaVersion, 2)
+	equal("migrate/still at target", v1.schemaVersion, Defaults.SCHEMA_VERSION)
 end
 
 --------------------------------------------------------------------------------

@@ -156,9 +156,20 @@ means the handling was precautionary rather than necessary.
 `SPEC.md` §5.6 ranks the options: if Edit Mode can hide `PlayerFrame` and
 `TargetFrame` natively, DyrueUnitFrames should not touch them at all.
 
-**Current default: `blizzardFrames = "none"`** — Blizzard's frames are left
-completely alone, and the first-run message says so and points at both Edit
-Mode and `/duf blizzard hide`.
+**Current default: `blizzardFrames = "hide"`, `blizzardParty = true`.**
+
+This deliberately inverts the spec's preference order. §5.6 ranks "leave them
+alone and let Edit Mode do it" first, and that reasoning still holds — it is
+genuinely lower risk, because it involves no addon touching Blizzard's UI at
+all. But a unit frame addon whose out-of-the-box state is its own frames
+underneath Blizzard's is not usable, and "usable on install" won the trade.
+
+The containment argument is unaffected: hiding still goes through the single
+`Compat.HideBlizzardFrame` path, which is the only code in the project that
+touches a Blizzard frame. What changed is which way that one switch is thrown
+by default, not how many places can throw it.
+
+`/duf blizzard none` reverts it, and the first-run message names the command.
 
 | Question | Observed |
 |---|---|

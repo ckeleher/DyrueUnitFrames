@@ -23,8 +23,9 @@ ns.Defaults = Defaults
 local type, pairs, ipairs, next = type, pairs, ipairs, next
 
 -- 2: flat bar texture, no gap between bars, frame backdrop off by default.
--- Core/Migrate.lua step [1] carries existing profiles forward.
-Defaults.SCHEMA_VERSION = 2
+-- 3: Blizzard's own unit frames, party frames included, hidden by default.
+-- Core/Migrate.lua carries existing profiles forward one step at a time.
+Defaults.SCHEMA_VERSION = 3
 
 --------------------------------------------------------------------------------
 -- Table helpers
@@ -430,11 +431,15 @@ function Defaults:BuildProfile()
 		schemaVersion = Defaults.SCHEMA_VERSION,
 
 		general = {
-			-- SPEC §5.6: prefer leaving Blizzard's frames alone. Now that these
-			-- clients have Edit Mode the player may be able to hide them
-			-- natively, which is strictly lower risk than us touching them.
-			blizzardFrames = "none",   -- none | hide
-			blizzardParty = false,
+			-- SPEC §5.6 ranks leaving Blizzard's frames alone above touching
+			-- them, on the grounds that Edit Mode might be able to hide them
+			-- natively. In practice a unit frame addon that leaves the default
+			-- frames sitting on top of its own is not usable out of the box, so
+			-- this ships as "hide". Set it back to "none" if you would rather
+			-- drive it from Edit Mode; everything still goes through the single
+			-- Compat.HideBlizzardFrame path either way.
+			blizzardFrames = "hide",   -- none | hide
+			blizzardParty = true,
 
 			locked = true,
 			gridSnap = false,

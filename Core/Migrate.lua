@@ -69,6 +69,26 @@ local steps = {
 		end
 		return profile
 	end,
+
+	--- 2 -> 3: Blizzard's own unit frames are hidden by default now, party
+	-- frames included.
+	--
+	-- Same caveat as step 1: "none" was both the old default and a legitimate
+	-- choice, and nothing distinguishes them after the fact, so a deliberate
+	-- "leave them alone" gets moved too. It is one setting under General and
+	-- it is trivially set back.
+	[2] = function(profile)
+		local general = profile.general
+		if general then
+			if general.blizzardFrames == "none" then
+				general.blizzardFrames = "hide"
+			end
+			if general.blizzardParty == false then
+				general.blizzardParty = true
+			end
+		end
+		return profile
+	end,
 }
 
 Migrate.steps = steps
