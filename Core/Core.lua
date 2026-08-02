@@ -91,7 +91,7 @@ end
 
 ns.frames = {}            -- unitKey -> frame
 
---- Bumped on every configuration change. Compiled caches (tag formats, colour
+--- Bumped on every configuration change. Compiled caches (tag formats, color
 -- rules) compare against it instead of rebuilding on a timer.
 ns.configSerial = 1
 

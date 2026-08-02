@@ -96,7 +96,7 @@ function Options.Field(getTable, key, apply)
 		end
 end
 
---- Colour field, in AceConfig's r,g,b,a form.
+--- Color field, in AceConfig's r,g,b,a form.
 function Options.ColorField(getTable, key, apply)
 	return
 		function()
@@ -114,7 +114,7 @@ function Options.ColorField(getTable, key, apply)
 		end
 end
 
---- Colour field for a positional entry in a gradient stop list.
+--- Color field for a positional entry in a gradient stop list.
 function Options.GradientField(getTable, index, apply)
 	return
 		function()
@@ -132,7 +132,7 @@ function Options.GradientField(getTable, index, apply)
 		end
 end
 
---- Complete colour control.
+--- Complete color control.
 function Options.Color(name, order, getTable, key, apply, overrides)
 	local get, set = Options.ColorField(getTable, key, apply)
 	local option = { type = "color", name = name, order = order, get = get, set = set }
@@ -142,7 +142,7 @@ function Options.Color(name, order, getTable, key, apply, overrides)
 	return option
 end
 
---- Complete colour control for one stop in a gradient list.
+--- Complete color control for one stop in a gradient list.
 function Options.GradientColor(name, order, getList, index, apply, overrides)
 	local get, set = Options.GradientField(getList, index, apply)
 	local option = { type = "color", name = name, order = order, get = get, set = set }

@@ -5,7 +5,7 @@
 -- Design decision worth recording: AceDB's own `defaults` mechanism is NOT
 -- used for the per-unit tree. AceDB implements defaults with __index
 -- metatables, which works well for flat settings and badly for user-editable
--- *lists* — a removed colour rule or text element reappears on next login
+-- *lists* — a removed color rule or text element reappears on next login
 -- because the default is still underneath it.
 --
 -- Instead AceDB is used purely for profile management (profiles, per-character
@@ -41,7 +41,7 @@ local function deepCopy(src)
 end
 Defaults.DeepCopy = deepCopy
 
--- A table with [1] set is a user-editable list (text elements, colour rules,
+-- A table with [1] set is a user-editable list (text elements, color rules,
 -- gradient stops, filter entries). Lists are seeded once and then left alone,
 -- so removing an entry actually removes it.
 local function isList(t)
@@ -201,7 +201,7 @@ local function unit(overrides)
 			texture = DEFAULT_BAR_TEXTURE,
 			colorMode = "static",      -- static | class | reaction | gradient
 			color = color(0, 0.9, 0.1),
-			brightness = 1,            -- scales whatever colour the mode resolves to
+			brightness = 1,            -- scales whatever color the mode resolves to
 			npcFallback = "reaction",  -- what class mode falls back to for NPCs
 			bgMultiplier = 0.25,
 			bgAlpha = 1,

@@ -1,10 +1,10 @@
 -- Systems/ColorRules.lua
 --
--- SPEC §4.3.3 — the colour rule engine.
+-- SPEC §4.3.3 — the color rule engine.
 --
 -- An ordered list; the first matching rule wins; if none match, the element's
--- static colour applies. The metric being *tested* is deliberately independent
--- of the element being *coloured* (FR-3.3), so "turn the unit's name red when
+-- static color applies. The metric being *tested* is deliberately independent
+-- of the element being *colored* (FR-3.3), so "turn the unit's name red when
 -- its health drops below 20%" is an ordinary configuration rather than a
 -- special case.
 --
@@ -206,7 +206,7 @@ function ColorRules:Evaluate(rules, unit)
 	return nil
 end
 
---- Read one metric directly. Used by gradient colouring, which keys off a
+--- Read one metric directly. Used by gradient coloring, which keys off a
 -- metric rather than a rule list.
 function ColorRules:Metric(key, unit)
 	local def = metrics[key]

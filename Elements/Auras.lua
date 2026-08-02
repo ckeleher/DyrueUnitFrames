@@ -10,7 +10,7 @@
 --     third party's debuff gets no swipe and no timer, never a fabricated one
 --     (FR-5.8);
 --   * player-sourced auras must be visually distinguished by size and
---     optionally by border colour (FR-5.3) — that is an explicit brief
+--     optionally by border color (FR-5.3) — that is an explicit brief
 --     requirement, not a nicety.
 
 local ADDON, ns = ...
@@ -442,7 +442,7 @@ local function applyButton(frame, group, cfg, button, entry, cell, filter)
 	button.icon:SetTexture(entry.icon)
 	button.icon:SetDesaturated((cfg.desaturateOthers and not entry.own) and true or false)
 
-	-- Border policy (FR-5.3 / FR-5.4). Own-source and debuff-type colouring
+	-- Border policy (FR-5.3 / FR-5.4). Own-source and debuff-type coloring
 	-- are mutually exclusive per group; the user picks which wins.
 	local mode = cfg.borderMode or "own"
 	local r, g, b, a

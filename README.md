@@ -137,12 +137,12 @@ absolute health the client does not actually report. No stray `" / "`.
 
 ---
 
-## Colour rules
+## Color rules
 
-Any text element can be coloured by an **ordered rule list**. First match wins;
-if nothing matches, the element's static colour applies.
+Any text element can be colored by an **ordered rule list**. First match wins;
+if nothing matches, the element's static color applies.
 
-The thing being *tested* is independent of the thing being *coloured*, so
+The thing being *tested* is independent of the thing being *colored*, so
 "turn the unit's name red below 20% health" is an ordinary rule rather than a
 special case.
 
@@ -154,9 +154,9 @@ Metrics: `health.current` `health.max` `health.percent` `health.deficit`
 Rules can be added, removed, reordered, duplicated, disabled, and copied
 wholesale from any other text element on any other unit.
 
-Level text defaults to `difficulty` colouring, which calls the game's own
+Level text defaults to `difficulty` coloring, which calls the game's own
 `GetCreatureDifficultyColor`. That is not a reimplementation of the thresholds —
-it *is* the base game's function, so the colours match the default UI exactly
+it *is* the base game's function, so the colors match the default UI exactly
 and stay matched if Blizzard ever adjusts them.
 
 ---
@@ -248,7 +248,7 @@ re-laid-out freely mid-fight. That is why a druid shifting form in combat gets a
 mana bar immediately rather than at `PLAYER_REGEN_ENABLED`.
 
 **Elements are unit-agnostic data.** Nothing in `Elements/` knows what a party
-frame is. Register a unit in `Units/Registry.lua` and every element, colour
+frame is. Register a unit in `Units/Registry.lua` and every element, color
 rule, aura group and config control covers it for free.
 
 ---

@@ -1,6 +1,6 @@
 -- Headless test suite for DyrueUnitFrames.
 --
--- Exercises the pure-logic core (tags, colour rules, defaults merging, anchor
+-- Exercises the pure-logic core (tags, color rules, defaults merging, anchor
 -- graph, combat queue) plus a full load-and-build integration pass.
 
 local ns = _G.__ns
@@ -144,7 +144,7 @@ local function testTags()
 end
 
 --------------------------------------------------------------------------------
--- 2. Colour rules
+-- 2. Color rules
 --------------------------------------------------------------------------------
 
 local function testColorRules()
@@ -253,7 +253,7 @@ local function testDefaults()
 	Defaults:EnsureProfile(profile)
 	equal("defaults/deleted text stays deleted", #profile.units.player.texts, before - 1)
 
-	-- Same for a user-added colour rule.
+	-- Same for a user-added color rule.
 	local text = profile.units.player.texts[1]
 	text.rules[1] = { enabled = true, metric = "health.percent", op = "<", value = 20,
 		color = { r = 1, g = 0, b = 0 } }
@@ -360,17 +360,17 @@ local function testCombatQueue()
 end
 
 --------------------------------------------------------------------------------
--- 6. Colours
+-- 6. Colors
 --------------------------------------------------------------------------------
 
 local function testColors()
 	local Colors = ns.Colors
 
 	local r, g, b = Colors:Class("player")
-	near("colors/class colour for a player", r, 1.0)
+	near("colors/class color for a player", r, 1.0)
 	near("colors/druid orange", g, 0.49)
 
-	check("colors/no class colour for an NPC", Colors:Class("target") == nil)
+	check("colors/no class color for an NPC", Colors:Class("target") == nil)
 
 	r = Colors:Reaction("target")
 	near("colors/hostile reaction is red", r, 0.87)
@@ -383,7 +383,7 @@ local function testColors()
 
 	cfg.npcFallback = "static"
 	r, g, b = Colors:HealthBar("target", cfg)
-	near("colors/NPC falls through to the static colour", g, 0.9)
+	near("colors/NPC falls through to the static color", g, 0.9)
 
 	-- Gradient: red -> yellow -> green
 	local stops = { { r = 1, g = 0, b = 0 }, { r = 1, g = 1, b = 0 }, { r = 0, g = 1, b = 0 } }
@@ -523,7 +523,7 @@ local function testMigration()
 	-- Deliberate choices survive.
 	equal("migrate/custom texture untouched", v1.units.target.health.texture, "Smooth")
 	equal("migrate/custom spacing untouched", v1.units.target.power.spacing, 6)
-	check("migrate/custom backdrop colour keeps the backdrop on",
+	check("migrate/custom backdrop color keeps the backdrop on",
 		v1.units.pet.background.enabled == true)
 
 	-- Positions are never touched by a cosmetic migration.
@@ -910,12 +910,12 @@ local function testOptions()
 	equal("options/getter reflects it", x.get(nil), 1234)
 	x.set(nil, 0)
 
-	-- Colour round trip
+	-- Color round trip
 	local color = tree.args.units.args.player.args.health.args.color
-	equal("options/health colour is a colour control", color.type, "color")
+	equal("options/health color is a color control", color.type, "color")
 	color.set(nil, 0.1, 0.2, 0.3, 1)
 	local r, g, b = color.get(nil)
-	check("options/colour round trip", r == 0.1 and g == 0.2 and b == 0.3)
+	check("options/color round trip", r == 0.1 and g == 0.2 and b == 0.3)
 
 	-- The text and aura subtrees exist for every unit
 	check("options/text subtree", tree.args.units.args.target.args.texts ~= nil)
@@ -1062,15 +1062,15 @@ local function testDragMode()
 end
 
 --------------------------------------------------------------------------------
--- 18. AC 6 / 7: colour rules and difficulty colour on a real text element
+-- 18. AC 6 / 7: color rules and difficulty color on a real text element
 --------------------------------------------------------------------------------
 
 local function testTextColoring()
 	local player = ns.frames.player
 	local cfg = ns:UnitConfig("player")
 
-	-- FR-3.3: colour the NAME by the unit's HEALTH. The metric under test is
-	-- deliberately unrelated to the element being coloured.
+	-- FR-3.3: color the NAME by the unit's HEALTH. The metric under test is
+	-- deliberately unrelated to the element being colored.
 	local nameText = cfg.texts[1]
 	nameText.colorMode = "rules"
 	nameText.color = { r = 1, g = 1, b = 1 }
@@ -1093,7 +1093,7 @@ local function testTextColoring()
 	stub.units.player.health = 1500      -- 30%
 	player:FullUpdate()
 	r, g, b = fs:GetTextColor()
-	check("text/percentage rule colours the name", r == 1 and g == 0.5 and b == 0)
+	check("text/percentage rule colors the name", r == 1 and g == 0.5 and b == 0)
 
 	-- Absolute rule first this time
 	nameText.rules[1], nameText.rules[2] = nameText.rules[2], nameText.rules[1]
@@ -1101,7 +1101,7 @@ local function testTextColoring()
 	stub.units.player.health = 400
 	player:FullUpdate()
 	r, g, b = fs:GetTextColor()
-	check("text/absolute rule colours the name", r == 1 and g == 0 and b == 0)
+	check("text/absolute rule colors the name", r == 1 and g == 0 and b == 0)
 
 	stub.units.player.health = 4200
 	nameText.colorMode = "static"
@@ -1109,11 +1109,11 @@ local function testTextColoring()
 	ns:BumpSerial()
 	ns:RefreshUnit("player")
 
-	-- AC 7: difficulty colour must equal the game's own function at every
+	-- AC 7: difficulty color must equal the game's own function at every
 	-- level difference, including the ?? case.
 	local target = ns.frames.target
 	local levelText = ns:UnitConfig("target").texts[1]
-	equal("text/level defaults to difficulty colouring", levelText.colorMode, "difficulty")
+	equal("text/level defaults to difficulty coloring", levelText.colorMode, "difficulty")
 
 	local levelString = target.elements.text.strings[1]
 	local mismatches = 0
@@ -1127,13 +1127,13 @@ local function testTextColoring()
 			mismatches = mismatches + 1
 		end
 	end
-	equal("text/difficulty colour matches the base game at -8..+8", mismatches, 0)
+	equal("text/difficulty color matches the base game at -8..+8", mismatches, 0)
 
 	stub.units.target.level = -1
 	target:FullUpdate()
 	equal("text/unknown level renders ??", levelString:GetText(), "????")
 	r = levelString:GetTextColor()
-	near("text/unknown level uses the boss colour", r, 1)
+	near("text/unknown level uses the boss color", r, 1)
 end
 
 --------------------------------------------------------------------------------
@@ -1201,7 +1201,7 @@ local function testAuraFiltering()
 	list = refresh()
 	check("auras/own-first sort", list[1].own == true)
 
-	-- FR-5.3: own auras are larger, and bordered in the chosen colour
+	-- FR-5.3: own auras are larger, and bordered in the chosen color
 	buffs.borderMode = "own"
 	buffs.ownBorderColor = { r = 1, g = 0.85, b = 0.1, a = 1 }
 	buffs.ownSizeMultiplier = 2
@@ -1211,7 +1211,7 @@ local function testAuraFiltering()
 		group.buttons[1]:GetWidth(), buffs.size * 2)
 	equal("auras/other aura at base size", group.buttons[2]:GetWidth(), buffs.size)
 	local border = group.buttons[1].border.__color
-	check("auras/own aura border colour applied",
+	check("auras/own aura border color applied",
 		border and border[1] == 1 and math.abs(border[2] - 0.85) < 0.001)
 	buffs.ownSizeMultiplier = 1.4
 
@@ -1229,7 +1229,7 @@ local function testAuraFiltering()
 	if curseIndex then
 		local c = debuffGroup.buttons[curseIndex].border.__color
 		local expected = _G.DebuffTypeColor.Curse
-		check("auras/curse border uses the game's colour",
+		check("auras/curse border uses the game's color",
 			c and math.abs(c[1] - expected.r) < 0.001 and math.abs(c[3] - expected.b) < 0.001)
 	end
 
@@ -1305,7 +1305,7 @@ local function testToolsAndModes()
 	check("tools/copy succeeds", ns.Factory:CopySettings("player", "focus"))
 	destination = ns:UnitConfig("focus")
 	equal("tools/settings copied", destination.width, 333)
-	equal("tools/colour mode copied", destination.health.colorMode, "gradient")
+	equal("tools/color mode copied", destination.health.colorMode, "gradient")
 	equal("tools/anchor deliberately not copied", destination.anchor.x, focusAnchorX)
 	check("tools/copy is deep, not shared", destination.health ~= source.health)
 
@@ -1331,7 +1331,7 @@ local function testToolsAndModes()
 		focusName:GetText() ~= "Dyrue" and focusName:GetText() ~= nil,
 		tostring(focusName:GetText()))
 
-	-- Party frames get distinct class colours so class colouring is visible
+	-- Party frames get distinct class colors so class coloring is visible
 	local party1 = ns.frames.party1
 	check("testmode/party frame gets a stand-in class", party1.test.classFile ~= nil)
 
@@ -1513,7 +1513,7 @@ local function testBrightness()
 	local cfg = ns:UnitConfig("player")
 	local health = ns.Options.table.args.units.args.player.args.health.args
 
-	-- A known colour so the arithmetic is checkable.
+	-- A known color so the arithmetic is checkable.
 	cfg.health.colorMode = "static"
 	cfg.health.color = { r = 0.4, g = 0.8, b = 0.2, a = 1 }
 	cfg.health.bgMultiplier = 0.5
@@ -1525,7 +1525,7 @@ local function testBrightness()
 
 	equal("brightness/defaults to 1", cfg.health.brightness, 1)
 	local r, g, b = bar:GetStatusBarColor()
-	near("brightness/1 leaves the colour alone", g, 0.8)
+	near("brightness/1 leaves the color alone", g, 0.8)
 
 	health.brightness.set(nil, 0.5)
 	r, g, b = bar:GetStatusBarColor()
@@ -1533,7 +1533,7 @@ local function testBrightness()
 	near("brightness/halved green", g, 0.4)
 	near("brightness/halved blue", b, 0.1)
 
-	-- The background derives from the bar colour, so it must follow.
+	-- The background derives from the bar color, so it must follow.
 	near("brightness/background follows the bar", select(2, bg:GetVertexColor()), 0.4 * 0.5)
 
 	health.brightness.set(nil, 1.5)
@@ -1553,14 +1553,14 @@ local function testBrightness()
 
 	health.brightness.set(nil, 1)
 
-	-- It applies to whatever the mode resolved, not just to a static colour.
+	-- It applies to whatever the mode resolved, not just to a static color.
 	cfg.health.colorMode = "class"
 	ns:BumpSerial()
 	ns:RefreshUnit("player")
 	local classR, classG, classB = bar:GetStatusBarColor()
 	health.brightness.set(nil, 0.5)
 	r, g, b = bar:GetStatusBarColor()
-	near("brightness/scales a class colour too", g, classG * 0.5)
+	near("brightness/scales a class color too", g, classG * 0.5)
 	health.brightness.set(nil, 1)
 
 	-- Power and shapeshift mana have their own independent controls.
@@ -1744,7 +1744,7 @@ local function testBarBackground()
 	local cfg = ns:UnitConfig("player")
 	local health = ns.Options.table.args.units.args.player.args.health.args
 
-	-- A known bar colour so the maths is checkable.
+	-- A known bar color so the maths is checkable.
 	cfg.health.colorMode = "static"
 	cfg.health.color = { r = 0, g = 1, b = 0, a = 1 }
 	ns:BumpSerial()
@@ -1755,7 +1755,7 @@ local function testBarBackground()
 	health.bgMultiplier.set(nil, 0.5)
 	health.bgAlpha.set(nil, 1)
 	local r, g, b, a = bg:GetVertexColor()
-	near("background/brightness scales the bar colour", g, 0.5)
+	near("background/brightness scales the bar color", g, 0.5)
 	near("background/opacity at full", a, 1)
 
 	health.bgAlpha.set(nil, 0.3)
@@ -1782,7 +1782,7 @@ local function testBarBackground()
 	-- The filled portion of the bar is deliberately NOT affected: background
 	-- settings describe the depleted part only.
 	local barR, barG, barB = player.elements.health.bar:GetStatusBarColor()
-	near("background/bar fill colour untouched", barG, 1)
+	near("background/bar fill color untouched", barG, 1)
 
 	-- The frame backdrop must default to OFF. It sits behind the bars, so
 	-- leaving it on makes every bar-background opacity setting above look like
@@ -1928,7 +1928,7 @@ local suites = {
 	{ "focus-gating", testFocusGating },
 	{ "combat-deferral", testCombatDeferral },
 	{ "drag-mode", testDragMode },
-	{ "text-colouring", testTextColoring },
+	{ "text-coloring", testTextColoring },
 	{ "aura-filtering", testAuraFiltering },
 	{ "derived-identity", testDerivedIdentity },
 	{ "tools-and-modes", testToolsAndModes },

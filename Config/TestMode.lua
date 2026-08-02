@@ -4,11 +4,11 @@
 -- project": configure layout while standing in a city with no target.
 --
 -- The approach is deliberate. Rather than building a parallel fake-data layer
--- that every element, tag and colour rule would have to consult (a second code
+-- that every element, tag and color rule would have to consult (a second code
 -- path, and therefore a second thing to keep correct), test mode *substitutes
 -- a real unit token* into each frame and re-registers its events against it.
 -- Everything downstream then works on genuine data with no special-casing at
--- all: tags render, colour rules evaluate, auras scan, portraits load.
+-- all: tags render, color rules evaluate, auras scan, portraits load.
 --
 -- The only fiction is identity — name, class and level — which is a small,
 -- explicitly-marked override consulted in exactly three places, so that four

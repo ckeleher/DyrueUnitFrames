@@ -1,6 +1,6 @@
 -- Systems/Colors.lua
 --
--- SPEC §4.4 and PLAN task 3.1 — class, reaction, power and difficulty colour
+-- SPEC §4.4 and PLAN task 3.1 — class, reaction, power and difficulty color
 -- resolution in one place, so every bar, text element and border asks the same
 -- question and gets the same answer.
 --
@@ -31,8 +31,8 @@ end
 -- Sources
 --------------------------------------------------------------------------------
 
---- Class colour, but only for actual players (SPEC §FR-4.4).
--- Silently colouring a mob "mage blue" because of a class-token collision is a
+--- Class color, but only for actual players (SPEC §FR-4.4).
+-- Silently coloring a mob "mage blue" because of a class-token collision is a
 -- bug, not a feature, so this returns nil for NPCs and the caller falls back.
 -- @param frame optional; carries test mode's identity override
 function Colors:Class(unit, frame)
@@ -71,7 +71,7 @@ function Colors:Difficulty(unit)
 	if not unit or not UnitExists(unit) then return 1, 1, 1 end
 	local level = UnitLevel(unit)
 	if not level or level <= 0 then
-		-- Unknown level renders in the boss colour (SPEC §FR-3.8).
+		-- Unknown level renders in the boss color (SPEC §FR-3.8).
 		return 1, 0.1, 0.1
 	end
 	return Compat.GetDifficultyColor(level)
@@ -120,7 +120,7 @@ function Colors:Gradient(stops, pct)
 end
 
 --------------------------------------------------------------------------------
--- Policy: what colour is this health bar?
+-- Policy: what color is this health bar?
 --------------------------------------------------------------------------------
 
 --- Fractional health, 0..1, tolerant of a zero maximum.
@@ -133,7 +133,7 @@ function Colors:HealthFraction(unit)
 	return pct
 end
 
---- Resolve a health bar colour for `unit` under `cfg` (a unit's health table).
+--- Resolve a health bar color for `unit` under `cfg` (a unit's health table).
 -- @return r, g, b
 function Colors:HealthBar(unit, cfg, frame)
 	if not cfg then return 0, 0.9, 0.1 end
@@ -169,7 +169,7 @@ function Colors:HealthBar(unit, cfg, frame)
 	return self:Unpack(cfg.color)
 end
 
---- Resolve a power bar colour for `unit` under `cfg` (a unit's power table).
+--- Resolve a power bar color for `unit` under `cfg` (a unit's power table).
 function Colors:PowerBar(unit, cfg, powerToken, frame)
 	if not cfg then return 0, 0, 1 end
 
@@ -204,12 +204,12 @@ end
 -- Brightness
 --------------------------------------------------------------------------------
 
---- Scale a resolved bar colour. Applied before anything downstream, so a bar's
--- background -- which derives from the bar colour -- tracks it automatically
+--- Scale a resolved bar color. Applied before anything downstream, so a bar's
+-- background -- which derives from the bar color -- tracks it automatically
 -- and the two never drift apart.
 --
 -- Clamped, because SetStatusBarColor above 1 is meaningless: pushing a bright
--- colour further just saturates it, and silently letting the stored number run
+-- color further just saturates it, and silently letting the stored number run
 -- past the point where it does anything is worse than capping it.
 function Colors:Brighten(r, g, b, brightness)
 	if not brightness or brightness == 1 then return r, g, b end
@@ -227,8 +227,8 @@ end
 -- Bar backgrounds
 --------------------------------------------------------------------------------
 
---- Backgrounds derive from the bar colour rather than being independently
--- configured, so a class-coloured bar keeps a matching background without the
+--- Backgrounds derive from the bar color rather than being independently
+-- configured, so a class-colored bar keeps a matching background without the
 -- user having to set seventeen of them.
 function Colors:Background(r, g, b, multiplier, alpha)
 	multiplier = multiplier or 0.25

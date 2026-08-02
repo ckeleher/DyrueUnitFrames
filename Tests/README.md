@@ -43,11 +43,11 @@ Three passes run, each building a fresh runtime:
 
 ## What is covered
 
-Tags and empty-tag collapse · colour rules at both percentage and absolute
+Tags and empty-tag collapse · color rules at both percentage and absolute
 thresholds · the defaults deep-merge (specifically that a deleted text element
-or colour rule *stays* deleted, which is the reason AceDB's metatable defaults
+or color rule *stays* deleted, which is the reason AceDB's metatable defaults
 are not used) · anchor cycle detection and topological apply order · combat-queue
-de-duplication and ordering · colour resolution including the NPC class-colour
+de-duplication and ordering · color resolution including the NPC class-color
 fallback · the `HasRealHealthValues` predicate · migration including refusal to
 downgrade and backup-on-failure · full frame construction and event dispatch ·
 the shapeshift mana predicate and its ticker starting and stopping · the derived

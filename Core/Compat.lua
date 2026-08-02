@@ -165,10 +165,10 @@ function Compat.GetPowerType(unit)
 end
 
 --------------------------------------------------------------------------------
--- Colours
+-- Colors
 --------------------------------------------------------------------------------
 
---- Class colour, preferring the community CUSTOM_CLASS_COLORS addon.
+--- Class color, preferring the community CUSTOM_CLASS_COLORS addon.
 -- Always keyed off the locale-independent classFile (SPEC §FR-4.3).
 -- @param classFile string e.g. "DRUID"
 -- @return r, g, b (nil if unknown)
@@ -180,9 +180,9 @@ function Compat.GetClassColor(classFile)
 	return c.r, c.g, c.b
 end
 
---- The base game's own creature-difficulty colour (SPEC §FR-3.7).
+--- The base game's own creature-difficulty color (SPEC §FR-3.7).
 -- Not a reimplementation of the thresholds — it is the game's function, so the
--- colours match the default UI exactly and stay matched.
+-- colors match the default UI exactly and stay matched.
 function Compat.GetDifficultyColor(level)
 	local fn = _G.GetCreatureDifficultyColor or _G.GetQuestDifficultyColor
 	if fn then
@@ -194,7 +194,7 @@ function Compat.GetDifficultyColor(level)
 	return 1, 1, 1
 end
 
---- Power-bar colour from the game's own table, by token.
+--- Power-bar color from the game's own table, by token.
 function Compat.GetPowerColor(token)
 	local tbl = _G.PowerBarColor
 	local c = tbl and token and tbl[token]
@@ -204,7 +204,7 @@ function Compat.GetPowerColor(token)
 	return nil
 end
 
---- Reaction colour band from the game's own FACTION_BAR_COLORS.
+--- Reaction color band from the game's own FACTION_BAR_COLORS.
 function Compat.GetReactionColor(reaction)
 	local tbl = _G.FACTION_BAR_COLORS
 	local c = tbl and reaction and tbl[reaction]
@@ -234,7 +234,7 @@ function Compat.IsTapDenied(unit)
 	return false
 end
 
---- Debuff-type colour from the game's own table (SPEC §FR-5.4).
+--- Debuff-type color from the game's own table (SPEC §FR-5.4).
 function Compat.GetDebuffTypeColor(dispelType)
 	local tbl = _G.DebuffTypeColor
 	local c = tbl and tbl[dispelType or "none"]

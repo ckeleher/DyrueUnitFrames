@@ -348,7 +348,7 @@ function _G.IsShiftKeyDown() return false end
 function _G.GetTime() return stub.time end
 
 --------------------------------------------------------------------------------
--- Colour tables and misc globals
+-- Color tables and misc globals
 --------------------------------------------------------------------------------
 
 _G.RAID_CLASS_COLORS = {

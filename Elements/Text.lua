@@ -3,8 +3,8 @@
 -- SPEC §4.3 / PLAN task 4.8.
 --
 -- An arbitrary number of text elements per frame, each with its own format
--- string, anchor, font and colour policy. Formats are compiled once by
--- Systems/Tags; this element does anchoring, fonts, colour resolution and
+-- string, anchor, font and color policy. Formats are compiled once by
+-- Systems/Tags; this element does anchoring, fonts, color resolution and
 -- per-element string caching.
 --
 -- The caching matters more than it looks: SetText on an unchanged string still
@@ -25,7 +25,7 @@ local element = {
 	globalEvents = {},
 }
 
--- Colour modes that have to be recomputed whenever the unit's state moves,
+-- Color modes that have to be recomputed whenever the unit's state moves,
 -- even if the text itself did not change.
 local DYNAMIC_COLOR = {
 	rules = true,
@@ -51,7 +51,7 @@ function element.IsEnabled(frame, cfg)
 	return type(cfg) == "table" and #cfg > 0
 end
 
---- The union of every compiled format's events, plus colour dependencies.
+--- The union of every compiled format's events, plus color dependencies.
 -- Declared dynamically because it depends entirely on what the user typed.
 function element.GetEvents(frame, cfg)
 	local events, globalEvents = {}, {}
@@ -148,7 +148,7 @@ function element.Layout(frame, el, cfg)
 end
 
 --------------------------------------------------------------------------------
--- Colour
+-- Color
 --------------------------------------------------------------------------------
 
 local function resolveColor(frame, text, unit)

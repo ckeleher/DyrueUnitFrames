@@ -1,6 +1,6 @@
 -- Config/Options_Text.lua
 --
--- Text elements and the colour-rule editor (PLAN task 4.10).
+-- Text elements and the color-rule editor (PLAN task 4.10).
 --
 -- The plan is explicit that a rule engine with a bad editor is a rule engine
 -- nobody uses, so this file carries the full FR-3.6 set: add, remove, reorder,
@@ -66,7 +66,7 @@ local function buildRuleArgs(container, state, getRules, apply, rebuild)
 
 	container.explain = {
 		type = "description", order = 0,
-		name = L["Rules are evaluated top to bottom and the first match wins. If none match, the static colour above is used. The thing being tested is independent of the thing being coloured, so 'turn the name red below 20% health' is an ordinary rule."],
+		name = L["Rules are evaluated top to bottom and the first match wins. If none match, the static color above is used. The thing being tested is independent of the thing being colored, so 'turn the name red below 20% health' is an ordinary rule."],
 	}
 
 	container.add = {
@@ -155,7 +155,7 @@ local function buildRuleArgs(container, state, getRules, apply, rebuild)
 					get = function() return tonumber(rule().value) == 1 and 1 or 0 end,
 					set = function(_, v) rule().value = v; ns:BumpSerial(); apply() end,
 				},
-				color = Options.Color(L["Colour"], 6, rule, "color", function()
+				color = Options.Color(L["Color"], 6, rule, "color", function()
 					ns:BumpSerial()
 					apply()
 				end),
@@ -333,14 +333,14 @@ local function buildTextGroup(def, index, rebuildParent)
 				set = function(_, v) text().maxWidth = v; apply() end,
 			},
 
-			colorHeader = { type = "header", order = 30, name = L["Colour"] },
+			colorHeader = { type = "header", order = 30, name = L["Color"] },
 			colorMode = {
-				type = "select", order = 31, name = L["Colour mode"],
+				type = "select", order = 31, name = L["Color mode"],
 				values = {
-					static = L["Single colour"],
+					static = L["Single color"],
 					rules = L["Rules"],
-					class = L["Class colour"],
-					reaction = L["Reaction colour"],
+					class = L["Class color"],
+					reaction = L["Reaction color"],
 					difficulty = L["Level difficulty"],
 					gradient = L["Gradient"],
 				},
@@ -352,7 +352,7 @@ local function buildTextGroup(def, index, rebuildParent)
 				hidden = function() return text().colorMode ~= "difficulty" end,
 				name = L["Uses the game's own GetCreatureDifficultyColor, so grey/green/yellow/orange/red match the default UI exactly and stay matched if Blizzard ever adjusts them. For non-standard thresholds, switch to Rules and test level.difference."],
 			},
-			color = Options.Color(L["Colour"], 33, text, "color", apply, {
+			color = Options.Color(L["Color"], 33, text, "color", apply, {
 				desc = L["Also the fallback when no rule matches."],
 				hidden = function()
 					local mode = text().colorMode
@@ -371,7 +371,7 @@ local function buildTextGroup(def, index, rebuildParent)
 			gradient3 = Options.GradientColor(L["Gradient: high"], 37, gradient, 3, apply, { hidden = notGradient }),
 
 			rules = {
-				type = "group", order = 40, name = L["Colour rules"],
+				type = "group", order = 40, name = L["Color rules"],
 				hidden = function() return text().colorMode ~= "rules" end,
 				args = ruleArgs,
 			},

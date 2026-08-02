@@ -123,7 +123,7 @@ local function layoutGroup(def)
 			get = function() return background().enabled end,
 			set = function(_, v) background().enabled = v; apply() end,
 		},
-		color = Options.Color(L["Colour"], 2, background, "color", apply, { hasAlpha = true }),
+		color = Options.Color(L["Color"], 2, background, "color", apply, { hasAlpha = true }),
 		inset = {
 			type = "range", order = 3, name = L["Inset"],
 			min = -20, max = 20, step = 1,
@@ -138,7 +138,7 @@ local function layoutGroup(def)
 			get = function() return border().enabled end,
 			set = function(_, v) border().enabled = v; apply() end,
 		},
-		color = Options.Color(L["Colour"], 2, border, "color", apply, { hasAlpha = true }),
+		color = Options.Color(L["Color"], 2, border, "color", apply, { hasAlpha = true }),
 		size = {
 			type = "range", order = 3, name = L["Thickness"],
 			min = 1, max = 8, step = 1,
@@ -187,27 +187,27 @@ local function healthGroup(def)
 		},
 		texture = textureOption(L["Texture"], 3, health, apply),
 
-		colorHeader = { type = "header", order = 10, name = L["Colour"] },
+		colorHeader = { type = "header", order = 10, name = L["Color"] },
 		colorMode = {
-			type = "select", order = 11, name = L["Colour mode"],
-			desc = L["Class colouring is per unit, so you can have it on the target but not on yourself, or the other way round."],
+			type = "select", order = 11, name = L["Color mode"],
+			desc = L["Class coloring is per unit, so you can have it on the target but not on yourself, or the other way round."],
 			values = {
-				static = L["Single colour"],
-				class = L["Class colour"],
-				reaction = L["Reaction colour"],
+				static = L["Single color"],
+				class = L["Class color"],
+				reaction = L["Reaction color"],
 				gradient = L["Gradient by health"],
 			},
 			get = function() return health().colorMode end,
 			set = function(_, v) health().colorMode = v; apply() end,
 		},
-		color = Options.Color(L["Colour"], 12, health, "color", apply, {
+		color = Options.Color(L["Color"], 12, health, "color", apply, {
 			hidden = function() return health().colorMode == "gradient" end,
 		}),
 		npcFallback = {
 			type = "select", order = 13, name = L["NPCs use"],
-			desc = L["Class colours only ever apply to actual players. NPCs fall through to this."],
+			desc = L["Class colors only ever apply to actual players. NPCs fall through to this."],
 			hidden = function() return health().colorMode ~= "class" end,
-			values = { reaction = L["Reaction colour"], static = L["The single colour above"] },
+			values = { reaction = L["Reaction color"], static = L["The single color above"] },
 			get = function() return health().npcFallback end,
 			set = function(_, v) health().npcFallback = v; apply() end,
 		},
@@ -217,7 +217,7 @@ local function healthGroup(def)
 
 		brightness = {
 			type = "range", order = 18, name = L["Brightness"],
-			desc = L["Scales whatever colour the mode above resolves to, so it works the same on a class colour, a reaction colour or a gradient. The bar's background follows it, since the background is derived from the bar colour."],
+			desc = L["Scales whatever color the mode above resolves to, so it works the same on a class color, a reaction color or a gradient. The bar's background follows it, since the background is derived from the bar color."],
 			min = 0, max = 2, step = 0.05,
 			get = function() return health().brightness end,
 			set = function(_, v) health().brightness = v; apply() end,
@@ -229,7 +229,7 @@ local function healthGroup(def)
 			get = function() return health().dimWhenDead end,
 			set = function(_, v) health().dimWhenDead = v; apply() end,
 		},
-		offlineColor = Options.Color(L["Offline colour"], 22, health, "offlineColor", apply),
+		offlineColor = Options.Color(L["Offline color"], 22, health, "offlineColor", apply),
 		tapColor = Options.Color(L["Tapped by someone else"], 23, health, "tapColor", apply),
 
 		bgHeader = { type = "header", order = 30, name = L["Background (the depleted part of the bar)"] },
@@ -239,7 +239,7 @@ local function healthGroup(def)
 		},
 		bgMultiplier = {
 			type = "range", order = 31, name = L["Background brightness"],
-			desc = L["A fraction of the bar's own colour, so a class-coloured bar keeps a matching background."],
+			desc = L["A fraction of the bar's own color, so a class-colored bar keeps a matching background."],
 			min = 0, max = 1, step = 0.01,
 			get = function() return health().bgMultiplier end,
 			set = function(_, v) health().bgMultiplier = v; apply() end,
@@ -292,18 +292,18 @@ local function powerGroup(def)
 			set = function(_, v) power().hideWhenEmpty = v; apply() end,
 		},
 
-		colorHeader = { type = "header", order = 10, name = L["Colour"] },
+		colorHeader = { type = "header", order = 10, name = L["Color"] },
 		colorMode = {
-			type = "select", order = 11, name = L["Colour mode"],
+			type = "select", order = 11, name = L["Color mode"],
 			values = {
 				power = L["By power type"],
-				static = L["Single colour"],
-				class = L["Class colour"],
+				static = L["Single color"],
+				class = L["Class color"],
 			},
 			get = function() return power().colorMode end,
 			set = function(_, v) power().colorMode = v; apply() end,
 		},
-		color = Options.Color(L["Colour"], 12, power, "color", apply, {
+		color = Options.Color(L["Color"], 12, power, "color", apply, {
 			hidden = function() return power().colorMode ~= "static" end,
 		}),
 		useOverrides = {
@@ -313,7 +313,7 @@ local function powerGroup(def)
 			set = function(_, v)
 				power().useOverrides = v
 				if v then
-					-- Seed from the game's own colours so the pickers open on
+					-- Seed from the game's own colors so the pickers open on
 					-- the right value rather than on white.
 					for token in pairs(POWER_TOKENS) do
 						if not power().overrides[token] then
@@ -329,7 +329,7 @@ local function powerGroup(def)
 
 		brightness = {
 			type = "range", order = 14, name = L["Brightness"],
-			desc = L["Scales whatever colour the mode above resolves to, so it works the same on a class colour, a reaction colour or a gradient. The bar's background follows it, since the background is derived from the bar colour."],
+			desc = L["Scales whatever color the mode above resolves to, so it works the same on a class color, a reaction color or a gradient. The bar's background follows it, since the background is derived from the bar color."],
 			min = 0, max = 2, step = 0.05,
 			get = function() return power().brightness end,
 			set = function(_, v) power().brightness = v; apply() end,
@@ -422,10 +422,10 @@ local function manaGroup(def)
 			hidden = function() return mana().widthMode ~= "custom" end,
 		}),
 		texture = textureOption(L["Texture"], 8, mana, apply),
-		color = Options.Color(L["Colour"], 9, mana, "color", apply),
+		color = Options.Color(L["Color"], 9, mana, "color", apply),
 		brightness = {
 			type = "range", order = 10, name = L["Brightness"],
-			desc = L["Scales whatever colour the mode above resolves to, so it works the same on a class colour, a reaction colour or a gradient. The bar's background follows it, since the background is derived from the bar colour."],
+			desc = L["Scales whatever color the mode above resolves to, so it works the same on a class color, a reaction color or a gradient. The bar's background follows it, since the background is derived from the bar color."],
 			min = 0, max = 2, step = 0.05,
 			get = function() return mana().brightness end,
 			set = function(_, v) mana().brightness = v; apply() end,
@@ -576,14 +576,14 @@ local function highlightGroup(def)
 				get = function() return highlight().targetEnabled end,
 				set = function(_, v) highlight().targetEnabled = v; apply() end,
 			},
-			targetColor = Options.Color(L["Target outline colour"], 2, highlight, "targetColor", apply,
+			targetColor = Options.Color(L["Target outline color"], 2, highlight, "targetColor", apply,
 				{ hasAlpha = true }),
 			mouseoverEnabled = {
 				type = "toggle", order = 3, name = L["Outline on mouseover"],
 				get = function() return highlight().mouseoverEnabled end,
 				set = function(_, v) highlight().mouseoverEnabled = v; apply() end,
 			},
-			mouseoverColor = Options.Color(L["Mouseover outline colour"], 4, highlight, "mouseoverColor", apply,
+			mouseoverColor = Options.Color(L["Mouseover outline color"], 4, highlight, "mouseoverColor", apply,
 				{ hasAlpha = true }),
 			thickness = {
 				type = "range", order = 5, name = L["Thickness"],

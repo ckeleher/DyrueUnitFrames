@@ -2,7 +2,7 @@
 --
 -- SPEC §3 — the unit roster, as data.
 --
--- Everything downstream (elements, colour rules, auras, portraits, the whole
+-- Everything downstream (elements, color rules, auras, portraits, the whole
 -- config tree) iterates this table. Adding a unit is a table entry, which is
 -- exactly why party frames and derived units cost nothing extra once they are
 -- registered here (PLAN §5).

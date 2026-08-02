@@ -147,7 +147,7 @@ local function buildGroup(def, groupKey, order, label, isDebuff)
 		ownHeader = { type = "header", order = 30, name = L["Your own auras"] },
 		ownExplain = {
 			type = "description", order = 31,
-			name = L["Auras you cast are made larger, and optionally bordered in a colour of your choice, so yours are distinguishable at a glance."],
+			name = L["Auras you cast are made larger, and optionally bordered in a color of your choice, so yours are distinguishable at a glance."],
 		},
 		ownSizeMultiplier = {
 			type = "range", order = 32, name = L["Size multiplier for your own"],
@@ -166,8 +166,8 @@ local function buildGroup(def, groupKey, order, label, isDebuff)
 			set = function(_, v) group().desaturateOthers = v; apply() end,
 		},
 		borderMode = {
-			type = "select", order = 35, name = L["Border colour"],
-			desc = L["Own-source and debuff-type colouring are mutually exclusive; pick which one takes precedence."],
+			type = "select", order = 35, name = L["Border color"],
+			desc = L["Own-source and debuff-type coloring are mutually exclusive; pick which one takes precedence."],
 			values = {
 				none = L["No border"],
 				own = L["Highlight your own"],
@@ -176,10 +176,10 @@ local function buildGroup(def, groupKey, order, label, isDebuff)
 			get = function() return group().borderMode end,
 			set = function(_, v) group().borderMode = v; apply() end,
 		},
-		ownBorderColor = Options.Color(L["Your own border colour"], 36, group, "ownBorderColor", apply, {
+		ownBorderColor = Options.Color(L["Your own border color"], 36, group, "ownBorderColor", apply, {
 			hidden = function() return group().borderMode ~= "own" end,
 		}),
-		defaultBorderColor = Options.Color(L["Default border colour"], 37, group, "defaultBorderColor", apply, {
+		defaultBorderColor = Options.Color(L["Default border color"], 37, group, "defaultBorderColor", apply, {
 			hasAlpha = true,
 			hidden = function() return group().borderMode == "none" end,
 		}),

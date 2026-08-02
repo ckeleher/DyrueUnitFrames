@@ -102,7 +102,7 @@ local function register(name, def)
 	return def
 end
 
--- Test mode substitutes a real unit into every frame so that tags, colour
+-- Test mode substitutes a real unit into every frame so that tags, color
 -- rules and auras all run on genuine data (see Config/TestMode.lua). The one
 -- thing it does fake is identity, so that four party frames do not all read as
 -- your own character. This is the whole of that override's reach.

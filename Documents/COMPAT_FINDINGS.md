@@ -49,7 +49,7 @@ Phase 0 is for.
 | `PowerBarColor` | Present | | | `Compat.GetPowerColor` |
 | `DebuffTypeColor` | Present | | | Aura type borders |
 | `RAID_CLASS_COLORS` | Present | | | `Compat.GetClassColor`, `CUSTOM_CLASS_COLORS` preferred when installed |
-| `FACTION_BAR_COLORS` | Present | | | Reaction colours; hardcoded fallbacks exist |
+| `FACTION_BAR_COLORS` | Present | | | Reaction colors; hardcoded fallbacks exist |
 | `SecureUnitButtonTemplate` | Present | | | Every frame. If this is ever gone the addon cannot work and says so plainly |
 | `RegisterUnitWatch` | Present | | | Show/hide for conditional units |
 | `frame:RegisterUnitEvent` | Present | | | Per-unit registration (SPEC §5.7) |
@@ -190,7 +190,7 @@ Recorded as they are made, so the reasoning survives.
 | Spec item | What was built | Why |
 |---|---|---|
 | §5.9 "update paths are not blanket-wrapped" | One `xpcall` per *event dispatch*, plus a single local assignment naming the element about to run | Gives per-element circuit-breaker attribution at the cost of one protected call per event rather than one per element. Satisfies the intent (no per-element pcall) while making the circuit breaker actually implementable |
-| §5.8 AceDB defaults | AceDB is used for profile management only; the schema is deep-filled by `Defaults:EnsureProfile` | AceDB implements defaults with `__index` metatables, under which a *deleted* colour rule or text element comes back on next login. User-editable lists need real ownership |
+| §5.8 AceDB defaults | AceDB is used for profile management only; the schema is deep-filled by `Defaults:EnsureProfile` | AceDB implements defaults with `__index` metatables, under which a *deleted* color rule or text element comes back on next login. User-editable lists need real ownership |
 | §FR-2.3 append mode | The appended mana bar hangs below the button's own bounds rather than growing the button | Growing a secure button is a protected operation. Hanging the bar outside means a druid shifting form mid-fight sees mana immediately instead of at `PLAYER_REGEN_ENABLED`. Reserve mode is unaffected and keeps everything inside the frame |
 | §FR-5.9 right-click cancel | Secure attribute on a separate overlay button, updated through `CombatQueue` | Aura icons must be shown and hidden constantly in combat, which a protected frame cannot do. Splitting insecure icon from secure overlay is the only arrangement that satisfies both. Cost: in combat the overlay can be one aura stale |
 | §5.7 incremental aura updates | `updateInfo` is used to *skip* no-op updates; the normal path is a full rescan | The spec calls this an optimisation, not a blocker. Maintaining a parallel instance-ID store is a real bug surface and buys nothing measurable at Classic's aura counts |
