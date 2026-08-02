@@ -109,7 +109,18 @@ function Sync-All {
     # The addon folder is the repo root minus the things that are not the addon.
     $staged = Join-Path $stagingDir $AddonName
     New-Item -ItemType Directory -Path $staged | Out-Null
-    $exclude = @(".git", "Documents", "Probe", "Tools", ".gitignore")
+    # Everything that is part of the repository but not part of the addon. The
+    # game ignores files the TOC does not list, so none of this would break
+    # anything -- it is just dead weight sitting in the AddOns folder, and
+    # test code next to game code invites confusion on patch day.
+    $exclude = @(
+        ".git", ".gitignore", ".claude",
+        "Documents",    # SPEC, PLAN, COMPAT_FINDINGS
+        "Probe",        # copied separately as its own addon
+        "Tests",        # headless harness; needs Python, not WoW
+        "Tools",        # this script
+        "README.md"
+    )
     Get-ChildItem -Path $RepoRoot -Force | Where-Object { $exclude -notcontains $_.Name } | ForEach-Object {
         Copy-Item -Path $_.FullName -Destination $staged -Recurse -Force
     }
