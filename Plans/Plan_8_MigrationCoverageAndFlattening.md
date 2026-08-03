@@ -1,10 +1,53 @@
 # Plan 8 — Migration Coverage and Flattening
 
-**Status:** Not started
+**Status:** Both parts implemented on `Plan-8-migration-coverage`.
 **Created:** 2 August 2026
-**Branch:** to be created off `main`
-**Priority:** Part 1 is a correctness bug and should go first. Part 2 is the
-thing actually asked for and depends on it.
+**Branch:** `Plan-8-migration-coverage`
+**Priority:** Part 1 is a correctness bug and went first. Part 2 depended on it.
+
+---
+
+## Outcome
+
+**Part 1** found exactly what the plan predicted: three profiles across the two
+clients at schemas 10, 7 and 2, including the active one on TBC. The schema-2
+profile predated nine of the eleven changes. `Migrate:RunAll` brought all three
+current on one login, verified afterwards by reading the saved variables.
+
+One thing the plan did not anticipate: `Migrate:Fail` keyed its backup by
+timestamp alone, so two profiles failing in the same second would have collided
+and the backup would have lost one of the two things it exists to preserve.
+Keyed by profile name as well now, and tested.
+
+**Part 2** collapsed ten steps into one declarative table plus two functions,
+gated behind `COLLAPSED_THROUGH = 11`.
+
+The runner change is what makes it work: a profile at or below the collapse
+point runs the single step and lands at `COLLAPSED_THROUGH + 1`, while anything
+above uses the normal incremental loop. Backward compatibility is therefore
+*not* lost — a profile from version 1 still migrates correctly — while the chain
+reads as a description of the schema rather than a transcript of an afternoon.
+
+Two design points worth recording:
+
+- **Only two changes needed to stay procedural**, not the three estimated. The
+  per-unit conditional default (health color) turned out to be expressible with
+  `units` / `exceptUnits` / `when` fields on a rule, leaving only the list
+  append and the whole-anchor comparison as code.
+- **Absent keys need no rule at all.** Migration runs before `EnsureProfile`, so
+  a key that did not exist in the old schema is simply not there and picks up
+  the current default afterwards. That is why "arriving from version 1" and
+  "arriving from version 9" both land correctly without either being
+  special-cased, and it is now asserted directly.
+
+Testing shifted from sampling versions to covering all of them: a
+legacy-shaped profile is stamped with each version from 1 to 11 in turn and
+asserted to land on current defaults. That is the check that made deleting the
+old steps defensible.
+
+Reaching the "no migration path" branch now needs a deliberate gap above the
+collapse point, since everything at or below it is handled in one step — the
+tests raise the target temporarily to create one.
 
 ---
 

@@ -474,6 +474,91 @@ end
 --------------------------------------------------------------------------------
 -- 8. Migration
 --------------------------------------------------------------------------------
+--- A profile shaped the way the very first schema shaped one: every value at
+-- its original default, and none of the keys that were added later.
+--
+-- Migrating this is the real test of the collapsed step, because it has to
+-- recognize old values without any help from the version number.
+local function legacyProfile(version)
+	return {
+		schemaVersion = version,
+		general = { blizzardFrames = "none", blizzardParty = false },
+		units = {
+			player = {
+				health = { texture = "Blizzard", colorMode = "static",
+					color = { r = 0, g = 0.9, b = 0.1 }, brightness = 1 },
+				power = { texture = "Blizzard", spacing = 1, brightness = 1 },
+				mana = { texture = "Blizzard", spacing = 1, enabled = true },
+				background = { enabled = true, color = { r = 0, g = 0, b = 0, a = 0.6 } },
+				portrait = { placement = "inside" },
+				indicators = { point = "TOPLEFT", relativePoint = "TOPLEFT", x = 0, y = 0 },
+				texts = { { anchorTo = "health", format = "[name]" } },
+			},
+			target = {
+				health = { texture = "Blizzard", colorMode = "reaction",
+					color = { r = 0, g = 0.9, b = 0.1 }, brightness = 1 },
+				power = { texture = "Blizzard", spacing = 1, brightness = 1 },
+				mana = { texture = "Blizzard", spacing = 1, enabled = false },
+				background = { enabled = true, color = { r = 0, g = 0, b = 0, a = 0.6 } },
+				portrait = { placement = "inside" },
+				texts = { { anchorTo = "health", format = "[name]" } },
+			},
+			targettarget = {
+				anchor = { to = "target", point = "TOPLEFT",
+					relativePoint = "BOTTOMLEFT", x = 0, y = -34 },
+				health = { texture = "Blizzard", colorMode = "static",
+					color = { r = 0, g = 0.9, b = 0.1 } },
+				power = {}, mana = {}, background = {}, portrait = {},
+			},
+		},
+	}
+end
+
+--- Everything the collapsed step is supposed to have done to it.
+local function assertModern(label, profile)
+	local player = profile.units.player
+	local target = profile.units.target
+	local tot = profile.units.targettarget
+	local problems = {}
+
+	local function want(what, actual, expected)
+		if actual ~= expected then
+			problems[#problems + 1] = string.format("%s: %s vs %s", what,
+				tostring(actual), tostring(expected))
+		end
+	end
+
+	want("health texture", player.health.texture, "Dyrue Flat")
+	want("power texture", player.power.texture, "Dyrue Flat")
+	want("mana texture", player.mana.texture, "Dyrue Flat")
+	want("power spacing", player.power.spacing, 0)
+	want("mana spacing", player.mana.spacing, 0)
+	want("health brightness", player.health.brightness, 0.8)
+	want("power brightness", player.power.brightness, 0.8)
+	want("backdrop off", player.background.enabled, false)
+	want("player health class colored", player.health.colorMode, "class")
+	want("target health class colored", target.health.colorMode, "class")
+	want("portrait beside the frame", player.portrait.placement, "outside")
+	want("indicators raised", player.indicators.y, 5)
+	want("blizzard frames hidden", profile.general.blizzardFrames, "hide")
+	want("blizzard party hidden", profile.general.blizzardParty, true)
+	want("tot point", tot.anchor.point, "LEFT")
+	want("tot relative point", tot.anchor.relativePoint, "RIGHT")
+	want("tot x", tot.anchor.x, 4)
+	want("tot y", tot.anchor.y, 0)
+	want("mana readout appended", #player.texts, 2)
+	if player.texts[2] then
+		want("mana readout anchored", player.texts[2].anchorTo, "mana")
+	end
+	want("target gains no mana readout", #target.texts, 1)
+	want("stamped at target", profile.schemaVersion, ns.Defaults.SCHEMA_VERSION)
+
+	if #problems == 0 then
+		ok(label)
+	else
+		fail(label, table.concat(problems, "; "))
+	end
+end
 
 local function testMigration()
 	local Migrate = ns.Migrate
@@ -494,276 +579,176 @@ local function testMigration()
 	check("migrate/newer schema explains itself", message ~= nil)
 	check("migrate/newer schema untouched", newer.units.marker == true)
 
-	-- A missing migration step backs the profile up rather than discarding it.
+	--------------------------------------------------------------------------
+	-- The collapsed step (Plan 8 part 2)
+	--
+	-- Ten procedural steps became one declarative pass. The property that
+	-- matters is that a profile arriving from ANY historical version lands on
+	-- current defaults, so that is asserted for every one of them rather than
+	-- for a couple of sampled versions.
+	--------------------------------------------------------------------------
+
+	for version = 1, Migrate.COLLAPSED_THROUGH do
+		local profile = legacyProfile(version)
+		local ran = Migrate:Run(profile, {})
+		check("migrate/v" .. version .. " migrates", ran)
+		assertModern("migrate/v" .. version .. " lands on current defaults", profile)
+	end
+
+	-- Idempotent: the collapsed step must be safe to run over its own output.
+	local twice = legacyProfile(1)
+	Migrate:Run(twice, {})
+	local textsAfterFirst = #twice.units.player.texts
+	twice.schemaVersion = 1
+	Migrate:Run(twice, {})
+	equal("migrate/collapsed step is idempotent",
+		#twice.units.player.texts, textsAfterFirst)
+	assertModern("migrate/still correct after a second pass", twice)
+
+	-- Deliberate choices survive, whatever version they arrive from.
+	local customized = legacyProfile(1)
+	customized.units.player.health.texture = "Smooth"
+	customized.units.player.power.spacing = 6
+	customized.units.player.health.brightness = 0.4
+	customized.units.target.health.colorMode = "gradient"
+	customized.units.player.background.color = { r = 0.2, g = 0, b = 0, a = 0.9 }
+	customized.units.targettarget.anchor.x = 137
+	customized.units.player.indicators.y = -30
+	Migrate:Run(customized, {})
+	equal("migrate/custom texture kept", customized.units.player.health.texture, "Smooth")
+	equal("migrate/custom spacing kept", customized.units.player.power.spacing, 6)
+	equal("migrate/custom brightness kept", customized.units.player.health.brightness, 0.4)
+	equal("migrate/custom color mode kept", customized.units.target.health.colorMode, "gradient")
+	equal("migrate/re-colored backdrop stays on", customized.units.player.background.enabled, true)
+	equal("migrate/dragged tot kept", customized.units.targettarget.anchor.x, 137)
+	equal("migrate/positioned indicators kept", customized.units.player.indicators.y, -30)
+
+	-- The interim left-side target-of-target position also lands on the right.
+	local interim = legacyProfile(9)
+	interim.units.targettarget.anchor = { to = "target", point = "RIGHT",
+		relativePoint = "LEFT", x = -4, y = 0 }
+	Migrate:Run(interim, {})
+	equal("migrate/interim tot position corrected",
+		interim.units.targettarget.anchor.point, "LEFT")
+	equal("migrate/interim tot offset corrected",
+		interim.units.targettarget.anchor.x, 4)
+
+	-- A key that did not exist in the old schema is simply absent, and picks up
+	-- the current default from EnsureProfile rather than from a migration.
+	local ancient = legacyProfile(1)
+	ancient.units.player.health.brightness = nil
+	ancient.units.player.indicators = nil
+	Migrate:Run(ancient, {})
+	check("migrate/absent key is left absent by migration",
+		ancient.units.player.health.brightness == nil)
+	Defaults:EnsureProfile(ancient)
+	equal("migrate/EnsureProfile then supplies the current default",
+		ancient.units.player.health.brightness, 0.8)
+	equal("migrate/and for keys added even later",
+		ancient.units.player.indicators.y, 5)
+
+	--------------------------------------------------------------------------
+	-- Failure handling
+	--
+	-- Reaching the "no migration path" branch needs a gap above the collapse
+	-- point, since everything at or below it is handled in one step. Raising
+	-- the target with no steps defined creates one.
+	--------------------------------------------------------------------------
+
+	local realTarget = Defaults.SCHEMA_VERSION
+	Defaults.SCHEMA_VERSION = realTarget + 2
+
 	local db = {}
-	local orphan = { schemaVersion = 0, marker = "precious" }
-	success = Migrate:Run(orphan, db)
+	local orphan = { schemaVersion = realTarget, marker = "precious" }
+	success = Migrate:Run(orphan, db, "Orphan")
 	check("migrate/missing step fails safely", not success)
 	local backedUp = false
 	for _, snapshot in pairs(db.backup or {}) do
 		if snapshot.marker == "precious" then backedUp = true end
 	end
 	check("migrate/old settings are backed up", backedUp)
-	equal("migrate/defaults loaded after failure", orphan.schemaVersion, Defaults.SCHEMA_VERSION)
+	equal("migrate/defaults loaded after failure", orphan.schemaVersion,
+		Defaults.SCHEMA_VERSION)
 
-	-- Step 1 -> 2: the cosmetic defaults changed, and Defaults:EnsureProfile
-	-- never overwrites a stored value, so an existing profile would otherwise
-	-- keep the old look on every frame forever.
-	local v1 = {
-		schemaVersion = 1,
-		units = {},
-		general = { blizzardFrames = "none", blizzardParty = false },
+	-- Two failures in the same second must produce two backups, not one. Both
+	-- profiles are unmigratable here because the raised target is unreachable
+	-- for anything -- which is the point: this isolates the backup behavior.
+	local broken = {
+		profile = nil,
+		keys = { profile = "Broken" },
+		profiles = {
+			Broken = { schemaVersion = realTarget, marker = "precious" },
+			AlsoBroken = { schemaVersion = realTarget, marker = "also precious" },
+		},
 	}
-	for _, key in ipairs({ "player", "target", "party1", "pet", "targettarget" }) do
-		v1.units[key] = {
-			width = 200, height = 46,
-			anchor = { to = "UIParent", point = "CENTER", relativePoint = "CENTER", x = 0, y = 0 },
-			background = { enabled = true, color = { r = 0, g = 0, b = 0, a = 0.6 }, inset = 0 },
-			health = { texture = "Blizzard" },
-			power = { texture = "Blizzard", spacing = 1 },
-			mana = { texture = "Blizzard", spacing = 1 },
-		}
+	broken.profile = broken.profiles.Broken
+	function broken:GetCurrentProfile() return self.keys.profile end
+
+	local brokenSv = {}
+	local okCount, badCount = Migrate:RunAll(broken, brokenSv)
+	equal("migrate/nothing migrated when there is no path", okCount, 0)
+	equal("migrate/both failures reported", badCount, 2)
+
+	local backups, markers = 0, {}
+	for _, snapshot in pairs(brokenSv.backup or {}) do
+		backups = backups + 1
+		markers[snapshot.marker or ""] = true
 	end
-	-- One frame the user has deliberately customized.
-	v1.units.target.health.texture = "Smooth"
-	v1.units.target.power.spacing = 6
-	v1.units.pet.background.color = { r = 0.2, g = 0, b = 0, a = 0.9 }
+	equal("migrate/each failure is backed up separately", backups, 2)
+	check("migrate/both profiles' contents survive",
+		markers["precious"] and markers["also precious"])
 
-	success = Migrate:Run(v1, {})
-	check("migrate/v1 profile migrates", success)
-	equal("migrate/stamped at the target version", v1.schemaVersion, Defaults.SCHEMA_VERSION)
+	Defaults.SCHEMA_VERSION = realTarget
 
-	local stale = {}
-	for _, key in ipairs({ "player", "party1", "targettarget" }) do
-		local cfg = v1.units[key]
-		if cfg.health.texture ~= "Dyrue Flat" then stale[#stale + 1] = key .. ".health.texture" end
-		if cfg.power.texture ~= "Dyrue Flat" then stale[#stale + 1] = key .. ".power.texture" end
-		if cfg.mana.texture ~= "Dyrue Flat" then stale[#stale + 1] = key .. ".mana.texture" end
-		if cfg.power.spacing ~= 0 then stale[#stale + 1] = key .. ".power.spacing" end
-		if cfg.mana.spacing ~= 0 then stale[#stale + 1] = key .. ".mana.spacing" end
-		if cfg.background.enabled ~= false then stale[#stale + 1] = key .. ".background" end
-	end
-	if #stale == 0 then
-		ok("migrate/every unit is carried forward, not just the player")
-	else
-		fail("migrate/every unit is carried forward, not just the player",
-			table.concat(stale, ", "))
-	end
+	--------------------------------------------------------------------------
+	-- Every profile, not just the active one (Plan 8 part 1)
+	--------------------------------------------------------------------------
 
-	-- Deliberate choices survive.
-	equal("migrate/custom texture untouched", v1.units.target.health.texture, "Smooth")
-	equal("migrate/custom spacing untouched", v1.units.target.power.spacing, 6)
-	check("migrate/custom backdrop color keeps the backdrop on",
-		v1.units.pet.background.enabled == true)
-
-	-- Positions are never touched by a cosmetic migration.
-	equal("migrate/layout untouched", v1.units.player.width, 200)
-	equal("migrate/anchor untouched", v1.units.player.anchor.point, "CENTER")
-
-	-- Step 2 -> 3: Blizzard's frames now ship hidden.
-	-- The chain must run EVERY step, not just the first one.
-	equal("migrate/v1 chain ran every step", v1.general.blizzardFrames, "hide")
-	equal("migrate/party frames hidden by the chain", v1.general.blizzardParty, true)
-
-	local v2 = {
-		schemaVersion = 2,
-		units = {},
-		general = { blizzardFrames = "none", blizzardParty = false },
-	}
-	success = Migrate:Run(v2, {})
-	check("migrate/v2 profile migrates", success)
-	equal("migrate/blizzard frames flipped to hide", v2.general.blizzardFrames, "hide")
-	equal("migrate/blizzard party flipped on", v2.general.blizzardParty, true)
-
-	-- An explicit "hide" is already correct and must not be disturbed.
-	local already = {
-		schemaVersion = 2, units = {},
-		general = { blizzardFrames = "hide", blizzardParty = true },
-	}
-	Migrate:Run(already, {})
-	equal("migrate/already hiding stays hiding", already.general.blizzardFrames, "hide")
-
-	-- Step 3 -> 4: health bars default to class color, and the two old defaults
-	-- differed by unit.
-	local v3 = {
-		schemaVersion = 3,
-		general = { blizzardFrames = "hide", blizzardParty = true },
-		units = {
-			player = { health = { colorMode = "static", color = { r = 0, g = 0.9, b = 0.1 } } },
-			target = { health = { colorMode = "reaction", color = { r = 0, g = 0.9, b = 0.1 } } },
-			focus  = { health = { colorMode = "reaction", color = { r = 0, g = 0.9, b = 0.1 } } },
-			-- Deliberate choices that must survive.
-			pet    = { health = { colorMode = "reaction", color = { r = 0, g = 0.9, b = 0.1 } } },
-			party1 = { health = { colorMode = "static", color = { r = 1, g = 0, b = 1 } } },
+	local all = {
+		profile = nil,
+		keys = { profile = "Active" },
+		profiles = {
+			Active = { schemaVersion = Defaults.SCHEMA_VERSION, units = {} },
+			Stale = legacyProfile(1),
+			AlsoStale = legacyProfile(7),
 		},
 	}
-	success = Migrate:Run(v3, {})
-	check("migrate/v3 profile migrates", success)
-	equal("migrate/static spec-green becomes class", v3.units.player.health.colorMode, "class")
-	equal("migrate/target reaction becomes class", v3.units.target.health.colorMode, "class")
-	equal("migrate/focus reaction becomes class", v3.units.focus.health.colorMode, "class")
-	-- "reaction" was never the default on the pet frame, so it was chosen.
-	equal("migrate/reaction kept where it was never the default",
-		v3.units.pet.health.colorMode, "reaction")
-	-- A static color that is not the spec green was chosen too.
-	equal("migrate/custom static color kept", v3.units.party1.health.colorMode, "static")
-	equal("migrate/custom color value kept", v3.units.party1.health.color.r, 1)
+	all.profile = all.profiles.Active
+	function all:GetCurrentProfile() return self.keys.profile end
 
-	-- Step 4 -> 5: health and power dimmed, shapeshift mana left alone.
-	local v4 = {
-		schemaVersion = 4,
-		general = { blizzardFrames = "hide", blizzardParty = true },
-		units = {
-			player = {
-				health = { colorMode = "class", brightness = 1 },
-				power = { brightness = 1 },
-				mana = { brightness = 1 },
-			},
-			target = {
-				health = { colorMode = "class", brightness = 0.5 },
-				power = { brightness = 1 },
-				mana = { brightness = 1 },
-			},
+	local migrated, failedCount = Migrate:RunAll(all, {})
+	equal("migrate/two stale profiles were migrated", migrated, 2)
+	equal("migrate/none failed", failedCount, 0)
+
+	-- One profile failing must not stop the others. A profile from a future
+	-- build is the natural case: it is refused without needing a missing step.
+	local withFuture = {
+		profile = nil,
+		keys = { profile = "Healthy" },
+		profiles = {
+			Healthy = legacyProfile(1),
+			FromTheFuture = { schemaVersion = Defaults.SCHEMA_VERSION + 3, marker = true },
 		},
 	}
-	success = Migrate:Run(v4, {})
-	check("migrate/v4 profile migrates", success)
-	equal("migrate/health dimmed to 0.8", v4.units.player.health.brightness, 0.8)
-	equal("migrate/power dimmed to 0.8", v4.units.player.power.brightness, 0.8)
-	equal("migrate/shapeshift mana left at full", v4.units.player.mana.brightness, 1)
-	equal("migrate/a chosen brightness is kept", v4.units.target.health.brightness, 0.5)
+	withFuture.profile = withFuture.profiles.Healthy
+	function withFuture:GetCurrentProfile() return self.keys.profile end
 
-	-- Step 5 -> 6: the mana readout is appended to profiles that lack it.
-	local v5 = {
-		schemaVersion = 5,
-		general = { blizzardFrames = "hide", blizzardParty = true },
-		units = {
-			player = {
-				mana = { enabled = true, brightness = 1 },
-				texts = { { anchorTo = "health", format = "[name]" } },
-			},
-			-- Already has one: must not gain a duplicate.
-			focus = {
-				mana = { enabled = true, brightness = 1 },
-				texts = { { anchorTo = "mana", format = "[mana:perc]" } },
-			},
-			-- Mana bar disabled: nothing to anchor to, so nothing is added.
-			target = {
-				mana = { enabled = false, brightness = 1 },
-				texts = { { anchorTo = "health", format = "[name]" } },
-			},
-		},
-	}
-	success = Migrate:Run(v5, {})
-	check("migrate/v5 profile migrates", success)
-	equal("migrate/mana readout appended", #v5.units.player.texts, 2)
-	equal("migrate/appended text is anchored to the mana bar",
-		v5.units.player.texts[2].anchorTo, "mana")
-	equal("migrate/no duplicate where one exists", #v5.units.focus.texts, 1)
-	equal("migrate/existing mana text untouched",
-		v5.units.focus.texts[1].format, "[mana:perc]")
-	equal("migrate/nothing added where the bar is off", #v5.units.target.texts, 1)
-
-	-- Step 9 -> 10: indicators raised clear of the name text.
-	local v9 = {
-		schemaVersion = 9,
-		general = { blizzardFrames = "hide", blizzardParty = true },
-		units = {
-			player = { indicators = { point = "TOPLEFT", relativePoint = "TOPLEFT", x = 0, y = 0 } },
-			-- Already positioned by hand, so left alone.
-			target = { indicators = { point = "TOPLEFT", relativePoint = "TOPLEFT", x = 0, y = -30 } },
-			pet = { indicators = { point = "BOTTOMRIGHT", relativePoint = "BOTTOMRIGHT", x = 0, y = 0 } },
-		},
-	}
-	Migrate:Run(v9, {})
-	equal("migrate/indicators raised", v9.units.player.indicators.y, 5)
-	equal("migrate/a moved indicator row is left alone", v9.units.target.indicators.y, -30)
-	equal("migrate/a re-anchored indicator row is left alone", v9.units.pet.indicators.y, 0)
-
-	-- A profile that reached the interim schema 10, where they briefly sat at
-	-- 10, is brought down rather than left high.
-	local v10 = {
-		schemaVersion = 10,
-		general = { blizzardFrames = "hide", blizzardParty = true },
-		units = {
-			player = { indicators = { point = "TOPLEFT", relativePoint = "TOPLEFT", x = 0, y = 10 } },
-			target = { indicators = { point = "TOPLEFT", relativePoint = "TOPLEFT", x = 0, y = 24 } },
-		},
-	}
-	Migrate:Run(v10, {})
-	equal("migrate/interim indicator offset comes down", v10.units.player.indicators.y, 5)
-	equal("migrate/a deliberately raised row is left alone", v10.units.target.indicators.y, 24)
-
-	-- Step 7 -> 8: target of target moves right of the target frame. Unlike the
-	-- cosmetic steps, this one can tell an untouched default from a moved
-	-- frame, because drag mode writes to these same values.
-	local function v7(anchor)
-		return {
-			schemaVersion = 7,
-			general = { blizzardFrames = "hide", blizzardParty = true },
-			units = { targettarget = { anchor = anchor } },
-		}
-	end
-
-	local untouched = v7({ to = "target", point = "TOPLEFT",
-		relativePoint = "BOTTOMLEFT", x = 0, y = -34 })
-	success = Migrate:Run(untouched, {})
-	check("migrate/v7 profile migrates", success)
-	local moved = untouched.units.targettarget.anchor
-	equal("migrate/tot point moved", moved.point, "LEFT")
-	equal("migrate/tot relative point moved", moved.relativePoint, "RIGHT")
-	equal("migrate/tot x moved", moved.x, 4)
-	equal("migrate/tot y moved", moved.y, 0)
-
-	-- A profile that reached the interim schema 8, where it briefly sat on the
-	-- LEFT, is carried across rather than left wrong.
-	local interim = {
-		schemaVersion = 8,
-		general = { blizzardFrames = "hide", blizzardParty = true },
-		units = { targettarget = { anchor = { to = "target", point = "RIGHT",
-			relativePoint = "LEFT", x = -4, y = 0 } } },
-	}
-	Migrate:Run(interim, {})
-	equal("migrate/interim left-side anchor moves right",
-		interim.units.targettarget.anchor.point, "LEFT")
-	equal("migrate/interim relative point moves right",
-		interim.units.targettarget.anchor.relativePoint, "RIGHT")
-	equal("migrate/interim x flips sign", interim.units.targettarget.anchor.x, 4)
-
-	-- But somebody who deliberately dragged it to the left keeps it there.
-	local deliberateLeft = {
-		schemaVersion = 8,
-		general = { blizzardFrames = "hide", blizzardParty = true },
-		units = { targettarget = { anchor = { to = "target", point = "RIGHT",
-			relativePoint = "LEFT", x = -60, y = 12 } } },
-	}
-	Migrate:Run(deliberateLeft, {})
-	equal("migrate/a deliberately left-placed tot is left alone",
-		deliberateLeft.units.targettarget.anchor.point, "RIGHT")
-	equal("migrate/its offset is untouched",
-		deliberateLeft.units.targettarget.anchor.x, -60)
-
-	-- A frame the user has dragged keeps its position.
-	local dragged = v7({ to = "target", point = "TOPLEFT",
-		relativePoint = "BOTTOMLEFT", x = 137, y = -34 })
-	Migrate:Run(dragged, {})
-	equal("migrate/dragged tot is left alone", dragged.units.targettarget.anchor.x, 137)
-	equal("migrate/dragged tot keeps its point",
-		dragged.units.targettarget.anchor.point, "TOPLEFT")
-
-	-- So does one re-anchored to something else entirely.
-	local reanchored = v7({ to = "UIParent", point = "TOPLEFT",
-		relativePoint = "BOTTOMLEFT", x = 0, y = -34 })
-	Migrate:Run(reanchored, {})
-	equal("migrate/re-anchored tot is left alone",
-		reanchored.units.targettarget.anchor.to, "UIParent")
-	equal("migrate/re-anchored tot keeps its point",
-		reanchored.units.targettarget.anchor.point, "TOPLEFT")
+	local goodCount, refusedCount = Migrate:RunAll(withFuture, {})
+	equal("migrate/the healthy profile still migrated", goodCount, 1)
+	equal("migrate/the future one was refused", refusedCount, 1)
+	assertModern("migrate/healthy profile is fully current despite the failure",
+		withFuture.profiles.Healthy)
+	equal("migrate/the future profile is untouched",
+		withFuture.profiles.FromTheFuture.schemaVersion, Defaults.SCHEMA_VERSION + 3)
+	assertModern("migrate/inactive profile is brought current", all.profiles.Stale)
+	assertModern("migrate/the second one too", all.profiles.AlsoStale)
+	equal("migrate/the active profile is untouched at the target version",
+		all.profiles.Active.schemaVersion, Defaults.SCHEMA_VERSION)
 
 	-- Running it again is a no-op.
-	success = Migrate:Run(v1, {})
-	check("migrate/re-running is a no-op", success)
-	equal("migrate/still at target", v1.schemaVersion, Defaults.SCHEMA_VERSION)
+	local again, againFailed = Migrate:RunAll(all, {})
+	equal("migrate/re-running migrates nothing", again, 0)
+	equal("migrate/and fails nothing", againFailed, 0)
 end
 
 --------------------------------------------------------------------------------

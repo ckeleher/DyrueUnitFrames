@@ -22,19 +22,10 @@ ns.Defaults = Defaults
 
 local type, pairs, ipairs, next = type, pairs, ipairs, next
 
--- 2: flat bar texture, no gap between bars, frame backdrop off by default.
--- 3: Blizzard's own unit frames, party frames included, hidden by default.
--- 4: health bars class-colored by default.
--- 5: health and power bars dimmed to 0.8 brightness.
--- 6: current mana shown on the shapeshift mana bar.
--- 7: portraits placed beside the frame instead of behind the bars.
--- 8: target of target moved out from under the target frame.
--- 9: ...to its RIGHT. 8 briefly put it on the left, which was a
---    misreading of the request; step [8] moves those profiles across.
--- 10: state indicators raised off the name text.
--- 11: ...to 5 rather than 10, chosen by eye.
--- Core/Migrate.lua carries existing profiles forward one step at a time.
-Defaults.SCHEMA_VERSION = 11
+-- Schemas 1-11 are folded into a single declarative step in Core/Migrate.lua;
+-- see the header there for why, and for the rule about when collapsing is safe.
+-- 12 is the first version after that collapse.
+Defaults.SCHEMA_VERSION = 12
 
 --------------------------------------------------------------------------------
 -- Table helpers

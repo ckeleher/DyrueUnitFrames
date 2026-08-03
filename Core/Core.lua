@@ -283,9 +283,17 @@ function addon:OnInitialize()
 
 	Defaults:EnsureGlobal(ns.db.global)
 
-	local ok, message = Migrate:Run(ns.db.profile, _G.DyrueUnitFramesDB)
+	-- Every profile, not just the active one. A profile nobody has selected is
+	-- never otherwise migrated, and the moment somebody does select it
+	-- EnsureProfile fills its missing keys and the stale values it still holds
+	-- start looking deliberate.
+	Migrate:RunAll(ns.db, _G.DyrueUnitFramesDB)
+
+	-- EnsureProfile stays on the active profile alone, deliberately. Filling
+	-- defaults into a profile nobody has selected is pure saved-variable bloat;
+	-- migration is different, because it only rewrites values that are already
+	-- there and has to happen before anything reads them.
 	Defaults:EnsureProfile(ns.db.profile)
-	if message then Errors:Print(message) end
 
 	Errors.debug = ns.db.global.debug and true or false
 	Errors.safeMode = ns.db.global.safeMode and true or false
@@ -340,6 +348,12 @@ function addon:OnRegenEnabled()
 end
 
 function addon:OnProfileChanged()
+	-- Belt and braces. RunAll covers everything present at load, but a profile
+	-- created by another character since then would arrive here unmigrated.
+	local ok, message = Migrate:Run(ns.db.profile, _G.DyrueUnitFramesDB,
+		ns.db.GetCurrentProfile and ns.db:GetCurrentProfile() or nil)
+	if message then Errors:Print(message) end
+
 	Defaults:EnsureProfile(ns.db.profile)
 	Errors.threshold = ns.db.profile.general.errorThreshold or 5
 	Compat.SetFocusOverride(ns.db.profile.general.focusOverride)
