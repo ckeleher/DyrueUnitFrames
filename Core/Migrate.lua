@@ -179,6 +179,30 @@ local steps = {
 		end
 		return profile
 	end,
+
+	--- 7 -> 8: target of target moves to the left of the target frame.
+	--
+	-- Every field of the old default is checked, not just the anchor target.
+	-- Drag mode and the sliders write to these same values, so unlike the
+	-- cosmetic migrations this one can genuinely tell an untouched default from
+	-- a frame the user has moved -- and a moved frame is left where it is.
+	[7] = function(profile)
+		local cfg = profile.units and profile.units.targettarget
+		local anchor = cfg and cfg.anchor
+		if anchor
+			and anchor.to == "target"
+			and anchor.point == "TOPLEFT"
+			and anchor.relativePoint == "BOTTOMLEFT"
+			and anchor.x == 0
+			and anchor.y == -34
+		then
+			anchor.point = "RIGHT"
+			anchor.relativePoint = "LEFT"
+			anchor.x = -4
+			anchor.y = 0
+		end
+		return profile
+	end,
 }
 
 Migrate.steps = steps

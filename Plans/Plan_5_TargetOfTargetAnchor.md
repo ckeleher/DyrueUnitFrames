@@ -1,8 +1,25 @@
 # Plan 5 — Target of Target Anchor
 
-**Status:** Not started
+**Status:** Implemented on `Plan-5-target-of-target-anchor`.
 **Created:** 2 August 2026
-**Branch:** `first`
+**Branch:** `Plan-5-target-of-target-anchor`
+
+---
+
+## Outcome
+
+Shipped as recommended: `RIGHT` → `LEFT`, `x = -4`, `y = 0`. Vertically centred
+against the taller target frame rather than top-aligned.
+
+Schema 8 checks all five fields of the old anchor before moving it, so a frame
+that has been dragged, nudged or re-anchored keeps its position. As predicted,
+this is the one migration in the project where "untouched default" and
+"deliberate choice" are genuinely distinguishable, because drag mode and the
+sliders write to these same values.
+
+16 new assertions: the shipped anchor, the live frame actually resolving to the
+target frame's left edge, the migration moving an untouched profile, and two
+negative cases — a dragged frame and a re-anchored one — left alone.
 
 ---
 

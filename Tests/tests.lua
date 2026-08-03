@@ -295,6 +295,19 @@ local function testAnchoring()
 	local Anchoring = ns.Anchoring
 	local units = ns:Profile().units
 
+	-- Target of target ships to the LEFT of the target frame, not below it.
+	equal("anchor/tot anchored to the target", units.targettarget.anchor.to, "target")
+	equal("anchor/tot sits left of the target", units.targettarget.anchor.point, "RIGHT")
+	equal("anchor/tot pins to the target's left edge",
+		units.targettarget.anchor.relativePoint, "LEFT")
+	check("anchor/tot is offset clear of the target", units.targettarget.anchor.x < 0)
+	equal("anchor/tot is vertically centred on the target", units.targettarget.anchor.y, 0)
+
+	local totFrame = ns.frames.targettarget
+	local _, relative, relativePoint = totFrame:GetPoint(1)
+	equal("anchor/tot frame is anchored to the target frame", relative, ns.frames.target)
+	equal("anchor/tot frame pins to the target's left", relativePoint, "LEFT")
+
 	units.target.anchor.to = "UIParent"
 	units.targettarget.anchor.to = "target"
 	units.pet.anchor.to = "player"
@@ -650,6 +663,44 @@ local function testMigration()
 	equal("migrate/existing mana text untouched",
 		v5.units.focus.texts[1].format, "[mana:perc]")
 	equal("migrate/nothing added where the bar is off", #v5.units.target.texts, 1)
+
+	-- Step 7 -> 8: target of target moves left of the target frame. Unlike the
+	-- cosmetic steps, this one can tell an untouched default from a moved
+	-- frame, because drag mode writes to these same values.
+	local function v7(anchor)
+		return {
+			schemaVersion = 7,
+			general = { blizzardFrames = "hide", blizzardParty = true },
+			units = { targettarget = { anchor = anchor } },
+		}
+	end
+
+	local untouched = v7({ to = "target", point = "TOPLEFT",
+		relativePoint = "BOTTOMLEFT", x = 0, y = -34 })
+	success = Migrate:Run(untouched, {})
+	check("migrate/v7 profile migrates", success)
+	local moved = untouched.units.targettarget.anchor
+	equal("migrate/tot point moved", moved.point, "RIGHT")
+	equal("migrate/tot relative point moved", moved.relativePoint, "LEFT")
+	equal("migrate/tot x moved", moved.x, -4)
+	equal("migrate/tot y moved", moved.y, 0)
+
+	-- A frame the user has dragged keeps its position.
+	local dragged = v7({ to = "target", point = "TOPLEFT",
+		relativePoint = "BOTTOMLEFT", x = 137, y = -34 })
+	Migrate:Run(dragged, {})
+	equal("migrate/dragged tot is left alone", dragged.units.targettarget.anchor.x, 137)
+	equal("migrate/dragged tot keeps its point",
+		dragged.units.targettarget.anchor.point, "TOPLEFT")
+
+	-- So does one re-anchored to something else entirely.
+	local reanchored = v7({ to = "UIParent", point = "TOPLEFT",
+		relativePoint = "BOTTOMLEFT", x = 0, y = -34 })
+	Migrate:Run(reanchored, {})
+	equal("migrate/re-anchored tot is left alone",
+		reanchored.units.targettarget.anchor.to, "UIParent")
+	equal("migrate/re-anchored tot keeps its point",
+		reanchored.units.targettarget.anchor.point, "TOPLEFT")
 
 	-- Running it again is a no-op.
 	success = Migrate:Run(v1, {})
