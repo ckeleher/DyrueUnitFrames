@@ -760,6 +760,75 @@ local function testMigration()
 	equal("migrate/re-anchored tot keeps its point",
 		reanchored.units.targettarget.anchor.point, "TOPLEFT")
 
+	-- Every profile, not just the active one (Plan 8 part 1).
+	--
+	-- This is the bug that prompted the plan: a profile nobody has selected was
+	-- never migrated, and selecting it later filled its missing keys while
+	-- leaving stale values looking deliberate.
+	local db = {
+		profile = nil,
+		keys = { profile = "Active" },
+		profiles = {
+			Active = { schemaVersion = Defaults.SCHEMA_VERSION, units = {} },
+			Stale = {
+				schemaVersion = 1,
+				units = { player = { health = { texture = "Blizzard" }, power = { spacing = 1 } } },
+			},
+			AlsoStale = {
+				schemaVersion = 2,
+				general = { blizzardFrames = "none", blizzardParty = false },
+				units = {},
+			},
+		},
+	}
+	db.profile = db.profiles.Active
+	function db:GetCurrentProfile() return self.keys.profile end
+
+	local sv = {}
+	local migrated, failedCount = Migrate:RunAll(db, sv)
+	equal("migrate/two stale profiles were migrated", migrated, 2)
+	equal("migrate/none failed", failedCount, 0)
+	equal("migrate/inactive profile is brought current",
+		db.profiles.Stale.schemaVersion, Defaults.SCHEMA_VERSION)
+	equal("migrate/its stale values were actually moved",
+		db.profiles.Stale.units.player.health.texture, "Dyrue Flat")
+	equal("migrate/and the rest of them", db.profiles.Stale.units.player.power.spacing, 0)
+	equal("migrate/the second stale profile too",
+		db.profiles.AlsoStale.general.blizzardFrames, "hide")
+	equal("migrate/the active profile is untouched at the target version",
+		db.profiles.Active.schemaVersion, Defaults.SCHEMA_VERSION)
+
+	-- One profile failing must not stop the others.
+	local mixed = {
+		profile = nil,
+		keys = { profile = "Good" },
+		profiles = {
+			Good = { schemaVersion = 1, units = {} },
+			Broken = { schemaVersion = 0, marker = "precious" },
+			AlsoBroken = { schemaVersion = 0, marker = "also precious" },
+		},
+	}
+	mixed.profile = mixed.profiles.Good
+	function mixed:GetCurrentProfile() return self.keys.profile end
+
+	local mixedSv = {}
+	local okCount, badCount = Migrate:RunAll(mixed, mixedSv)
+	equal("migrate/the healthy profile still migrated", okCount, 1)
+	equal("migrate/both broken ones reported", badCount, 2)
+	equal("migrate/healthy profile reached the target",
+		mixed.profiles.Good.schemaVersion, Defaults.SCHEMA_VERSION)
+
+	-- Two failures in the same second must produce two backups, not one.
+	local backups = 0
+	local markers = {}
+	for key, snapshot in pairs(mixedSv.backup or {}) do
+		backups = backups + 1
+		markers[snapshot.marker or ""] = true
+	end
+	equal("migrate/each failure is backed up separately", backups, 2)
+	check("migrate/both profiles' contents survive",
+		markers["precious"] and markers["also precious"])
+
 	-- Running it again is a no-op.
 	success = Migrate:Run(v1, {})
 	check("migrate/re-running is a no-op", success)

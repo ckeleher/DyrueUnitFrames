@@ -278,11 +278,65 @@ Migrate.steps = steps
 -- Runner
 --------------------------------------------------------------------------------
 
+--- Migrate every profile in the database, not just the active one.
+--
+-- An unmigrated profile sitting in the saved variables is invisible until
+-- somebody selects it. At that point `Defaults:EnsureProfile` fills its missing
+-- keys and the stale VALUES it still carries start looking deliberate -- an
+-- addon several versions out of date, with no error and nothing to explain it.
+--
+-- One profile failing must not stop the others, so each is run independently
+-- and reported by name.
+--
+-- @param db table the AceDB object
+-- @param sv table the raw saved-variable root, for backup storage
+-- @return number migrated, number failed
+function Migrate:RunAll(db, sv)
+	if not db then return 0, 0 end
+
+	local profiles = db.profiles
+	if type(profiles) ~= "table" then
+		-- Older AceDB, or a stub. Do the active profile rather than nothing.
+		local ok, message = self:Run(db.profile, sv)
+		if message then Errors:Print(message) end
+		return (ok and message) and 1 or 0, ok and 0 or 1
+	end
+
+	local active = db.GetCurrentProfile and db:GetCurrentProfile() or nil
+	local migrated, failed = 0, 0
+
+	for name, profile in pairs(profiles) do
+		if type(profile) == "table" then
+			local ok, message = self:Run(profile, sv, name)
+			if not ok then
+				failed = failed + 1
+			elseif message then
+				migrated = migrated + 1
+				-- Only the active profile's migration is worth a chat line on
+				-- login; the rest are noted together below.
+				if name == active then Errors:Print(message) end
+			end
+		end
+	end
+
+	if migrated > 0 then
+		local others = migrated - ((active and profiles[active]) and 1 or 0)
+		if others > 0 then
+			Errors:Print(string.format(
+				L["%d other profile(s) were also brought up to date."], others))
+		end
+	end
+
+	return migrated, failed
+end
+
 --- Migrate a profile in place, or fall back to defaults on failure.
 -- @param profile table the live AceDB profile
 -- @param db table the raw saved-variable root, for backup storage
+-- @param name string|nil profile name, for reporting and backup keys
 -- @return boolean ok, string|nil message
-function Migrate:Run(profile, db)
+function Migrate:Run(profile, db, name)
+	if type(profile) ~= "table" then return true, nil end
 	local target = Defaults.SCHEMA_VERSION
 	local current = profile.schemaVersion
 
@@ -301,8 +355,8 @@ function Migrate:Run(profile, db)
 		-- The user has run a newer build of the addon. Downgrading a config is
 		-- not something we can do correctly, so we do not pretend to.
 		return false, string.format(
-			L["This profile was saved by DyrueUnitFrames schema %d, but this build only understands %d. Settings have been left untouched; upgrade the addon or switch profiles."],
-			current, target)
+			L["Profile '%s' was saved by DyrueUnitFrames schema %d, but this build only understands %d. It has been left untouched; upgrade the addon or switch profiles."],
+			name or L["Default"], current, target)
 	end
 
 	-- Work on a copy. The live table is only replaced once every step passes.
@@ -312,12 +366,12 @@ function Migrate:Run(profile, db)
 	while version < target do
 		local step = steps[version]
 		if not step then
-			return self:Fail(profile, db, string.format(
+			return self:Fail(profile, db, name, string.format(
 				L["No migration path from schema %d to %d."], version, version + 1))
 		end
 		local ok, result = pcall(step, work)
 		if not ok then
-			return self:Fail(profile, db, string.format(
+			return self:Fail(profile, db, name, string.format(
 				L["Migration from schema %d failed: %s"], version, tostring(result)))
 		end
 		work = result or work
@@ -330,14 +384,19 @@ function Migrate:Run(profile, db)
 	for k in pairs(profile) do profile[k] = nil end
 	for k, v in pairs(work) do profile[k] = v end
 
-	return true, string.format(L["Settings migrated from schema %d to %d."], current, target)
+	return true, string.format(
+		L["Profile '%s' migrated from schema %d to %d."], name or L["Default"], current, target)
 end
 
 --- Preserve the unmigratable profile and start from defaults.
-function Migrate:Fail(profile, db, message)
+function Migrate:Fail(profile, db, name, message)
 	if db then
 		db.backup = db.backup or {}
-		db.backup[date and date("%Y-%m-%d %H:%M:%S") or tostring(time and time() or 0)] =
+		-- Keyed by profile AND time. Two profiles failing in the same second
+		-- would otherwise collide, and the backup would lose one of the two
+		-- things it exists to preserve.
+		local stamp = date and date("%Y-%m-%d %H:%M:%S") or tostring(time and time() or 0)
+		db.backup[string.format("%s @ %s", name or L["Default"], stamp)] =
 			Defaults.DeepCopy(profile)
 	end
 
