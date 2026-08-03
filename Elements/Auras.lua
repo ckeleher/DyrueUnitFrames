@@ -219,8 +219,8 @@ local function createButton(group, index)
 		pcall(cooldown.SetDrawEdge, cooldown, false)
 	end
 
-	button.count = button:CreateFontString(nil, "OVERLAY")
-	button.duration = button:CreateFontString(nil, "OVERLAY")
+	button.count = ns:NewFontString(button, "OVERLAY")
+	button.duration = ns:NewFontString(button, "OVERLAY")
 
 	button:SetScript("OnEnter", function(self)
 		local cfg = self.groupConfig

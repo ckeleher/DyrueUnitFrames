@@ -223,12 +223,12 @@ local function buildOverlay(frame)
 	overlay.border:SetColorTexture(0.2, 0.6, 1, 0.9)
 	overlay.border:SetAlpha(0.5)
 
-	overlay.label = overlay:CreateFontString(nil, "OVERLAY")
+	overlay.label = ns:NewFontString(overlay, "OVERLAY")
 	ns:SetFont(overlay.label, nil, 11, "OUTLINE", true)
 	overlay.label:SetPoint("CENTER", overlay, "CENTER", 0, 0)
 	overlay.label:SetText(Registry:Get(frame.unitKey).label)
 
-	overlay.coords = overlay:CreateFontString(nil, "OVERLAY")
+	overlay.coords = ns:NewFontString(overlay, "OVERLAY")
 	ns:SetFont(overlay.coords, nil, 10, "OUTLINE", true)
 	overlay.coords:SetPoint("TOP", overlay, "BOTTOM", 0, -2)
 
