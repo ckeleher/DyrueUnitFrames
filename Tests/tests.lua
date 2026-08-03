@@ -2532,6 +2532,20 @@ local function eventFilter(frame, event)
 	return reg[1], true
 end
 
+--- Is `elementName` on the dispatch list for `event`?
+--
+-- Deliberately not a count: which elements happen to want a shared event is
+-- unrelated wiring that moves (the target frame's power TEXT wants
+-- UNIT_POWER_UPDATE too), and a count would break every time it did.
+local function dispatchesTo(frame, event, elementName)
+	local list = frame.eventMap[event]
+	if not list then return false end
+	for i = 1, #list do
+		if list[i].name == elementName then return true end
+	end
+	return false
+end
+
 --- Measured borders and pip widths, read back from the actual placements
 -- rather than recomputed. `gaps` is outer-left, each gap between pips, then
 -- outer-right: one more entry than there are pips.
@@ -2791,17 +2805,51 @@ local function testComboPoints()
 	----------------------------------------------------------------------------
 	-- Events
 	--
-	-- The regression test for the whole plan. UNIT_COMBO_POINTS fires with
-	-- "player" as its payload but this element lives on the TARGET frame, so a
-	-- naive registration filters it against "target" and the handler never runs
-	-- -- silently, with no error and no warning.
+	-- The regression test for the bug this shipped with. Combo points are the
+	-- PLAYER's, so their events carry "player" -- but the element lives on the
+	-- TARGET frame, and Factory filters every UNIT_* event against the frame's
+	-- own display unit. Getting that wrong produces no error and no warning,
+	-- just a bar that never updates until something else forces a full update.
+	--
+	-- And the event it was originally written against does not exist here at
+	-- all, which is the other half of the same failure: Compat skips an invalid
+	-- event silently, so the element was subscribed to nothing.
 	----------------------------------------------------------------------------
 
-	local filter, registered = eventFilter(target, "UNIT_COMBO_POINTS")
-	check("combo/UNIT_COMBO_POINTS is registered on the target frame", registered)
-	equal("combo/filtered against the PLAYER, not the target", filter, "player")
+	check("combo/UNIT_COMBO_POINTS is absent on this client",
+		not Compat.HasEvent("UNIT_COMBO_POINTS"))
+	check("combo/and that is visible from /duf compat",
+		Compat.Describe().hasUnitComboPoints == false)
+	local _, registered = eventFilter(target, "UNIT_COMBO_POINTS")
+	check("combo/so it is not registered", not registered)
 
-	-- The same helper over the case that has always had this shape and has
+	-- The live path. The power bar on this same frame already wants
+	-- UNIT_POWER_UPDATE for "target", so this is a genuine two-element conflict
+	-- rather than a contrived one -- and it must not cost either of them.
+	local filter
+	filter, registered = eventFilter(target, "UNIT_POWER_UPDATE")
+	check("combo/UNIT_POWER_UPDATE is registered on the target frame", registered)
+	check("combo/the combo bar is on its dispatch list",
+		dispatchesTo(target, "UNIT_POWER_UPDATE", "combo"))
+	check("combo/and so is the power bar it shares with",
+		dispatchesTo(target, "UNIT_POWER_UPDATE", "power"))
+
+	-- Served by ONE registration filtered against BOTH units. Dropping the
+	-- filter would also work and is the fallback, but it would wake the target
+	-- frame for every raid member's energy tick (SPEC §5.7).
+	local reg = target.__events["UNIT_POWER_UPDATE"]
+	check("combo/still unit-filtered, not widened to everything",
+		type(reg) == "table", "registration was dropped to unfiltered")
+	-- Guarded rather than indexed straight: if the check above ever fails, `reg`
+	-- is a boolean and indexing it would crash the whole suite, hiding every
+	-- assertion after this one.
+	local filtered = (type(reg) == "table") and reg or {}
+	local servesPlayer = (filtered[1] == "player") or (filtered[2] == "player")
+	local servesTarget = (filtered[1] == "target") or (filtered[2] == "target")
+	check("combo/filtered against the player, for the combo bar", servesPlayer)
+	check("combo/and the target, for the power bar", servesTarget)
+
+	-- The same helper over the cases that have always had this shape and have
 	-- never been asserted: UNIT_TARGET belongs to the derived frame's owner.
 	equal("combo/derived frames still watch their owner's target",
 		(eventFilter(ns.frames.targettarget, "UNIT_TARGET")), "target")
@@ -2810,16 +2858,29 @@ local function testComboPoints()
 
 	-- Firing it updates the pips on its own, without a full update. Health is
 	-- moved at the same time and must NOT follow: that is what proves only the
-	-- combo element ran.
+	-- elements listening for this event ran.
 	local healthBefore = target.elements.health.bar:GetValue()
 	stub.units.target.health = 12
 	stub.units.target.combo = 2
-	stub.fire("UNIT_COMBO_POINTS", "player")
-	check("combo/the event updates the pips",
+	stub.fire("UNIT_POWER_UPDATE", "player")
+	check("combo/a player power event updates the pips",
 		pipIsFilled(el, 2, cfg) and pipIsEmpty(el, 3, cfg))
 	equal("combo/without running a full update",
 		target.elements.health.bar:GetValue(), healthBefore)
 	stub.units.target.health = 87
+
+	-- The event the combo count rides on fires several times a second for an
+	-- energy user and carries a changed count on almost none of them.
+	stub.units.target.combo = 5
+	el.pips[5]:SetColorTexture(0, 0, 0, 0)      -- deliberately wrong
+	el.lastPoints = 5
+	stub.fire("UNIT_POWER_UPDATE", "player")
+	check("combo/an unchanged count does not repaint",
+		not pipIsFilled(el, 5, cfg))
+	-- ...but anything that is not that event must still repaint unconditionally,
+	-- or a config change would leave the bar stale.
+	target:FullUpdate()
+	check("combo/a full update repaints regardless", pipIsFilled(el, 5, cfg))
 
 	-- PLAYER_TARGET_CHANGED is a change event on this frame, so assert the
 	-- outcome rather than the path.
@@ -2828,33 +2889,26 @@ local function testComboPoints()
 	check("combo/a target change re-reads the points",
 		pipIsFilled(el, 1, cfg) and pipIsEmpty(el, 2, cfg))
 
-	-- Two elements wanting the same event under different units must end up
-	-- with an UNFILTERED registration and both must still receive it. Without
-	-- this guard, adding a shared event to one element would quietly narrow the
-	-- other's registration and break it.
-	local power = ns.elements.power
-	local savedEvents, savedUnits = power.events, power.eventUnits
-	power.events = { UNIT_COMBO_POINTS = true }
-	power.eventUnits = { UNIT_COMBO_POINTS = "target" }
+	-- Three elements wanting three different units cannot be expressed by a
+	-- filter, so that -- and only that -- drops to unfiltered.
+	local highlight = ns.elements.highlight
+	local savedEvents, savedUnits = highlight.events, highlight.eventUnits
+	highlight.events = { UNIT_POWER_UPDATE = true }
+	highlight.eventUnits = { UNIT_POWER_UPDATE = "focus" }
 	target:RegisterEvents()
+	check("combo/a third unit drops the filter rather than starving anyone",
+		type(target.__events["UNIT_POWER_UPDATE"]) ~= "table")
+	check("combo/and every element is still served",
+		dispatchesTo(target, "UNIT_POWER_UPDATE", "combo")
+		and dispatchesTo(target, "UNIT_POWER_UPDATE", "power")
+		and dispatchesTo(target, "UNIT_POWER_UPDATE", "highlight"))
 
-	filter, registered = eventFilter(target, "UNIT_COMBO_POINTS")
-	check("combo/a conflicting unit still registers the event", registered)
-	equal("combo/and widens to an unfiltered registration", filter, nil)
-	equal("combo/both elements are still on the dispatch list",
-		#target.eventMap["UNIT_COMBO_POINTS"], 2)
-
-	-- "target" is a payload the combo element's own filter would have rejected,
-	-- so reaching it proves the widening actually did its job.
-	stub.units.target.combo = 4
-	stub.fire("UNIT_COMBO_POINTS", "target")
-	check("combo/the widened registration still reaches the combo element",
-		pipIsFilled(el, 4, cfg) and pipIsEmpty(el, 5, cfg))
-
-	power.events, power.eventUnits = savedEvents, savedUnits
+	highlight.events, highlight.eventUnits = savedEvents, savedUnits
 	target:RegisterEvents()
-	equal("combo/and the filter is restored once the conflict is gone",
-		(eventFilter(target, "UNIT_COMBO_POINTS")), "player")
+	reg = target.__events["UNIT_POWER_UPDATE"]
+	check("combo/the filter comes back once the conflict is gone",
+		type(reg) == "table"
+		and ((reg[1] == "player") or (reg[2] == "player")))
 
 	----------------------------------------------------------------------------
 	-- Migration: the target buff row is raised off the new bar

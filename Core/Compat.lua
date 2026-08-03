@@ -627,6 +627,11 @@ function Compat.Describe()
 		hasGetComboPoints = Compat.hasGetComboPoints,
 		hasComboPointEnum = Compat.hasComboPointEnum,
 		maxComboPoints = Compat.MAX_COMBO_POINTS,
+		-- False on the Anniversary client. Reported here rather than left to
+		-- the probe addon because when this is false the combo bar depends
+		-- entirely on the power-event path, and "which path is live" is the
+		-- first thing worth knowing if it ever stops updating again.
+		hasUnitComboPoints = Compat.HasEvent("UNIT_COMBO_POINTS"),
 		hasUnitHealthFrequent = Compat.HasEvent("UNIT_HEALTH_FREQUENT"),
 		hasUnitAura = Compat.HasEvent("UNIT_AURA"),
 		hasPlayerFocusChanged = Compat.HasEvent("PLAYER_FOCUS_CHANGED"),

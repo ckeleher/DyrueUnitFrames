@@ -249,8 +249,67 @@ def pass_three():
     return not problems and clean
 
 
+def pass_four():
+    """A client that still has UNIT_COMBO_POINTS.
+
+    The Anniversary client does not — C_EventUtils.IsEventValid says false —
+    and the stub models that, because modelling a client that still had it is
+    exactly what let the combo bar pass every test and never update in game.
+    This pass covers the other side: where the event does exist, it is used,
+    and it is filtered against "player" on the TARGET frame.
+    """
+    print("=== pass 4: a client that still has UNIT_COMBO_POINTS ===")
+    lua = build("""
+        _G.__stub.validEvents["UNIT_COMBO_POINTS"] = true
+    """)
+
+    checks = lua.execute("""
+        local ns, stub = _G.__ns, _G.__stub
+        local out = {}
+        local target = ns.frames.target
+        out.valid = ns.Compat.HasEvent("UNIT_COMBO_POINTS") and 1 or 0
+        out.described = ns.Compat.Describe().hasUnitComboPoints and 1 or 0
+
+        local reg = target.__events["UNIT_COMBO_POINTS"]
+        out.registered = reg ~= nil and 1 or 0
+        out.filter = (type(reg) == "table" and tostring(reg[1])) or "unfiltered"
+
+        -- And it actually drives the bar.
+        stub.units.target.combo = 3
+        target.elements.combo.lastPoints = nil
+        stub.fire("UNIT_COMBO_POINTS", "player")
+        local el = target.elements.combo
+        local c = el.pips[3].__color
+        local cfg = ns:UnitConfig("target").combo
+        out.thirdPipFilled = (c and c[1] == cfg.color.r) and 1 or 0
+        local d = el.pips[4].__color
+        out.fourthPipEmpty = (d and d[1] == cfg.emptyColor.r) and 1 or 0
+        return out
+    """)
+
+    problems = []
+    if checks["valid"] != 1:
+        problems.append("HasEvent should see the event")
+    if checks["described"] != 1:
+        problems.append("/duf compat should report it present")
+    if checks["registered"] != 1:
+        problems.append("UNIT_COMBO_POINTS was not registered")
+    if checks["filter"] != "player":
+        problems.append("filtered against %s, expected player" % checks["filter"])
+    if checks["thirdPipFilled"] != 1 or checks["fourthPipEmpty"] != 1:
+        problems.append("the event did not drive the bar")
+
+    clean = report(lua, "combo-point event pass")
+    if problems:
+        for p in problems:
+            print("  FAIL: %s" % p)
+    else:
+        print("  event present, registered against player, drives the bar")
+    return not problems and clean
+
+
 def main():
-    passes = [pass_one(), pass_two(), pass_three()]
+    passes = [pass_one(), pass_two(), pass_three(), pass_four()]
     print()
     if all(passes):
         print("ALL PASSES GREEN")

@@ -246,7 +246,6 @@ for _, e in ipairs({
 	"UNIT_DISPLAYPOWER", "UNIT_AURA", "UNIT_TARGET", "UNIT_PET", "UNIT_HAPPINESS",
 	"UNIT_PORTRAIT_UPDATE", "UNIT_MODEL_CHANGED", "UNIT_CLASSIFICATION_CHANGED",
 	"UNIT_NAME_UPDATE", "UNIT_LEVEL", "UNIT_CONNECTION", "UNIT_FACTION", "UNIT_FLAGS",
-	"UNIT_COMBO_POINTS",
 	"PLAYER_TARGET_CHANGED", "PLAYER_FOCUS_CHANGED", "PLAYER_FLAGS_CHANGED",
 	"PLAYER_ENTERING_WORLD", "PLAYER_LOGIN",
 	"UPDATE_SHAPESHIFT_FORM", "GROUP_ROSTER_UPDATE", "PARTY_LEADER_CHANGED",
@@ -254,7 +253,15 @@ for _, e in ipairs({
 }) do
 	stub.validEvents[e] = true
 end
--- Deliberately absent, mirroring a modern client: UNIT_HEALTH_FREQUENT.
+-- Deliberately absent, mirroring a modern client: UNIT_HEALTH_FREQUENT, and
+-- UNIT_COMBO_POINTS.
+--
+-- The second one is absent because it is absent in game: on the Anniversary
+-- client C_EventUtils.IsEventValid("UNIT_COMBO_POINTS") returns false, the
+-- shared code having retired it in favour of delivering combo points as a
+-- power type. Modelling a client that still had it is what let the combo bar
+-- pass every test here and never update in game. Pass 4 of run_tests.py adds
+-- it back, for the client that does have it.
 
 _G.C_EventUtils = {
 	IsEventValid = function(event) return stub.validEvents[event] == true end,

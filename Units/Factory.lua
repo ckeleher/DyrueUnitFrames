@@ -307,10 +307,9 @@ function methods:RegisterEvents()
 	-- to follow the substitution or the stand-in data would never update.
 	local unit = self.unit or self.def.token
 
-	-- Which unit each event ended up filtered against, so a second element
-	-- asking for the same event under a different one can be detected. `false`
-	-- records "already widened to unfiltered".
-	local UNFILTERED = false
+	-- Which units each event is filtered against, so a second element asking
+	-- for the same event under a different one can be detected. `false` records
+	-- "widened to unfiltered".
 	local filteredAs = {}
 
 	local function subscribe(event, def)
@@ -332,21 +331,38 @@ function methods:RegisterEvents()
 					self.eventMap[event] = nil
 					return
 				end
-				filteredAs[event] = wanted
+				filteredAs[event] = { wanted }
 			else
 				if not Compat.RegisterEvent(self, event) then
 					self.eventMap[event] = nil
 					return
 				end
 			end
-		elseif wanted and filteredAs[event] ~= nil
-			and filteredAs[event] ~= UNFILTERED and filteredAs[event] ~= wanted then
-			-- Two elements want the same event under different units. Re-filtering
-			-- to the second one's unit would silently starve the first, so widen
-			-- instead: an unfiltered registration reaches both, and dispatch
-			-- already runs every element in the list.
-			if Compat.RegisterEvent(self, event) then
-				filteredAs[event] = UNFILTERED
+		elseif wanted and filteredAs[event] then
+			local units = filteredAs[event]
+			local known = false
+			for i = 1, #units do
+				if units[i] == wanted then known = true end
+			end
+
+			if not known then
+				units[#units + 1] = wanted
+				-- Two elements want the same event under different units.
+				-- Re-filtering to the second one's unit would silently starve
+				-- the first, so serve both -- and RegisterUnitEvent takes TWO
+				-- units, which covers every case this addon actually has. The
+				-- combo bar is the live one: it wants UNIT_POWER_UPDATE for
+				-- "player" on the target frame, where the power bar already
+				-- wants it for "target".
+				if #units == 2 then
+					Compat.RegisterUnitEvent(self, event, units[1], units[2])
+				elseif Compat.RegisterEvent(self, event) then
+					-- Three or more: no filter can express it. Dropping the
+					-- filter still delivers to every element, but it means the
+					-- frame wakes for units it does not draw -- a real cost on
+					-- a noisy event in a raid (SPEC §5.7) -- so it is last.
+					filteredAs[event] = false
+				end
 			end
 		end
 		list[#list + 1] = def

@@ -24,11 +24,27 @@ local element = {
 	order = 35,                 -- with the bars: after mana (30), before text (60)
 	configKey = "combo",
 	events = {
+		-- BOTH, deliberately, and gated on nothing: Compat.HasEvent skips
+		-- whichever one the running client does not have.
+		--
+		-- UNIT_COMBO_POINTS is the documented Classic event and is what
+		-- Blizzard's own ComboFrame used. It does NOT exist on the Anniversary
+		-- client -- C_EventUtils.IsEventValid("UNIT_COMBO_POINTS") returns
+		-- false there -- because these clients run the modern shared code,
+		-- which retired it and delivers combo points as a power type instead.
+		--
+		-- Registering an absent event is skipped silently, by design, and that
+		-- is exactly how the first cut of this element shipped a bar that only
+		-- ever updated when the target changed. Feature-probe, never
+		-- version-check: declare both and let Compat decide.
 		UNIT_COMBO_POINTS = true,
+		UNIT_POWER_UPDATE = true,
 	},
-	-- See the header. This is the whole reason `def.eventUnits` exists.
+	-- See the header. This is the whole reason `def.eventUnits` exists: both of
+	-- these carry "player", on a frame whose own unit is the target.
 	eventUnits = {
 		UNIT_COMBO_POINTS = "player",
+		UNIT_POWER_UPDATE = "player",
 	},
 	globalEvents = {
 		-- Points reset on a target switch. Already a change event on the target
@@ -181,17 +197,26 @@ function element.Paint(el, cfg, points)
 	end
 end
 
-function element.Update(frame, el, cfg)
+function element.Update(frame, el, cfg, event)
 	local widget, available = ns:AnchorWidget(frame, cfg.anchorTo)
 
 	-- Anchored to a bar that is not showing: hide, rather than dropping the bar
 	-- onto the frame body. Same rule as bar-anchored text and the indicator row.
 	if not available then
 		el.container:Hide()
+		el.lastPoints = nil
 		return
 	end
 
 	local points = Compat.GetComboPoints(frame.unit)
+
+	-- Combo points now arrive on the player's power event, which for an energy
+	-- user fires several times a second and carries a changed combo count on
+	-- almost none of them. Scoped to that one event on purpose: a full update
+	-- or a target change must always repaint, because those are the paths a
+	-- configuration change comes back through.
+	if event == "UNIT_POWER_UPDATE" and points == el.lastPoints then return end
+
 	el.lastPoints = points
 
 	if points <= 0 and cfg.hideWhenEmpty then

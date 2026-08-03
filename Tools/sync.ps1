@@ -114,12 +114,18 @@ function Sync-All {
     # anything -- it is just dead weight sitting in the AddOns folder, and
     # test code next to game code invites confusion on patch day.
     $exclude = @(
-        ".git", ".gitignore", ".claude",
+        ".git", ".gitignore", ".gitattributes", ".claude",
         "Documents",    # SPEC, PLAN, COMPAT_FINDINGS
+        "Plans",        # per-request plan documents, and their screenshots
+        "Skills",       # how plans get written; nothing to do with the game
         "Probe",        # copied separately as its own addon
         "Tests",        # headless harness; needs Python, not WoW
         "Tools",        # this script
-        "README.md"
+        "README.md",
+        # The test harness's Python environment (Tests/README.md creates it
+        # here). 15 MB and 880 files of interpreter that WoW would never read,
+        # and by far the largest thing in the repository.
+        "venv", ".venv", "__pycache__"
     )
     Get-ChildItem -Path $RepoRoot -Force | Where-Object { $exclude -notcontains $_.Name } | ForEach-Object {
         Copy-Item -Path $_.FullName -Destination $staged -Recurse -Force
