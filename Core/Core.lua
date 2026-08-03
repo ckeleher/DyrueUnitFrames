@@ -427,7 +427,10 @@ function addon:SlashCommand(input)
 		local any = false
 		for context, n in pairs(counts) do
 			any = true
-			Errors:Print(string.format("%s: %d%s", context, n, disabled[context] and L[" (disabled)"] or ""))
+			Errors:Print(string.format("|cffff5555%s|r x%d%s", context, n,
+				disabled[context] and L[" (disabled)"] or ""))
+			local message = Errors:LastError(context)
+			if message then Errors:Print("    " .. message) end
 		end
 		if not any then
 			Errors:Print(L["No errors recorded this session."])

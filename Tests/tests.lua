@@ -909,6 +909,32 @@ local function testCircuitBreaker()
 	Errors:Reset("test:element")
 	check("errors/reset re-enables", not Errors:IsDisabled("test:element"))
 
+	-- The first failure must report WHAT broke, not just that something did.
+	-- Otherwise diagnosing anything needs debug mode plus a reproduction, and
+	-- by then the breaker has usually already disabled it.
+	Errors:Reset()
+	local before = #stub.chat
+	Errors:Guard("test:message", function()
+		error("Interface\\AddOns\\DyrueUnitFrames\\Elements\\Auras.lua:123: boom", 0)
+	end)
+	local printed = table.concat(stub.chat, "\n", before + 1, #stub.chat)
+	check("errors/first failure prints the message", printed:find("boom", 1, true) ~= nil, printed)
+	check("errors/message names the file and line",
+		printed:find("Auras.lua:123", 1, true) ~= nil, printed)
+	check("errors/full interface path is stripped",
+		printed:find("Interface\\AddOns", 1, true) == nil, printed)
+
+	local stored = Errors:LastError("test:message")
+	check("errors/last message is retrievable for /duf errors",
+		stored ~= nil and stored:find("boom", 1, true) ~= nil, tostring(stored))
+
+	-- A very long message is truncated rather than flooding chat.
+	Errors:Reset()
+	Errors:Guard("test:long", function() error(string.rep("x", 900), 0) end)
+	check("errors/long message truncated", #Errors:LastError("test:long") < 300)
+
+	Errors:Reset()
+
 	-- Safe mode allows bars and refuses text and auras
 	Errors.safeMode = true
 	check("safemode/health allowed", Errors:IsElementAllowed("health"))
