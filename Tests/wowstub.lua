@@ -34,6 +34,7 @@ function stub.reset()
 	stub.inRaid = false
 	stub.chat = {}
 	stub.failTemplates = {}
+	stub.resting = false
 end
 
 stub.failTemplates = {}
@@ -372,6 +373,13 @@ end
 function _G.UnregisterUnitWatch(frame) frame.__unitWatch = nil end
 
 function _G.InCombatLockdown() return stub.inCombat end
+function _G.IsResting() return stub.resting and true or false end
+function _G.UnitAffectingCombat(u)
+	local d = unit(u)
+	if d and d.inCombat ~= nil then return d.inCombat end
+	-- Default: the player follows the global combat flag.
+	return (u == "player") and stub.inCombat or false
+end
 function _G.IsInGroup() return stub.inGroup end
 function _G.IsInRaid() return stub.inRaid end
 function _G.IsShiftKeyDown() return false end

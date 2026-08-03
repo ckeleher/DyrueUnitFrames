@@ -1,8 +1,39 @@
 # Plan 1 — Combat and Resting Indicators
 
-**Status:** Not started
+**Status:** Implemented on `Plan-1-combat-resting-indicators`.
 **Created:** 2 August 2026
-**Branch:** `first`
+**Branch:** `Plan-1-combat-resting-indicators`
+
+---
+
+## Outcome
+
+Built as designed. `Elements/Indicators.lua`, on `frame.overlay`, states in a
+sorted table so resting comes first and a third state is a table entry.
+
+Two things worth recording that the plan did not anticipate:
+
+**The anchor resolver was duplicated.** `Elements/Text.lua` had a private
+`anchorWidget` returning `(widget, available)`, and this element needed exactly
+the same logic — including the rule that something anchored to a hidden bar
+hides rather than falling onto the frame body. Rather than copy it, it moved to
+`ns:AnchorWidget` in Core and Text now calls that. Two elements asking the same
+question should not be able to drift apart on the answer.
+
+**No fallback detection is possible.** The plan said to fall back to a colored
+square if the art fails to load. A missing texture does not error and does not
+report — WoW simply draws nothing — so there is nothing to detect. Instead the
+style is a user-facing choice (`Game artwork` / `Solid square`) defaulting to
+the art, and the probe now reports whether the frames that use that sheet still
+exist, which is the closest thing to a signal available.
+
+Also as planned: no migration. These are new keys, so `EnsureProfile` fills them
+into existing profiles.
+
+26 assertions covering each state alone and together, ordering, all four growth
+directions, a disabled state freeing its slot, resting never appearing on a
+non-player unit, the overlay draw order, and hiding when the anchor bar is not
+shown.
 
 ---
 

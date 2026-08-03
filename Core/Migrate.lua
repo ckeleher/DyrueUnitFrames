@@ -230,6 +230,46 @@ local steps = {
 		end
 		return profile
 	end,
+
+	--- 9 -> 10: state indicators raised clear of the name text.
+	--
+	-- They shipped at y = 0, which put a 20px icon over the top-left of the
+	-- health bar and through the top of the name. Only the untouched default
+	-- moves: anything the user has already positioned keeps its offset.
+	[9] = function(profile)
+		for _, cfg in pairs(profile.units or {}) do
+			local indicators = cfg.indicators
+			if indicators
+				and indicators.point == "TOPLEFT"
+				and indicators.relativePoint == "TOPLEFT"
+				and indicators.x == 0
+				and indicators.y == 0
+			then
+				indicators.y = 5
+			end
+		end
+		return profile
+	end,
+
+	--- 10 -> 11: 5 rather than 10.
+	--
+	-- Schema 10 briefly raised them to 10, which was further than wanted. Any
+	-- profile that reached 10 before this was settled carries that value, so it
+	-- is brought down here. Same rule: only the exact interim default moves.
+	[10] = function(profile)
+		for _, cfg in pairs(profile.units or {}) do
+			local indicators = cfg.indicators
+			if indicators
+				and indicators.point == "TOPLEFT"
+				and indicators.relativePoint == "TOPLEFT"
+				and indicators.x == 0
+				and indicators.y == 10
+			then
+				indicators.y = 5
+			end
+		end
+		return profile
+	end,
 }
 
 Migrate.steps = steps

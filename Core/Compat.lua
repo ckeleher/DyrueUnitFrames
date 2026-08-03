@@ -349,6 +349,29 @@ function Compat.GetAuraByInstanceID(unit, instanceID)
 end
 
 --------------------------------------------------------------------------------
+-- State icons
+--
+-- Blizzard art, so it lives here: a shared-code patch can move or rename it,
+-- and this file is where that costs one diff. Both icons come out of the same
+-- sheet, selected by tex coords -- the values Blizzard's own PlayerFrame uses.
+--------------------------------------------------------------------------------
+
+local STATE_ICON_SHEET = "Interface\\CharacterFrame\\UI-StateIcon"
+
+local stateIcons = {
+	resting = { texture = STATE_ICON_SHEET, left = 0, right = 0.5, top = 0, bottom = 0.421875 },
+	combat  = { texture = STATE_ICON_SHEET, left = 0.5, right = 1.0, top = 0, bottom = 0.484375 },
+}
+
+--- Art for a unit-state icon.
+-- @return texture, left, right, top, bottom -- or nil if we have no art for it
+function Compat.GetStateIcon(key)
+	local icon = stateIcons[key]
+	if not icon then return nil end
+	return icon.texture, icon.left, icon.right, icon.top, icon.bottom
+end
+
+--------------------------------------------------------------------------------
 -- Portraits
 --------------------------------------------------------------------------------
 

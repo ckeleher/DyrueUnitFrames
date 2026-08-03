@@ -29,6 +29,7 @@ Elements\ShapeshiftMana.lua
 Elements\Portrait.lua
 Elements\Text.lua
 Elements\Auras.lua
+Elements\Indicators.lua
 Elements\Highlight.lua
 
 Units\Registry.lua

@@ -9,7 +9,7 @@
 ## Outcome
 
 Shipped as `LEFT` → `RIGHT`, `x = 4`, `y = 0` — right of the target frame,
-vertically centred against it rather than top-aligned.
+vertically centered against it rather than top-aligned.
 
 Two schema steps rather than one, because the first implementation followed the
 request as written and put it on the **left**. Schema 8 had already shipped to a
@@ -88,9 +88,9 @@ anchor = { to = "target", point = "LEFT", relativePoint = "RIGHT",
   frames rather than bars within one, and butting them edge to edge reads as one
   wide frame rather than two.
 
-`LEFT` → `RIGHT` centres the two frames vertically, which matters because they
+`LEFT` → `RIGHT` centers the two frames vertically, which matters because they
 are different heights (30 vs 48). The alternative — `TOPLEFT` → `TOPRIGHT`,
-aligning tops — reads as drift rather than intent against a taller neighbour.
+aligning tops — reads as drift rather than intent against a taller neighbor.
 
 **Recommendation:** ship `LEFT` → `RIGHT`, `x = 4`, `y = 0`.
 
