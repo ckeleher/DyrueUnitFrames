@@ -3,7 +3,7 @@
 -- SPEC §5.8 — versioned config migration.
 --
 -- Rules, in order of importance:
---   1. Forward only. One step at a time, never a jump.
+--   1. Forward only. Never a jump backwards.
 --   2. Never mutate the live table until the whole chain succeeds.
 --   3. On failure, keep the original under DyrueUnitFramesDB.backup, load
 --      defaults, and say so plainly. Never silently discard a layout somebody
@@ -19,260 +19,218 @@ local Defaults = ns.Defaults
 local Errors = ns.Errors
 
 --------------------------------------------------------------------------------
--- Migration steps
+-- Legacy defaults
 --
--- steps[n] migrates a profile at schemaVersion n to schemaVersion n+1.
--- Each receives a *working copy* and mutates it freely; it either returns the
--- table or raises, and raising is safe because the copy is thrown away.
+-- Schemas 1 through 11 were ten separate procedural steps, added one per
+-- default change over a single afternoon. Several existed only to undo an
+-- earlier one -- target of target moved left and then right, the state
+-- indicators were raised to 10 and then brought down to 5 -- so the chain read
+-- as a transcript of the session rather than as a description of the schema.
 --
--- Adding keys does not need a step: Defaults:EnsureProfile fills those in.
--- Steps exist for renames, restructures and value-format changes only.
+-- Almost all of it was the same shape: "this key used to default to X, it now
+-- defaults to Y, move it if it is still X". That does not need to be
+-- procedural, and it does not need one step per change. Listing EVERY
+-- historical value a key has defaulted to means one pass brings a profile up to
+-- date from any prior version, and the undo-pairs collapse into a list --
+-- { 0, 10 } -> 5, rather than two steps fighting each other.
+--
+-- Three properties this relies on:
+--
+--   * idempotent, so running it twice changes nothing the second time;
+--   * order-independent, so no rule depends on another having run;
+--   * it runs BEFORE Defaults:EnsureProfile, so a key that did not exist in the
+--     old schema is simply absent here and gets the current default filled in
+--     afterwards. Only values actually present are ever rewritten, which is
+--     what makes "arriving from version 1" and "arriving from version 9" both
+--     land in the right place without either being special-cased.
 --------------------------------------------------------------------------------
 
-local BARS = { "health", "power", "mana" }
+-- Everything at or below this version is handled by the single collapsed step
+-- below. Raise it and fold the new steps in next time the chain gets long.
+--
+-- Collapsing is only safe once every profile in existence has been carried past
+-- the point being collapsed, because the version number is the sole record of
+-- what a profile has already had done to it. That is what Migrate:RunAll is
+-- for, and it is why it shipped first.
+local COLLAPSED_THROUGH = 11
 
--- Units whose health bar shipped as "reaction" before schema 4.
+-- Units whose health bar shipped as "reaction" while every other unit shipped
+-- static green.
 local REACTION_BY_DEFAULT = { target = true, focus = true }
 
+local function isSpecGreen(c)
+	return c and c.r == 0 and c.g == 0.9 and c.b == 0.1
+end
+
+local function isDefaultBackdrop(c)
+	return c and c.r == 0 and c.g == 0 and c.b == 0 and c.a == 0.6
+end
+
+--- Per-unit rules. `old` lists every value this key has ever defaulted to.
+local UNIT_RULES = {
+	-- Bars, from Blizzard's gradient statusbar to a flat fill.
+	{ path = { "health", "texture" }, old = { "Blizzard" }, new = "Dyrue Flat" },
+	{ path = { "power", "texture" }, old = { "Blizzard" }, new = "Dyrue Flat" },
+	{ path = { "mana", "texture" }, old = { "Blizzard" }, new = "Dyrue Flat" },
+
+	-- The 1px gap, which became a slit through to the world once the backdrop
+	-- was turned off.
+	{ path = { "power", "spacing" }, old = { 1 }, new = 0 },
+	{ path = { "mana", "spacing" }, old = { 1 }, new = 0 },
+
+	-- Dimmed. The shapeshift mana bar is deliberately absent from this list:
+	-- its color is one the user picks rather than one the game hands us.
+	{ path = { "health", "brightness" }, old = { 1 }, new = 0.8 },
+	{ path = { "power", "brightness" }, old = { 1 }, new = 0.8 },
+
+	-- The backdrop that was masking the bar background opacity controls. Only
+	-- the untouched black-at-60%: a re-colored one was chosen deliberately.
+	{
+		path = { "background", "enabled" }, old = { true }, new = false,
+		when = function(cfg)
+			return isDefaultBackdrop(cfg.background and cfg.background.color)
+		end,
+	},
+
+	-- Health color. The old default differed by unit, so this is two rules.
+	{
+		path = { "health", "colorMode" }, old = { "reaction" }, new = "class",
+		units = REACTION_BY_DEFAULT,
+	},
+	{
+		path = { "health", "colorMode" }, old = { "static" }, new = "class",
+		exceptUnits = REACTION_BY_DEFAULT,
+		when = function(cfg) return isSpecGreen(cfg.health and cfg.health.color) end,
+	},
+
+	-- Portraits, from behind the bars to beside the frame.
+	{ path = { "portrait", "placement" }, old = { "inside" }, new = "outside" },
+
+	-- State indicators: shipped at 0, briefly 10, settled at 5. One line.
+	{
+		path = { "indicators", "y" }, old = { 0, 10 }, new = 5,
+		when = function(cfg)
+			local i = cfg.indicators
+			return i and i.point == "TOPLEFT" and i.relativePoint == "TOPLEFT" and i.x == 0
+		end,
+	},
+}
+
+--- Rules against profile.general.
+local GENERAL_RULES = {
+	{ path = { "blizzardFrames" }, old = { "none" }, new = "hide" },
+	{ path = { "blizzardParty" }, old = { false }, new = true },
+}
+
+--- Walk to the table holding the final key of `path`, or nil if it is absent.
+local function container(root, path)
+	local node = root
+	for i = 1, #path - 1 do
+		node = node[path[i]]
+		if type(node) ~= "table" then return nil end
+	end
+	return node
+end
+
+local function applyRule(root, cfg, rule)
+	local parent = container(root, rule.path)
+	if not parent then return end
+
+	local key = rule.path[#rule.path]
+	local value = parent[key]
+
+	for i = 1, #rule.old do
+		if value == rule.old[i] then
+			if not rule.when or rule.when(cfg) then
+				parent[key] = rule.new
+			end
+			return
+		end
+	end
+end
+
+--------------------------------------------------------------------------------
+-- The two changes that are not "one key, old value to new value"
+--------------------------------------------------------------------------------
+
+--- Text elements are a user-owned list, which EnsureProfile seeds once and then
+-- leaves alone -- that is what makes deleting one stick. So a new default text
+-- has to be appended here or it never reaches an existing profile.
+local function appendManaText(cfg)
+	if not (cfg.mana and cfg.mana.enabled) then return end
+	if type(cfg.texts) ~= "table" then return end
+
+	for i = 1, #cfg.texts do
+		if cfg.texts[i] and cfg.texts[i].anchorTo == "mana" then return end
+	end
+
+	cfg.texts[#cfg.texts + 1] = Defaults.ManaText()
+end
+
+--- Target of target: five anchor fields have to match together rather than one
+-- key at a time. Both historical shapes are recognized -- below the target
+-- frame, and the interim left-side position -- and either lands on the right.
+local function moveTargetOfTarget(profile)
+	local cfg = profile.units and profile.units.targettarget
+	local anchor = cfg and cfg.anchor
+	if not anchor or anchor.to ~= "target" then return end
+
+	local below = anchor.point == "TOPLEFT" and anchor.relativePoint == "BOTTOMLEFT"
+		and anchor.x == 0 and anchor.y == -34
+	local left = anchor.point == "RIGHT" and anchor.relativePoint == "LEFT"
+		and anchor.x == -4 and anchor.y == 0
+
+	if below or left then
+		anchor.point = "LEFT"
+		anchor.relativePoint = "RIGHT"
+		anchor.x = 4
+		anchor.y = 0
+	end
+end
+
+--------------------------------------------------------------------------------
+-- The collapsed step
+--------------------------------------------------------------------------------
+
+local function collapsed(profile)
+	for unitKey, cfg in pairs(profile.units or {}) do
+		if type(cfg) == "table" then
+			for i = 1, #UNIT_RULES do
+				local rule = UNIT_RULES[i]
+				local applies = (not rule.units or rule.units[unitKey])
+					and (not rule.exceptUnits or not rule.exceptUnits[unitKey])
+				if applies then applyRule(cfg, cfg, rule) end
+			end
+			appendManaText(cfg)
+		end
+	end
+
+	local general = profile.general
+	if type(general) == "table" then
+		for i = 1, #GENERAL_RULES do
+			applyRule(general, general, GENERAL_RULES[i])
+		end
+	end
+
+	moveTargetOfTarget(profile)
+	return profile
+end
+
+--------------------------------------------------------------------------------
+-- Incremental steps
+--
+-- steps[n] migrates a profile at schemaVersion n to n+1, for anything ABOVE
+-- COLLAPSED_THROUGH. Adding keys never needs a step -- EnsureProfile fills
+-- those in. Steps are for renames, restructures and changed default values.
+--------------------------------------------------------------------------------
+
 local steps = {
-	--- 1 -> 2: the cosmetic defaults changed.
-	--
-	-- Bars went from Blizzard's gradient statusbar to a flat fill, the 1px gap
-	-- between bars went to 0, and the frame backdrop went from on to off. Those
-	-- are Defaults changes, which means they only reach a NEW profile --
-	-- EnsureProfile fills missing keys and never overwrites stored ones. Without
-	-- this step an existing profile keeps the old look on every frame forever.
-	--
-	-- Only values still matching the v1 default are touched. If you deliberately
-	-- picked Blizzard's texture or set a deliberate gap, that survives; the
-	-- trade is that a deliberate choice which happens to equal the old default
-	-- gets moved with everything else, and there is no way to tell those apart
-	-- after the fact.
-	[1] = function(profile)
-		for _, cfg in pairs(profile.units or {}) do
-			for i = 1, #BARS do
-				local bar = cfg[BARS[i]]
-				if bar and bar.texture == "Blizzard" then
-					bar.texture = "Dyrue Flat"
-				end
-			end
-
-			if cfg.power and cfg.power.spacing == 1 then cfg.power.spacing = 0 end
-			if cfg.mana and cfg.mana.spacing == 1 then cfg.mana.spacing = 0 end
-
-			-- Only the untouched black-at-60% backdrop, since that is the one
-			-- that was silently masking the bar background opacity controls.
-			local background = cfg.background
-			if background and background.enabled == true then
-				local c = background.color
-				if c and c.r == 0 and c.g == 0 and c.b == 0 and c.a == 0.6 then
-					background.enabled = false
-				end
-			end
-		end
-		return profile
-	end,
-
-	--- 2 -> 3: Blizzard's own unit frames are hidden by default now, party
-	-- frames included.
-	--
-	-- Same caveat as step 1: "none" was both the old default and a legitimate
-	-- choice, and nothing distinguishes them after the fact, so a deliberate
-	-- "leave them alone" gets moved too. It is one setting under General and
-	-- it is trivially set back.
-	[2] = function(profile)
-		local general = profile.general
-		if general then
-			if general.blizzardFrames == "none" then
-				general.blizzardFrames = "hide"
-			end
-			if general.blizzardParty == false then
-				general.blizzardParty = true
-			end
-		end
-		return profile
-	end,
-
-	--- 3 -> 4: health bars are class-colored by default.
-	--
-	-- Two old defaults to move, and they differed by unit: target and focus
-	-- shipped as "reaction", everything else as static green. Each is only
-	-- touched where it was actually the default for THAT unit, so a "reaction"
-	-- deliberately chosen on, say, the pet frame is left alone -- it was never
-	-- the default there.
-	[3] = function(profile)
-		for key, cfg in pairs(profile.units or {}) do
-			local health = cfg.health
-			if health then
-				if REACTION_BY_DEFAULT[key] then
-					if health.colorMode == "reaction" then
-						health.colorMode = "class"
-					end
-				elseif health.colorMode == "static" then
-					-- Only the untouched spec green.
-					local c = health.color
-					if c and c.r == 0 and c.g == 0.9 and c.b == 0.1 then
-						health.colorMode = "class"
-					end
-				end
-			end
-		end
-		return profile
-	end,
-
-	--- 4 -> 5: health and power bars dimmed to 0.8.
-	--
-	-- The shapeshift mana bar is deliberately not touched. Its color is one you
-	-- pick directly rather than one the game hands us, and it was already a
-	-- muted blue.
-	[4] = function(profile)
-		for _, cfg in pairs(profile.units or {}) do
-			for _, key in ipairs({ "health", "power" }) do
-				local bar = cfg[key]
-				if bar and bar.brightness == 1 then
-					bar.brightness = 0.8
-				end
-			end
-		end
-		return profile
-	end,
-
-	--- 5 -> 6: the shapeshift mana bar gets a readout of current mana.
-	--
-	-- Text elements are a user-owned list, which EnsureProfile seeds once and
-	-- then leaves alone -- that is what makes deleting one stick. So a new
-	-- default text has to be appended here or it never reaches an existing
-	-- profile.
-	--
-	-- Only added where the mana bar is actually enabled, and only if there is
-	-- no text anchored to it already, so running it against a profile that has
-	-- one cannot produce a duplicate.
-	[5] = function(profile)
-		for _, cfg in pairs(profile.units or {}) do
-			if cfg.mana and cfg.mana.enabled and type(cfg.texts) == "table" then
-				local existing = false
-				for i = 1, #cfg.texts do
-					if cfg.texts[i] and cfg.texts[i].anchorTo == "mana" then
-						existing = true
-						break
-					end
-				end
-				if not existing then
-					cfg.texts[#cfg.texts + 1] = Defaults.ManaText()
-				end
-			end
-		end
-		return profile
-	end,
-
-	--- 6 -> 7: portraits sit beside the frame rather than behind the bars.
-	--
-	-- "inside" draws the portrait under the health bar, and since the bars are
-	-- an opaque flat fill covering the whole frame, that hid it almost
-	-- entirely. Only moved where it is still on the old default.
-	[6] = function(profile)
-		for _, cfg in pairs(profile.units or {}) do
-			local portrait = cfg.portrait
-			if portrait and portrait.placement == "inside" then
-				portrait.placement = "outside"
-			end
-		end
-		return profile
-	end,
-
-	--- 7 -> 8: target of target moves out from under the target frame, to its
-	-- right.
-	--
-	-- Every field of the old default is checked, not just the anchor target.
-	-- Drag mode and the sliders write to these same values, so unlike the
-	-- cosmetic migrations this one can genuinely tell an untouched default from
-	-- a frame the user has moved -- and a moved frame is left where it is.
-	[7] = function(profile)
-		local cfg = profile.units and profile.units.targettarget
-		local anchor = cfg and cfg.anchor
-		if anchor
-			and anchor.to == "target"
-			and anchor.point == "TOPLEFT"
-			and anchor.relativePoint == "BOTTOMLEFT"
-			and anchor.x == 0
-			and anchor.y == -34
-		then
-			anchor.point = "LEFT"
-			anchor.relativePoint = "RIGHT"
-			anchor.x = 4
-			anchor.y = 0
-		end
-		return profile
-	end,
-
-	--- 8 -> 9: put it on the right after all.
-	--
-	-- Schema 8 briefly placed target of target to the LEFT of the target frame,
-	-- which was a misreading of the request. Any profile that reached 8 before
-	-- this was corrected is carrying that value, so it is moved across here
-	-- rather than left wrong.
-	--
-	-- Same rule as step 7: only the exact interim default moves. Somebody who
-	-- decided they liked it on the left and dragged it there keeps it.
-	[8] = function(profile)
-		local cfg = profile.units and profile.units.targettarget
-		local anchor = cfg and cfg.anchor
-		if anchor
-			and anchor.to == "target"
-			and anchor.point == "RIGHT"
-			and anchor.relativePoint == "LEFT"
-			and anchor.x == -4
-			and anchor.y == 0
-		then
-			anchor.point = "LEFT"
-			anchor.relativePoint = "RIGHT"
-			anchor.x = 4
-		end
-		return profile
-	end,
-
-	--- 9 -> 10: state indicators raised clear of the name text.
-	--
-	-- They shipped at y = 0, which put a 20px icon over the top-left of the
-	-- health bar and through the top of the name. Only the untouched default
-	-- moves: anything the user has already positioned keeps its offset.
-	[9] = function(profile)
-		for _, cfg in pairs(profile.units or {}) do
-			local indicators = cfg.indicators
-			if indicators
-				and indicators.point == "TOPLEFT"
-				and indicators.relativePoint == "TOPLEFT"
-				and indicators.x == 0
-				and indicators.y == 0
-			then
-				indicators.y = 5
-			end
-		end
-		return profile
-	end,
-
-	--- 10 -> 11: 5 rather than 10.
-	--
-	-- Schema 10 briefly raised them to 10, which was further than wanted. Any
-	-- profile that reached 10 before this was settled carries that value, so it
-	-- is brought down here. Same rule: only the exact interim default moves.
-	[10] = function(profile)
-		for _, cfg in pairs(profile.units or {}) do
-			local indicators = cfg.indicators
-			if indicators
-				and indicators.point == "TOPLEFT"
-				and indicators.relativePoint == "TOPLEFT"
-				and indicators.x == 0
-				and indicators.y == 10
-			then
-				indicators.y = 5
-			end
-		end
-		return profile
-	end,
+	-- [12] = function(profile) ... return profile end,
 }
 
 Migrate.steps = steps
+Migrate.COLLAPSED_THROUGH = COLLAPSED_THROUGH
+Migrate.collapsedStep = collapsed
 
 --------------------------------------------------------------------------------
 -- Runner
@@ -362,6 +320,19 @@ function Migrate:Run(profile, db, name)
 	-- Work on a copy. The live table is only replaced once every step passes.
 	local work = Defaults.DeepCopy(profile)
 	local version = current
+
+	-- Anything at or below the collapse point is handled by one step, which
+	-- knows every historical value of every key it touches.
+	if version <= COLLAPSED_THROUGH then
+		local ok, result = pcall(collapsed, work)
+		if not ok then
+			return self:Fail(profile, db, name, string.format(
+				L["Migration from schema %d failed: %s"], version, tostring(result)))
+		end
+		work = result or work
+		version = COLLAPSED_THROUGH + 1
+		work.schemaVersion = version
+	end
 
 	while version < target do
 		local step = steps[version]
