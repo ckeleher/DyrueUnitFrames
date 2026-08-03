@@ -31,9 +31,10 @@ local type, pairs, ipairs, next = type, pairs, ipairs, next
 -- 8: target of target moved out from under the target frame.
 -- 9: ...to its RIGHT. 8 briefly put it on the left, which was a
 --    misreading of the request; step [8] moves those profiles across.
--- 10: state indicators raised clear of the name text.
+-- 10: state indicators raised off the name text.
+-- 11: ...to 5 rather than 10, chosen by eye.
 -- Core/Migrate.lua carries existing profiles forward one step at a time.
-Defaults.SCHEMA_VERSION = 10
+Defaults.SCHEMA_VERSION = 11
 
 --------------------------------------------------------------------------------
 -- Table helpers
@@ -303,13 +304,16 @@ local function unit(overrides)
 			point = "TOPLEFT",
 			relativePoint = "TOPLEFT",
 			x = 0,
-			-- Raised so a 20px icon clears the name text rather than sitting on
-			-- it. The name is anchored LEFT to LEFT on the health bar, so with
-			-- the shipped 48px frame it is centred at -19 and its top edge is at
-			-- -13; an icon at y = 0 reaches -20 and overlaps by 7. This leaves
-			-- the icon straddling the bar's top edge, which still reads as "on
-			-- the health bar" while keeping the text clear.
-			y = 10,
+			-- Raised off the name text. The name is anchored LEFT to LEFT on the
+			-- health bar, so on the shipped 48px frame it is centered at -19
+			-- with its top edge at -13; a 20px icon at y = 0 reaches -20 and
+			-- buries the top third of it.
+			--
+			-- Fully clearing the text would take y = 7. 5 was chosen by eye
+			-- instead: it clips the top couple of pixels, which is above the cap
+			-- height of most glyphs and reads fine, and it keeps more of the
+			-- icon on the bar.
+			y = 5,
 			size = 20,
 			spacing = 2,
 			alpha = 1,

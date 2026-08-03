@@ -676,9 +676,23 @@ local function testMigration()
 		},
 	}
 	Migrate:Run(v9, {})
-	equal("migrate/indicators raised", v9.units.player.indicators.y, 10)
+	equal("migrate/indicators raised", v9.units.player.indicators.y, 5)
 	equal("migrate/a moved indicator row is left alone", v9.units.target.indicators.y, -30)
 	equal("migrate/a re-anchored indicator row is left alone", v9.units.pet.indicators.y, 0)
+
+	-- A profile that reached the interim schema 10, where they briefly sat at
+	-- 10, is brought down rather than left high.
+	local v10 = {
+		schemaVersion = 10,
+		general = { blizzardFrames = "hide", blizzardParty = true },
+		units = {
+			player = { indicators = { point = "TOPLEFT", relativePoint = "TOPLEFT", x = 0, y = 10 } },
+			target = { indicators = { point = "TOPLEFT", relativePoint = "TOPLEFT", x = 0, y = 24 } },
+		},
+	}
+	Migrate:Run(v10, {})
+	equal("migrate/interim indicator offset comes down", v10.units.player.indicators.y, 5)
+	equal("migrate/a deliberately raised row is left alone", v10.units.target.indicators.y, 24)
 
 	-- Step 7 -> 8: target of target moves right of the target frame. Unlike the
 	-- cosmetic steps, this one can tell an untouched default from a moved
@@ -1772,9 +1786,15 @@ local function testIndicators()
 	equal("indicators/anchored to the health bar", cfg.anchorTo, "health")
 	equal("indicators/top left of it", cfg.point, "TOPLEFT")
 	equal("indicators/no horizontal offset", cfg.x, 0)
-	-- Raised clear of the name text, which on the shipped 48px frame has its
-	-- top edge at -13 while a 20px icon at y = 0 reaches -20.
-	check("indicators/raised clear of the name text", cfg.y - cfg.size >= -13,
+	-- Raised off the name text. Fully clearing it needs y = 7 -- the name's top
+	-- edge is at -13 on the shipped 48px frame and a 20px icon reaches y - 20 --
+	-- but 5 was chosen by eye, clipping the top couple of pixels. Pinned so an
+	-- accidental change is caught.
+	equal("indicators/raised off the name text", cfg.y, 5)
+	-- The floor: however it is tuned, the icon must never reach the text's
+	-- vertical center, which is where it would start eating whole glyphs.
+	check("indicators/icon never reaches the name's center line",
+		cfg.y - cfg.size > -19,
 		"y=" .. cfg.y .. " reaches " .. (cfg.y - cfg.size))
 	equal("indicators/grows right", cfg.growth, "RIGHT")
 
