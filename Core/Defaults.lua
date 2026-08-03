@@ -294,6 +294,26 @@ local function unit(overrides)
 			desaturate = false,
 		},
 
+		-- Plan 1. Only *active* states take a slot, so combat on its own sits
+		-- at position one rather than leaving a resting-shaped hole.
+		indicators = {
+			enabled = false,           -- true on the player; see buildUnits
+			anchorTo = "health",
+			point = "TOPLEFT",
+			relativePoint = "TOPLEFT",
+			x = 0,
+			y = 0,
+			size = 20,
+			spacing = 2,
+			alpha = 1,
+			growth = "RIGHT",          -- RIGHT | LEFT | UP | DOWN
+			style = "icon",            -- icon | square
+			states = {
+				resting = { enabled = true, color = color(1, 1, 1) },
+				combat = { enabled = true, color = color(1, 1, 1) },
+			},
+		},
+
 		highlight = {
 			targetEnabled = true,
 			targetColor = color(1, 1, 1, 0.9),
@@ -396,6 +416,7 @@ local function buildUnits()
 			return t
 		end)(),
 		mana = { enabled = true },
+		indicators = { enabled = true },
 		highlight = { targetEnabled = false },
 	})
 
@@ -415,7 +436,7 @@ local function buildUnits()
 
 	u.targettarget = unit({
 		width = 130, height = 30,
-		-- Right of the target frame, vertically centred against it. LEFT to
+		-- Right of the target frame, vertically centered against it. LEFT to
 		-- RIGHT rather than aligning tops, because the two frames are different
 		-- heights (30 vs 48) and top-aligned reads as drift rather than intent.
 		anchor = { to = "target", point = "LEFT", relativePoint = "RIGHT", x = 4, y = 0 },

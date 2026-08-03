@@ -129,6 +129,63 @@ function ns:Font(name)
 		or (STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF")
 end
 
+--------------------------------------------------------------------------------
+-- Anchor resolution
+--
+-- Several elements let the user anchor themselves to a bar rather than to the
+-- frame body. They all need the same answer to "is that bar actually there
+-- right now", so they all ask here.
+--------------------------------------------------------------------------------
+
+--- Resolve an anchorTo key to a live widget.
+--
+-- @return widget, available
+--
+-- `available` is false when the target is a bar that is not currently showing,
+-- and the caller is expected to hide itself rather than fall back to the frame
+-- body. That matters most for the shapeshift mana bar, which appears and
+-- disappears with form: something left floating at the frame's edge in caster
+-- form, on top of whatever else is there, is worse than nothing. The same
+-- reasoning applies to any bar the user has turned off.
+function ns:AnchorWidget(frame, key)
+	local elements = frame.elements
+
+	if key == "health" then
+		local el = elements.health
+		if el and el.bar:IsShown() then return el.bar, true end
+		return frame.content, false
+	elseif key == "power" then
+		local el = elements.power
+		if el and el.bar:IsShown() then return el.bar, true end
+		return frame.content, false
+	elseif key == "mana" then
+		local el = elements.mana
+		if el and el.bar:IsShown() then return el.bar, true end
+		return frame.content, false
+	elseif key == "portrait" then
+		local el = elements.portrait
+		if el then
+			local widget = ns.elements.portrait.GetAnchorWidget(el, frame.cfg.portrait)
+			if widget and widget:IsShown() then return widget, true end
+		end
+		return frame.content, false
+	end
+
+	-- "frame" -- always there.
+	return frame.content, true
+end
+
+--- Anchor-target choices for the options UI.
+function ns:AnchorWidgetValues()
+	return {
+		frame = ns.L["The frame"],
+		health = ns.L["Health bar"],
+		power = ns.L["Power bar"],
+		mana = ns.L["Shapeshift mana bar"],
+		portrait = ns.L["Portrait"],
+	}
+end
+
 --- Create a FontString that already has a font.
 --
 -- SetText on a FontString whose font has never been set throws

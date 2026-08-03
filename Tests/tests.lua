@@ -301,7 +301,7 @@ local function testAnchoring()
 	equal("anchor/tot pins to the target's right edge",
 		units.targettarget.anchor.relativePoint, "RIGHT")
 	check("anchor/tot is offset clear of the target", units.targettarget.anchor.x > 0)
-	equal("anchor/tot is vertically centred on the target", units.targettarget.anchor.y, 0)
+	equal("anchor/tot is vertically centered on the target", units.targettarget.anchor.y, 0)
 
 	local totFrame = ns.frames.targettarget
 	local _, relative, relativePoint = totFrame:GetPoint(1)
@@ -1736,7 +1736,130 @@ local function testTextures()
 end
 
 --------------------------------------------------------------------------------
--- 25. Player buffs (Plan 4)
+-- 25. State indicators (Plan 1)
+--------------------------------------------------------------------------------
+
+local function indicatorSlot(icon, cfg)
+	-- Offset along the growth axis, relative to the row's own anchor.
+	local _, _, _, x, y = icon:GetPoint(1)
+	return (x or 0) - (cfg.x or 0), (y or 0) - (cfg.y or 0)
+end
+
+local function testIndicators()
+	local player = ns.frames.player
+	local cfg = ns:UnitConfig("player").indicators
+	local opts = ns.Options.table.args.units.args.player.args.indicators.args
+
+	equal("indicators/on for the player by default", cfg.enabled, true)
+	equal("indicators/off elsewhere by default",
+		ns:UnitConfig("target").indicators.enabled, false)
+	equal("indicators/anchored to the health bar", cfg.anchorTo, "health")
+	equal("indicators/top left of it", cfg.point, "TOPLEFT")
+	equal("indicators/no offset, so it sits over the bar", cfg.x + cfg.y, 0)
+	equal("indicators/grows right", cfg.growth, "RIGHT")
+
+	local el = player.elements.indicators
+	check("indicators/element built", el ~= nil)
+	if not el then return end
+
+	local resting, combat = el.icons.resting, el.icons.combat
+
+	-- Neither state active.
+	stub.resting = false
+	stub.units.player.inCombat = false
+	player:FullUpdate()
+	check("indicators/nothing shown when idle",
+		not resting:IsShown() and not combat:IsShown())
+
+	-- Combat only: it takes slot one rather than leaving a resting-shaped hole.
+	stub.units.player.inCombat = true
+	player:FullUpdate()
+	check("indicators/combat shown", combat:IsShown())
+	check("indicators/resting still hidden", not resting:IsShown())
+	local cx = indicatorSlot(combat, cfg)
+	equal("indicators/a lone combat icon sits at slot one", cx, 0)
+
+	-- Resting only.
+	stub.units.player.inCombat = false
+	stub.resting = true
+	player:FullUpdate()
+	check("indicators/resting shown", resting:IsShown())
+	check("indicators/combat hidden", not combat:IsShown())
+	equal("indicators/a lone resting icon sits at slot one", indicatorSlot(resting, cfg), 0)
+
+	-- Both: resting first, then combat, as requested.
+	stub.units.player.inCombat = true
+	player:FullUpdate()
+	check("indicators/both shown", resting:IsShown() and combat:IsShown())
+	equal("indicators/resting is first", indicatorSlot(resting, cfg), 0)
+	equal("indicators/combat is second", indicatorSlot(combat, cfg), cfg.size + cfg.spacing)
+
+	-- Growth direction.
+	opts.growth.set(nil, "LEFT")
+	player:FullUpdate()
+	equal("indicators/growing left puts the second icon to the left",
+		indicatorSlot(combat, cfg), -(cfg.size + cfg.spacing))
+
+	opts.growth.set(nil, "DOWN")
+	player:FullUpdate()
+	local _, dy = indicatorSlot(combat, cfg)
+	equal("indicators/growing down puts the second icon below",
+		dy, -(cfg.size + cfg.spacing))
+
+	opts.growth.set(nil, "UP")
+	player:FullUpdate()
+	local _, uy = indicatorSlot(combat, cfg)
+	equal("indicators/growing up puts the second icon above", uy, cfg.size + cfg.spacing)
+	opts.growth.set(nil, "RIGHT")
+
+	-- Turning one state off frees its slot for the other.
+	opts.enabled_resting.set(nil, false)
+	player:FullUpdate()
+	check("indicators/disabled state is hidden", not resting:IsShown())
+	equal("indicators/combat moves up to slot one", indicatorSlot(combat, cfg), 0)
+	opts.enabled_resting.set(nil, true)
+
+	-- Resting is a fact about you, not about a unit.
+	local target = ns.frames.target
+	ns:UnitConfig("target").indicators.enabled = true
+	ns:BumpSerial()
+	ns:RefreshUnit("target")
+	ns.CombatQueue:Flush()
+	stub.units.target.inCombat = true
+	target:FullUpdate()
+	local targetEl = target.elements.indicators
+	check("indicators/combat works on the target too", targetEl.icons.combat:IsShown())
+	check("indicators/resting never shows on another unit",
+		not targetEl.icons.resting:IsShown())
+	stub.units.target.inCombat = nil
+	ns:UnitConfig("target").indicators.enabled = false
+
+	-- Drawn above the bars, like everything else on the overlay.
+	equal("indicators/icons live on the overlay", combat:GetParent(), player.overlay)
+
+	-- Anchored to a bar that is not showing: hide, like bar-anchored text.
+	local playerCfg = ns:UnitConfig("player")
+	playerCfg.indicators.anchorTo = "mana"
+	playerCfg.mana.enabled = false
+	ns:BumpSerial()
+	ns:RefreshUnit("player")
+	ns.CombatQueue:Flush()
+	player:FullUpdate()
+	check("indicators/hidden when the anchor bar is not showing",
+		not resting:IsShown() and not combat:IsShown())
+
+	stub.resting = false
+	stub.units.player.inCombat = nil
+	ns.Defaults:ResetUnit(ns:Profile(), "player")
+	ns.Defaults:ResetUnit(ns:Profile(), "target")
+	ns:BumpSerial()
+	ns:RefreshUnit("player")
+	ns:RefreshUnit("target")
+	ns.CombatQueue:Flush()
+end
+
+--------------------------------------------------------------------------------
+-- 26. Player buffs (Plan 4)
 --
 -- The aura suite only ever exercised the TARGET frame, with buffs enabled from
 -- the start. Two paths were therefore never reached: the player's own auras,
@@ -2437,6 +2560,7 @@ local suites = {
 	{ "slash-commands", testSlashCommands },
 	{ "frame-appearance", testFrameAppearance },
 	{ "textures", testTextures },
+	{ "indicators", testIndicators },
 	{ "player-buffs", testPlayerBuffs },
 	{ "mana-text", testManaText },
 	{ "brightness", testBrightness },

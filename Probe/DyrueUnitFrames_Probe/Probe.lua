@@ -97,6 +97,10 @@ local FRAME_NAMES = {
 	"FocusFrame", "FocusFrameToT", "ComboFrame",
 	"PartyMemberFrame1", "PartyFrame", "CompactPartyFrame",
 	"PlayerCastingBarFrame", "CastingBarFrame",
+	-- The frames that use Interface\CharacterFrame\UI-StateIcon, which
+	-- DyrueUnitFrames' combat and resting indicators also draw from. Their
+	-- presence is a decent proxy for that art still existing.
+	"PlayerRestIcon", "PlayerAttackIcon", "PlayerStatusTexture",
 }
 
 local EVENTS = {
