@@ -31,8 +31,10 @@ local type, pairs, ipairs, next = type, pairs, ipairs, next
 -- 8: target of target moved out from under the target frame.
 -- 9: ...to its RIGHT. 8 briefly put it on the left, which was a
 --    misreading of the request; step [8] moves those profiles across.
+-- 10: state indicators raised off the name text.
+-- 11: ...to 5 rather than 10, chosen by eye.
 -- Core/Migrate.lua carries existing profiles forward one step at a time.
-Defaults.SCHEMA_VERSION = 9
+Defaults.SCHEMA_VERSION = 11
 
 --------------------------------------------------------------------------------
 -- Table helpers
@@ -294,6 +296,35 @@ local function unit(overrides)
 			desaturate = false,
 		},
 
+		-- Plan 1. Only *active* states take a slot, so combat on its own sits
+		-- at position one rather than leaving a resting-shaped hole.
+		indicators = {
+			enabled = false,           -- true on the player; see buildUnits
+			anchorTo = "health",
+			point = "TOPLEFT",
+			relativePoint = "TOPLEFT",
+			x = 0,
+			-- Raised off the name text. The name is anchored LEFT to LEFT on the
+			-- health bar, so on the shipped 48px frame it is centered at -19
+			-- with its top edge at -13; a 20px icon at y = 0 reaches -20 and
+			-- buries the top third of it.
+			--
+			-- Fully clearing the text would take y = 7. 5 was chosen by eye
+			-- instead: it clips the top couple of pixels, which is above the cap
+			-- height of most glyphs and reads fine, and it keeps more of the
+			-- icon on the bar.
+			y = 5,
+			size = 20,
+			spacing = 2,
+			alpha = 1,
+			growth = "RIGHT",          -- RIGHT | LEFT | UP | DOWN
+			style = "icon",            -- icon | square
+			states = {
+				resting = { enabled = true, color = color(1, 1, 1) },
+				combat = { enabled = true, color = color(1, 1, 1) },
+			},
+		},
+
 		highlight = {
 			targetEnabled = true,
 			targetColor = color(1, 1, 1, 0.9),
@@ -396,6 +427,7 @@ local function buildUnits()
 			return t
 		end)(),
 		mana = { enabled = true },
+		indicators = { enabled = true },
 		highlight = { targetEnabled = false },
 	})
 
@@ -415,7 +447,7 @@ local function buildUnits()
 
 	u.targettarget = unit({
 		width = 130, height = 30,
-		-- Right of the target frame, vertically centred against it. LEFT to
+		-- Right of the target frame, vertically centered against it. LEFT to
 		-- RIGHT rather than aligning tops, because the two frames are different
 		-- heights (30 vs 48) and top-aligned reads as drift rather than intent.
 		anchor = { to = "target", point = "LEFT", relativePoint = "RIGHT", x = 4, y = 0 },

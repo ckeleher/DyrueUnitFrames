@@ -621,6 +621,106 @@ local function highlightGroup(def)
 end
 
 --------------------------------------------------------------------------------
+-- State indicators (Plan 1)
+--------------------------------------------------------------------------------
+
+local function indicatorsGroup(def)
+	local unitKey = def.key
+	local function indicators() local c = ns:UnitConfig(unitKey); return c and c.indicators end
+	local apply = Options.ApplyUnit(unitKey)
+
+	local args = {
+		notice = Options.CombatNotice(0),
+		breaker = Options.BreakerNotice(unitKey, "indicators", 0.5),
+		explain = {
+			type = "description", order = 1,
+			name = L["Small markers for unit state. Only the ones currently active take a slot, so a single active state always sits at the start of the row rather than leaving a gap where the others would be."],
+		},
+		enabled = {
+			type = "toggle", order = 2, name = L["Enable"],
+			get = function() return indicators().enabled end,
+			set = function(_, v) indicators().enabled = v; apply() end,
+		},
+
+		layoutHeader = { type = "header", order = 10, name = L["Layout"] },
+		anchorTo = {
+			type = "select", order = 11, name = L["Anchor to"],
+			values = function() return ns:AnchorWidgetValues() end,
+			get = function() return indicators().anchorTo end,
+			set = function(_, v) indicators().anchorTo = v; apply() end,
+		},
+		point = {
+			type = "select", order = 12, name = L["Point on the row"],
+			values = ns.Anchoring:PointValues(),
+			get = function() return indicators().point end,
+			set = function(_, v) indicators().point = v; apply() end,
+		},
+		relativePoint = {
+			type = "select", order = 13, name = L["Point on the anchor"],
+			values = ns.Anchoring:PointValues(),
+			get = function() return indicators().relativePoint end,
+			set = function(_, v) indicators().relativePoint = v; apply() end,
+		},
+		x = Options.Range(L["X offset"], 14, "offset", indicators, "x", apply),
+		y = Options.Range(L["Y offset"], 15, "offset", indicators, "y", apply),
+		growth = {
+			type = "select", order = 16, name = L["Growth direction"],
+			values = ns.elements.indicators.GrowthValues(),
+			get = function() return indicators().growth end,
+			set = function(_, v) indicators().growth = v; apply() end,
+		},
+		size = {
+			type = "range", order = 17, name = L["Icon size"],
+			min = 4, max = 100, softMax = 48, step = 1,
+			get = function() return indicators().size end,
+			set = function(_, v) indicators().size = v; apply() end,
+		},
+		spacing = {
+			type = "range", order = 18, name = L["Spacing"],
+			min = 0, max = 40, step = 1,
+			get = function() return indicators().spacing end,
+			set = function(_, v) indicators().spacing = v; apply() end,
+		},
+		alpha = {
+			type = "range", order = 19, name = L["Opacity"],
+			min = 0, max = 1, step = 0.01,
+			get = function() return indicators().alpha end,
+			set = function(_, v) indicators().alpha = v; apply() end,
+		},
+		style = {
+			type = "select", order = 20, name = L["Style"],
+			desc = L["The game's own state artwork, or a plain colored square. The square is the fallback if a shared-code patch ever moves that artwork and the icons come up blank."],
+			values = { icon = L["Game artwork"], square = L["Solid square"] },
+			get = function() return indicators().style end,
+			set = function(_, v) indicators().style = v; apply() end,
+		},
+	}
+
+	local order = 30
+	for _, state in ipairs(ns.elements.indicators.StateList()) do
+		local key = state.key
+		local function stateCfg() return indicators().states[key] end
+
+		args["header_" .. key] = { type = "header", order = order, name = state.label }
+		args["enabled_" .. key] = {
+			type = "toggle", order = order + 1, name = L["Show"],
+			get = function() return stateCfg().enabled end,
+			set = function(_, v) stateCfg().enabled = v; apply() end,
+		}
+		args["color_" .. key] = Options.Color(L["Tint"], order + 2, stateCfg, "color", apply)
+		if key == "resting" then
+			args["note_" .. key] = {
+				type = "description", order = order + 3,
+				name = L["Resting is something the game only reports about you, so this never shows on any other unit."],
+			}
+		end
+		order = order + 10
+	end
+
+	return { type = "group", order = 6.5, name = L["Indicators"], args = args }
+end
+
+--------------------------------------------------------------------------------
 -- Assembly
 --------------------------------------------------------------------------------
 
@@ -648,6 +748,7 @@ function Options.BuildUnit(def)
 		power = powerGroup(def),
 		mana = manaGroup(def),
 		portrait = portraitGroup(def),
+		indicators = indicatorsGroup(def),
 		highlight = highlightGroup(def),
 		texts = Options.BuildTexts(def),
 		auras = Options.BuildAuras(def),

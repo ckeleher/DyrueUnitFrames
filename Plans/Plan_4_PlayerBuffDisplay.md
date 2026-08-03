@@ -44,7 +44,7 @@ traceback is still worth collecting.
 
 The actual traceback. `/duf debug` then `/reload` on the affected character. If
 `player:auras` no longer appears, one of the two guards caught it and the
-question is which. `player:text` is a separate line of enquiry and is untouched
+question is which. `player:text` is a separate line of inquiry and is untouched
 by this work.
 
 ---

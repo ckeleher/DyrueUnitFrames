@@ -301,7 +301,7 @@ local function testAnchoring()
 	equal("anchor/tot pins to the target's right edge",
 		units.targettarget.anchor.relativePoint, "RIGHT")
 	check("anchor/tot is offset clear of the target", units.targettarget.anchor.x > 0)
-	equal("anchor/tot is vertically centred on the target", units.targettarget.anchor.y, 0)
+	equal("anchor/tot is vertically centered on the target", units.targettarget.anchor.y, 0)
 
 	local totFrame = ns.frames.targettarget
 	local _, relative, relativePoint = totFrame:GetPoint(1)
@@ -664,7 +664,37 @@ local function testMigration()
 		v5.units.focus.texts[1].format, "[mana:perc]")
 	equal("migrate/nothing added where the bar is off", #v5.units.target.texts, 1)
 
-	-- Step 7 -> 8: target of target moves left of the target frame. Unlike the
+	-- Step 9 -> 10: indicators raised clear of the name text.
+	local v9 = {
+		schemaVersion = 9,
+		general = { blizzardFrames = "hide", blizzardParty = true },
+		units = {
+			player = { indicators = { point = "TOPLEFT", relativePoint = "TOPLEFT", x = 0, y = 0 } },
+			-- Already positioned by hand, so left alone.
+			target = { indicators = { point = "TOPLEFT", relativePoint = "TOPLEFT", x = 0, y = -30 } },
+			pet = { indicators = { point = "BOTTOMRIGHT", relativePoint = "BOTTOMRIGHT", x = 0, y = 0 } },
+		},
+	}
+	Migrate:Run(v9, {})
+	equal("migrate/indicators raised", v9.units.player.indicators.y, 5)
+	equal("migrate/a moved indicator row is left alone", v9.units.target.indicators.y, -30)
+	equal("migrate/a re-anchored indicator row is left alone", v9.units.pet.indicators.y, 0)
+
+	-- A profile that reached the interim schema 10, where they briefly sat at
+	-- 10, is brought down rather than left high.
+	local v10 = {
+		schemaVersion = 10,
+		general = { blizzardFrames = "hide", blizzardParty = true },
+		units = {
+			player = { indicators = { point = "TOPLEFT", relativePoint = "TOPLEFT", x = 0, y = 10 } },
+			target = { indicators = { point = "TOPLEFT", relativePoint = "TOPLEFT", x = 0, y = 24 } },
+		},
+	}
+	Migrate:Run(v10, {})
+	equal("migrate/interim indicator offset comes down", v10.units.player.indicators.y, 5)
+	equal("migrate/a deliberately raised row is left alone", v10.units.target.indicators.y, 24)
+
+	-- Step 7 -> 8: target of target moves right of the target frame. Unlike the
 	-- cosmetic steps, this one can tell an untouched default from a moved
 	-- frame, because drag mode writes to these same values.
 	local function v7(anchor)
@@ -1736,7 +1766,140 @@ local function testTextures()
 end
 
 --------------------------------------------------------------------------------
--- 25. Player buffs (Plan 4)
+-- 25. State indicators (Plan 1)
+--------------------------------------------------------------------------------
+
+local function indicatorSlot(icon, cfg)
+	-- Offset along the growth axis, relative to the row's own anchor.
+	local _, _, _, x, y = icon:GetPoint(1)
+	return (x or 0) - (cfg.x or 0), (y or 0) - (cfg.y or 0)
+end
+
+local function testIndicators()
+	local player = ns.frames.player
+	local cfg = ns:UnitConfig("player").indicators
+	local opts = ns.Options.table.args.units.args.player.args.indicators.args
+
+	equal("indicators/on for the player by default", cfg.enabled, true)
+	equal("indicators/off elsewhere by default",
+		ns:UnitConfig("target").indicators.enabled, false)
+	equal("indicators/anchored to the health bar", cfg.anchorTo, "health")
+	equal("indicators/top left of it", cfg.point, "TOPLEFT")
+	equal("indicators/no horizontal offset", cfg.x, 0)
+	-- Raised off the name text. Fully clearing it needs y = 7 -- the name's top
+	-- edge is at -13 on the shipped 48px frame and a 20px icon reaches y - 20 --
+	-- but 5 was chosen by eye, clipping the top couple of pixels. Pinned so an
+	-- accidental change is caught.
+	equal("indicators/raised off the name text", cfg.y, 5)
+	-- The floor: however it is tuned, the icon must never reach the text's
+	-- vertical center, which is where it would start eating whole glyphs.
+	check("indicators/icon never reaches the name's center line",
+		cfg.y - cfg.size > -19,
+		"y=" .. cfg.y .. " reaches " .. (cfg.y - cfg.size))
+	equal("indicators/grows right", cfg.growth, "RIGHT")
+
+	local el = player.elements.indicators
+	check("indicators/element built", el ~= nil)
+	if not el then return end
+
+	local resting, combat = el.icons.resting, el.icons.combat
+
+	-- Neither state active.
+	stub.resting = false
+	stub.units.player.inCombat = false
+	player:FullUpdate()
+	check("indicators/nothing shown when idle",
+		not resting:IsShown() and not combat:IsShown())
+
+	-- Combat only: it takes slot one rather than leaving a resting-shaped hole.
+	stub.units.player.inCombat = true
+	player:FullUpdate()
+	check("indicators/combat shown", combat:IsShown())
+	check("indicators/resting still hidden", not resting:IsShown())
+	local cx = indicatorSlot(combat, cfg)
+	equal("indicators/a lone combat icon sits at slot one", cx, 0)
+
+	-- Resting only.
+	stub.units.player.inCombat = false
+	stub.resting = true
+	player:FullUpdate()
+	check("indicators/resting shown", resting:IsShown())
+	check("indicators/combat hidden", not combat:IsShown())
+	equal("indicators/a lone resting icon sits at slot one", indicatorSlot(resting, cfg), 0)
+
+	-- Both: resting first, then combat, as requested.
+	stub.units.player.inCombat = true
+	player:FullUpdate()
+	check("indicators/both shown", resting:IsShown() and combat:IsShown())
+	equal("indicators/resting is first", indicatorSlot(resting, cfg), 0)
+	equal("indicators/combat is second", indicatorSlot(combat, cfg), cfg.size + cfg.spacing)
+
+	-- Growth direction.
+	opts.growth.set(nil, "LEFT")
+	player:FullUpdate()
+	equal("indicators/growing left puts the second icon to the left",
+		indicatorSlot(combat, cfg), -(cfg.size + cfg.spacing))
+
+	opts.growth.set(nil, "DOWN")
+	player:FullUpdate()
+	local _, dy = indicatorSlot(combat, cfg)
+	equal("indicators/growing down puts the second icon below",
+		dy, -(cfg.size + cfg.spacing))
+
+	opts.growth.set(nil, "UP")
+	player:FullUpdate()
+	local _, uy = indicatorSlot(combat, cfg)
+	equal("indicators/growing up puts the second icon above", uy, cfg.size + cfg.spacing)
+	opts.growth.set(nil, "RIGHT")
+
+	-- Turning one state off frees its slot for the other.
+	opts.enabled_resting.set(nil, false)
+	player:FullUpdate()
+	check("indicators/disabled state is hidden", not resting:IsShown())
+	equal("indicators/combat moves up to slot one", indicatorSlot(combat, cfg), 0)
+	opts.enabled_resting.set(nil, true)
+
+	-- Resting is a fact about you, not about a unit.
+	local target = ns.frames.target
+	ns:UnitConfig("target").indicators.enabled = true
+	ns:BumpSerial()
+	ns:RefreshUnit("target")
+	ns.CombatQueue:Flush()
+	stub.units.target.inCombat = true
+	target:FullUpdate()
+	local targetEl = target.elements.indicators
+	check("indicators/combat works on the target too", targetEl.icons.combat:IsShown())
+	check("indicators/resting never shows on another unit",
+		not targetEl.icons.resting:IsShown())
+	stub.units.target.inCombat = nil
+	ns:UnitConfig("target").indicators.enabled = false
+
+	-- Drawn above the bars, like everything else on the overlay.
+	equal("indicators/icons live on the overlay", combat:GetParent(), player.overlay)
+
+	-- Anchored to a bar that is not showing: hide, like bar-anchored text.
+	local playerCfg = ns:UnitConfig("player")
+	playerCfg.indicators.anchorTo = "mana"
+	playerCfg.mana.enabled = false
+	ns:BumpSerial()
+	ns:RefreshUnit("player")
+	ns.CombatQueue:Flush()
+	player:FullUpdate()
+	check("indicators/hidden when the anchor bar is not showing",
+		not resting:IsShown() and not combat:IsShown())
+
+	stub.resting = false
+	stub.units.player.inCombat = nil
+	ns.Defaults:ResetUnit(ns:Profile(), "player")
+	ns.Defaults:ResetUnit(ns:Profile(), "target")
+	ns:BumpSerial()
+	ns:RefreshUnit("player")
+	ns:RefreshUnit("target")
+	ns.CombatQueue:Flush()
+end
+
+--------------------------------------------------------------------------------
+-- 26. Player buffs (Plan 4)
 --
 -- The aura suite only ever exercised the TARGET frame, with buffs enabled from
 -- the start. Two paths were therefore never reached: the player's own auras,
@@ -2437,6 +2600,7 @@ local suites = {
 	{ "slash-commands", testSlashCommands },
 	{ "frame-appearance", testFrameAppearance },
 	{ "textures", testTextures },
+	{ "indicators", testIndicators },
 	{ "player-buffs", testPlayerBuffs },
 	{ "mana-text", testManaText },
 	{ "brightness", testBrightness },
