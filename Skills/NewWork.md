@@ -105,6 +105,50 @@ Also worth including when they apply:
 
 ---
 
+## Screenshots
+
+Raw WoW screenshots average **1.6 MB**. Git stores every binary whole, in every
+revision, forever — deleting one later does not reclaim the space without
+rewriting history. So the decision has to be made before the first one is
+committed, not after.
+
+### Default: describe it in prose
+
+Most screenshots are describable, and the description is usually *more* useful
+than the image:
+
+- A chat log with an error message should be **transcribed**. Text is
+  searchable and copyable; a picture of text is neither.
+- "The target-of-target frame sits below the target frame" is one sentence and
+  needs no image at all.
+
+### Check one in only when the visual is the evidence
+
+Rendering artifacts, layout glitches, anything where recognising it matters more
+than describing it. Realistically about one image per half-dozen requests.
+
+When you do:
+
+| Rule | Why |
+|---|---|
+| **Crop to the relevant region first** | The single biggest win: 1.6 MB to 30–80 KB. Everything else is rounding |
+| `Plans/Assets/Plan_<ID>_<n>.<ext>` | Sits beside the plan that references it |
+| Max ~1200px wide | Nothing in a UI bug needs more |
+| PNG for UI panels, JPEG for world scenes | Flat UI compresses well as PNG and keeps text crisp; landscapes do not |
+| Hard cap ~200 KB. Over it, crop harder | Keeps the ceiling predictable |
+
+At ~100 KB each and one per few requests, a hundred requests costs about 3 MB.
+
+`Plans/Assets/**` is marked binary in `.gitattributes` so git attempts no
+line-ending conversion and no diffs.
+
+**Git LFS is deliberately not used.** It is the textbook answer for many
+binaries, but it is a dependency and a setup step for a problem that cropping
+removes entirely. Reconsider only if full-resolution screenshots ever need
+archiving.
+
+---
+
 ## Tone
 
 Write for someone who has to act on it. Concrete over hedged; state a
