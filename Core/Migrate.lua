@@ -179,6 +179,57 @@ local steps = {
 		end
 		return profile
 	end,
+
+	--- 7 -> 8: target of target moves out from under the target frame, to its
+	-- right.
+	--
+	-- Every field of the old default is checked, not just the anchor target.
+	-- Drag mode and the sliders write to these same values, so unlike the
+	-- cosmetic migrations this one can genuinely tell an untouched default from
+	-- a frame the user has moved -- and a moved frame is left where it is.
+	[7] = function(profile)
+		local cfg = profile.units and profile.units.targettarget
+		local anchor = cfg and cfg.anchor
+		if anchor
+			and anchor.to == "target"
+			and anchor.point == "TOPLEFT"
+			and anchor.relativePoint == "BOTTOMLEFT"
+			and anchor.x == 0
+			and anchor.y == -34
+		then
+			anchor.point = "LEFT"
+			anchor.relativePoint = "RIGHT"
+			anchor.x = 4
+			anchor.y = 0
+		end
+		return profile
+	end,
+
+	--- 8 -> 9: put it on the right after all.
+	--
+	-- Schema 8 briefly placed target of target to the LEFT of the target frame,
+	-- which was a misreading of the request. Any profile that reached 8 before
+	-- this was corrected is carrying that value, so it is moved across here
+	-- rather than left wrong.
+	--
+	-- Same rule as step 7: only the exact interim default moves. Somebody who
+	-- decided they liked it on the left and dragged it there keeps it.
+	[8] = function(profile)
+		local cfg = profile.units and profile.units.targettarget
+		local anchor = cfg and cfg.anchor
+		if anchor
+			and anchor.to == "target"
+			and anchor.point == "RIGHT"
+			and anchor.relativePoint == "LEFT"
+			and anchor.x == -4
+			and anchor.y == 0
+		then
+			anchor.point = "LEFT"
+			anchor.relativePoint = "RIGHT"
+			anchor.x = 4
+		end
+		return profile
+	end,
 }
 
 Migrate.steps = steps

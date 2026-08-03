@@ -28,8 +28,11 @@ local type, pairs, ipairs, next = type, pairs, ipairs, next
 -- 5: health and power bars dimmed to 0.8 brightness.
 -- 6: current mana shown on the shapeshift mana bar.
 -- 7: portraits placed beside the frame instead of behind the bars.
+-- 8: target of target moved out from under the target frame.
+-- 9: ...to its RIGHT. 8 briefly put it on the left, which was a
+--    misreading of the request; step [8] moves those profiles across.
 -- Core/Migrate.lua carries existing profiles forward one step at a time.
-Defaults.SCHEMA_VERSION = 7
+Defaults.SCHEMA_VERSION = 9
 
 --------------------------------------------------------------------------------
 -- Table helpers
@@ -412,7 +415,10 @@ local function buildUnits()
 
 	u.targettarget = unit({
 		width = 130, height = 30,
-		anchor = { to = "target", point = "TOPLEFT", relativePoint = "BOTTOMLEFT", x = 0, y = -34 },
+		-- Right of the target frame, vertically centred against it. LEFT to
+		-- RIGHT rather than aligning tops, because the two frames are different
+		-- heights (30 vs 48) and top-aligned reads as drift rather than intent.
+		anchor = { to = "target", point = "LEFT", relativePoint = "RIGHT", x = 4, y = 0 },
 		power = { enabled = false },
 		texts = derivedTexts(),
 	})
