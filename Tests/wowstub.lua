@@ -33,7 +33,10 @@ function stub.reset()
 	stub.inGroup = false
 	stub.inRaid = false
 	stub.chat = {}
+	stub.failTemplates = {}
 end
+
+stub.failTemplates = {}
 
 --------------------------------------------------------------------------------
 -- Widgets
@@ -144,10 +147,25 @@ function methods:CreateFontString(name, layer)
 	return fs
 end
 
-function methods:SetText(t) self.__text = t end
+-- The client throws "FontString:SetText(): Font not set" when SetText is called
+-- on a FontString that has never had SetFont succeed. The harness used to
+-- accept it silently, which is exactly why a real bug passed every test.
+function methods:SetText(t)
+	if self.__type == "FontString" and not self.__font then
+		error("FontString:SetText(): Font not set", 2)
+	end
+	self.__text = t
+end
 function methods:GetText() return self.__text end
-function methods:SetFont(path, size, flags) self.__font = { path, size, flags } return true end
-function methods:GetFont() return self.__font and self.__font[1] end
+function methods:SetFont(path, size, flags)
+	if not path then return false end
+	self.__font = { path, size, flags }
+	return true
+end
+function methods:GetFont()
+	if not self.__font then return nil end
+	return self.__font[1], self.__font[2], self.__font[3]
+end
 
 function methods:SetStatusBarColor(r, g, b, a) self.__barColor = { r, g, b, a } end
 function methods:GetStatusBarColor()
@@ -195,7 +213,14 @@ widgetMT = {
 	end,
 }
 
+-- Set stub.failTemplates.SomeTemplate = true to make CreateFrame throw for it,
+-- which is how a Blizzard template that has moved or gone behaves. The harness
+-- otherwise ignores templates entirely, so this is the only way to reach the
+-- addon's guards around them.
 function _G.CreateFrame(objectType, name, parent, template)
+	if template and stub.failTemplates and stub.failTemplates[template] then
+		error("CreateFrame: unknown template '" .. tostring(template) .. "'", 2)
+	end
 	local f = newWidget(objectType, name, parent)
 	f.__template = template
 	if name then _G[name] = f end

@@ -66,6 +66,7 @@ local function buildGroup(def, groupKey, order, label, isDebuff)
 
 	local args = {
 		notice = Options.CombatNotice(0),
+		breaker = Options.BreakerNotice(unitKey, "auras", 0.5),
 		enabled = {
 			type = "toggle", order = 1, name = L["Enable"],
 			get = function() return group().enabled end,

@@ -50,8 +50,8 @@ Add a `maxWidthMode` beside the existing `maxWidth`:
 
 | Mode | Meaning |
 |---|---|
-| `none` | Unbounded. Current behaviour. |
-| `pixels` | Use `maxWidth` exactly. Current behaviour when `maxWidth > 0`. |
+| `none` | Unbounded. Current behavior. |
+| `pixels` | Use `maxWidth` exactly. Current behavior when `maxWidth > 0`. |
 | `percent` | `maxWidth` is a percentage of the anchor widget's width. |
 | `fit` | Computed at layout: the gap to the nearest opposing text. |
 

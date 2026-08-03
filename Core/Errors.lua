@@ -30,8 +30,8 @@ Errors.debug = false
 local currentContext = nil
 
 local counts = {}      -- ["player:health"] = 3
+local lastError = {}   -- ["player:health"] = "Auras.lua:123: attempt to ..."
 local disabled = {}    -- ["player:health"] = true
-local reported = {}    -- one chat line per context, ever
 
 --------------------------------------------------------------------------------
 -- Output
@@ -58,34 +58,60 @@ end
 -- Circuit breaker
 --------------------------------------------------------------------------------
 
+--- Trim a WoW error string down to the useful part.
+--
+-- The client prefixes every error with the full interface path, which pushes
+-- the file, line and actual message off the end of a chat line. Keeping the
+-- filename and line is what makes the message worth printing at all.
+local function shorten(err)
+	local text = tostring(err)
+	text = text:gsub("Interface[\\/]+AddOns[\\/]+[^\\/]+[\\/]+", "")
+	text = text:gsub("^%[string \"@?(.-)\"%]", "%1")
+	if #text > 220 then
+		text = text:sub(1, 220) .. "..."
+	end
+	return text
+end
+
 --- Record an error against a context key and disable it once it misbehaves
 -- repeatedly. Degraded, not dead: everything else keeps working.
+--
+-- The FIRST failure for a context always prints the actual message, not just
+-- the fact that something failed. "Degraded, not dead" is only half the job if
+-- the user then has to turn on debug logging and reproduce the problem to find
+-- out what broke -- by which point the breaker has usually already disabled it.
 function Errors:Record(context, err)
 	context = context or "unknown"
 	local n = (counts[context] or 0) + 1
 	counts[context] = n
+	lastError[context] = shorten(err)
+
+	if n == 1 then
+		self:Print(format("|cffff5555%s|r %s", context, lastError[context]))
+	elseif self.debug then
+		self:Print(format("|cffff5555%s|r (%d) %s", context, n, lastError[context]))
+	end
 
 	if self.debug then
-		self:Print(format("|cffff5555error|r in %s (%d): %s", context, n, tostring(err)))
+		local traceback = debugstack and debugstack(3, 8, 3) or ""
+		if traceback ~= "" then
+			self:Print("|cff999999" .. traceback .. "|r")
+		end
 	end
 
 	if n >= self.threshold and not disabled[context] then
 		disabled[context] = true
-		if not reported[context] then
-			reported[context] = true
-			self:Print(format(
-				L["|cffff5555%s has errored %d times and has been disabled for this session.|r Everything else keeps working. /duf debug shows details; /reload re-enables it."],
-				context, n))
-		end
-	elseif self.debug and n < self.threshold then
-		-- Already printed above in debug mode.
-	elseif n == 1 and not reported[context] then
-		-- First failure outside debug mode: one quiet line so it is not silent.
-		reported[context] = true
-		self:Print(format(L["%s hit an error. If it repeats it will be disabled automatically; /duf debug for details."], context))
+		self:Print(format(
+			L["|cffff5555%s disabled for this session after %d errors.|r Everything else keeps working. Turn it off and on again in /duf, or /duf errors reset, to retry it."],
+			context, n))
 	end
 
 	return n
+end
+
+--- The last error message recorded for a context, already shortened.
+function Errors:LastError(context)
+	return lastError[context]
 end
 
 function Errors:IsDisabled(context)
@@ -94,9 +120,9 @@ end
 
 function Errors:Reset(context)
 	if context then
-		counts[context], disabled[context], reported[context] = nil, nil, nil
+		counts[context], disabled[context], lastError[context] = nil, nil, nil
 	else
-		counts, disabled, reported = {}, {}, {}
+		counts, disabled, lastError = {}, {}, {}
 	end
 end
 
@@ -109,11 +135,8 @@ end
 --------------------------------------------------------------------------------
 
 local function handler(err)
+	-- Record prints the message, and the traceback when debug is on.
 	Errors:Record(currentContext, err)
-	if Errors.debug then
-		local traceback = debugstack and debugstack(2, 6, 3) or ""
-		Errors:Print("|cff999999" .. traceback .. "|r")
-	end
 	return err
 end
 

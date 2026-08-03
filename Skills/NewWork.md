@@ -45,7 +45,7 @@ rather than asking for the work itself to be done.
    stop and say so rather than committing it.
 
 9. **If there was only one request**, ask afterwards whether to start
-   implementing it. With several, summarise and let the user pick.
+   implementing it. With several, summarize and let the user pick.
 
 ---
 
@@ -124,7 +124,7 @@ than the image:
 
 ### Check one in only when the visual is the evidence
 
-Rendering artifacts, layout glitches, anything where recognising it matters more
+Rendering artifacts, layout glitches, anything where recognizing it matters more
 than describing it. Realistically about one image per half-dozen requests.
 
 When you do:

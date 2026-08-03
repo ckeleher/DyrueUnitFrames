@@ -129,6 +129,22 @@ function ns:Font(name)
 		or (STANDARD_TEXT_FONT or "Fonts\\FRIZQT__.TTF")
 end
 
+--- Create a FontString that already has a font.
+--
+-- SetText on a FontString whose font has never been set throws
+-- "FontString:SetText(): Font not set". Relying on every creation site to
+-- remember a SetFont before anything writes to it is a trap, because the ones
+-- that forget only fail in the configuration where that string is not laid out
+-- -- a hidden bar, an option left at its default -- which is precisely how such
+-- a bug stays invisible until a user hits it.
+--
+-- Everything in the addon that makes a FontString goes through here.
+function ns:NewFontString(parent, layer)
+	local fontString = parent:CreateFontString(nil, layer or "OVERLAY")
+	ns:SetFont(fontString, nil, 12, "OUTLINE", true)
+	return fontString
+end
+
 --- Apply font settings to a FontString, tolerating a missing media file.
 function ns:SetFont(fontString, fontName, size, outline, shadow)
 	local path = ns:Font(fontName)
@@ -417,13 +433,26 @@ function addon:SlashCommand(input)
 	end
 
 	if cmd == "errors" then
+		if stripToken(rest) == "reset" then
+			Errors:Reset()
+			ns:RefreshAll()
+			Errors:Print(L["Error counts cleared. Anything that was disabled will be tried again."])
+			return
+		end
 		local counts, disabled = Errors:GetCounts()
 		local any = false
 		for context, n in pairs(counts) do
 			any = true
-			Errors:Print(string.format("%s: %d%s", context, n, disabled[context] and L[" (disabled)"] or ""))
+			Errors:Print(string.format("|cffff5555%s|r x%d%s", context, n,
+				disabled[context] and L[" (disabled)"] or ""))
+			local message = Errors:LastError(context)
+			if message then Errors:Print("    " .. message) end
 		end
-		if not any then Errors:Print(L["No errors recorded this session."]) end
+		if not any then
+			Errors:Print(L["No errors recorded this session."])
+		else
+			Errors:Print(L["|cffffcc00/duf errors reset|r clears these and retries anything that was disabled."])
+		end
 		return
 	end
 

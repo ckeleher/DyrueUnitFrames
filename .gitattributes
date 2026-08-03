@@ -1,3 +1,11 @@
 # Plan screenshots. Binary: no line-ending conversion, no attempted diffs or
 # merges. See Skills/NewWork.md for the size rules that keep this folder small.
-Plans/Assets/** binary
+#
+# Listed by extension rather than as Plans/Assets/**, which would also catch the
+# README that lives there and make git report a perfectly readable text file as
+# an unreadable binary blob.
+Plans/Assets/*.png  binary
+Plans/Assets/*.jpg  binary
+Plans/Assets/*.jpeg binary
+Plans/Assets/*.gif  binary
+Plans/Assets/*.webp binary

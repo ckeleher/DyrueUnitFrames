@@ -48,12 +48,12 @@ anchor = { to = "target", point = "TOPRIGHT", relativePoint = "TOPLEFT",
   frames rather than bars within one, and butting them edge to edge reads as one
   wide frame rather than two.
 
-`y = 0` aligns the tops. The alternative — aligning centres with
+`y = 0` aligns the tops. The alternative — aligning centers with
 `RIGHT` → `LEFT` — looks better when the two frames are different heights, which
 they are (30 vs 48). Worth trying both by eye before settling; `RIGHT`/`LEFT` is
 probably the nicer default and is a one-word change either way.
 
-**Recommendation:** ship `RIGHT` → `LEFT`, `x = -4`, `y = 0`. Vertically centred
+**Recommendation:** ship `RIGHT` → `LEFT`, `x = -4`, `y = 0`. Vertically centered
 against a taller target frame looks deliberate; top-aligned looks like it
 drifted.
 

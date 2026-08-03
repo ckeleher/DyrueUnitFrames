@@ -125,6 +125,10 @@ EXCLUDED_DIRS = {".git", "Libs", "venv", "__pycache__", "node_modules"}
 EXCLUDED_FILES = {
     os.path.join("Documents", "SPEC.md"),
     os.path.join("Documents", "PLAN.md"),
+    # This file. PAIRS above is a list of British words, so scanning it rewrites
+    # the lookup table into ("check", "check") identity pairs and quietly
+    # destroys the script. Learned the hard way.
+    os.path.join("Tests", "anglicize.py"),
 }
 EXTENSIONS = (".lua", ".md", ".ps1", ".toc", ".xml", ".py")
 

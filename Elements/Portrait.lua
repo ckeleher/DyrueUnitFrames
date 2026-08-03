@@ -142,7 +142,7 @@ end
 -- The game's portrait art is round: the corners of the texture are
 -- transparent. There is no way to square that off, so "square" crops to the
 -- inscribed square instead -- the largest region that is fully opaque. For a
--- circle of radius 0.5 centred at 0.5 that is 0.5 - 0.5/sqrt(2) = 0.146 in from
+-- circle of radius 0.5 centered at 0.5 that is 0.5 - 0.5/sqrt(2) = 0.146 in from
 -- each edge, which is also very close to the crop addons have long used to trim
 -- the border off square icon art.
 local SQUARE_INSET = 0.146

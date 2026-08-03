@@ -139,7 +139,7 @@ Verification is by eye, on both clients, on:
 
 | Risk | Handling |
 |---|---|
-| Updating AceGUI changes other behaviour | Full suite plus a manual pass over every options tab; the version table in `Libs/LICENSE.md` records exactly what moved |
+| Updating AceGUI changes other behavior | Full suite plus a manual pass over every options tab; the version table in `Libs/LICENSE.md` records exactly what moved |
 | It is a client-side change we cannot fix | Option 3 sidesteps it by removing the measurement problem |
 | Fixing the symptom and not the cause | Diagnosis steps above run *first*; the two hypotheses are distinguishable |
 

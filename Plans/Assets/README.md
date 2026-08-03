@@ -5,7 +5,7 @@ Screenshots referenced by plan documents. Named after the plan that uses them:
 
 **Most plans should not have one.** A chat log is worth more transcribed into
 the plan than photographed, and most layout complaints are one sentence of
-prose. Add an image only when recognising the thing matters more than describing
+prose. Add an image only when recognizing the thing matters more than describing
 it — rendering artifacts, mostly.
 
 Before adding one:

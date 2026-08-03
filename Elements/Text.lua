@@ -133,17 +133,21 @@ function element.Layout(frame, el, cfg)
 		local fontString = el.strings[i]
 
 		if not fontString then
-			fontString = frame.overlay:CreateFontString(nil, "OVERLAY")
+			fontString = ns:NewFontString(frame.overlay, "OVERLAY")
 			el.strings[i] = fontString
 		end
 
 		local widget, available = anchorWidget(frame, text.anchorTo)
 
+		-- Unconditionally, before the visibility branch. Update writes to this
+		-- string whether or not Layout showed it, and SetText on a FontString
+		-- with no font throws.
+		ns:SetFont(fontString, text.font, text.size, text.outline, text.shadow)
+
 		if text.enabled == false or not available then
 			fontString:Hide()
 		else
 			fontString:Show()
-			ns:SetFont(fontString, text.font, text.size, text.outline, text.shadow)
 
 			fontString:ClearAllPoints()
 			fontString:SetPoint(text.point or "LEFT", widget, text.relativePoint or text.point or "LEFT",
