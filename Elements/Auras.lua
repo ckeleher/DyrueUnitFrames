@@ -209,9 +209,15 @@ local function createButton(group, index)
 	button.icon:SetTexCoord(0.07, 0.93, 0.07, 0.93)
 
 	-- A standard Cooldown frame so OmniCC attaches automatically (SPEC §7).
-	button.cooldown = CreateFrame("Cooldown", nil, button, "CooldownFrameTemplate")
-	button.cooldown:SetAllPoints(button.icon)
-	button.cooldown:SetDrawEdge(false)
+	-- Guarded: this is a Blizzard template, and a template that has moved or
+	-- gone throws outright. A missing swipe is a cosmetic loss; an aura element
+	-- that cannot display anything is not.
+	local ok, cooldown = pcall(CreateFrame, "Cooldown", nil, button, "CooldownFrameTemplate")
+	if ok and cooldown then
+		button.cooldown = cooldown
+		pcall(cooldown.SetAllPoints, cooldown, button.icon)
+		pcall(cooldown.SetDrawEdge, cooldown, false)
+	end
 
 	button.count = button:CreateFontString(nil, "OVERLAY")
 	button.duration = button:CreateFontString(nil, "OVERLAY")
@@ -253,21 +259,46 @@ end
 -- therefore cancel a neighbouring one. Out of combat it is exact.
 --------------------------------------------------------------------------------
 
+--- Build the secure overlay for one aura button, or give up on it.
+--
+-- Every step here is guarded, and a failure sets `cancelFailed` so this button
+-- never retries. Right-click-cancel is a convenience; the aura display is not,
+-- and the convenience must never be able to take the display down with it.
+--
+-- Nothing is attempted during combat. RegisterForClicks, SetAttribute and Hide
+-- are all protected on a secure frame, so a buff gained mid-fight would
+-- otherwise throw here on a freshly created overlay. Out of combat the next
+-- aura update builds it.
 local function ensureCancelOverlay(button)
-	if button.cancelFailed then return nil end
 	if button.cancel then return button.cancel end
+	if button.cancelFailed then return nil end
+	if InCombatLockdown() then return nil end
+
 	local ok, overlay = pcall(CreateFrame, "Button", nil, button, "SecureActionButtonTemplate")
 	if not ok or not overlay then
 		button.cancelFailed = true
 		return nil
 	end
-	overlay:SetAllPoints(button)
-	overlay:RegisterForClicks("RightButtonUp")
-	overlay:SetAttribute("type2", "cancelaura")
-	overlay:Hide()
-	-- Forward hover to the icon so the tooltip still works through the overlay.
-	overlay:SetScript("OnEnter", function() button:GetScript("OnEnter")(button) end)
-	overlay:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+	local configured = pcall(function()
+		overlay:SetAllPoints(button)
+		overlay:RegisterForClicks("RightButtonUp")
+		overlay:SetAttribute("type2", "cancelaura")
+		overlay:Hide()
+		-- Forward hover to the icon so the tooltip still works through it.
+		overlay:SetScript("OnEnter", function()
+			local handler = button:GetScript("OnEnter")
+			if handler then handler(button) end
+		end)
+		overlay:SetScript("OnLeave", function() GameTooltip:Hide() end)
+	end)
+
+	if not configured then
+		button.cancelFailed = true
+		pcall(overlay.Hide, overlay)
+		return nil
+	end
+
 	button.cancel = overlay
 	return overlay
 end
@@ -289,10 +320,18 @@ local function updateCancelOverlay(button, frame, cfg, filter, auraIndex, own)
 	if not overlay then return end
 
 	CombatQueue:Run(button.cancelKey, function()
-		overlay:SetAttribute("unit", "player")
-		overlay:SetAttribute("index", auraIndex)
-		overlay:SetAttribute("filter", filter)
-		overlay:Show()
+		-- Same reasoning as ensureCancelOverlay: if this fails, lose the
+		-- overlay for this button, not the aura display.
+		local ok = pcall(function()
+			overlay:SetAttribute("unit", "player")
+			overlay:SetAttribute("index", auraIndex)
+			overlay:SetAttribute("filter", filter)
+			overlay:Show()
+		end)
+		if not ok then
+			button.cancelFailed = true
+			pcall(overlay.Hide, overlay)
+		end
 	end)
 end
 
@@ -460,12 +499,14 @@ local function applyButton(frame, group, cfg, button, entry, cell, filter)
 	-- Cooldown. Unknown duration means no swipe and no timer, ever: a fake one
 	-- is worse than none (FR-5.8).
 	local known = entry.duration and entry.duration > 0 and entry.expirationTime
-	if cfg.showCooldown and known then
-		button.cooldown:Show()
-		button.cooldown:SetCooldown(entry.expirationTime - entry.duration, entry.duration)
-	else
-		button.cooldown:Hide()
-		pcall(button.cooldown.Clear, button.cooldown)
+	if button.cooldown then
+		if cfg.showCooldown and known then
+			button.cooldown:Show()
+			button.cooldown:SetCooldown(entry.expirationTime - entry.duration, entry.duration)
+		else
+			button.cooldown:Hide()
+			pcall(button.cooldown.Clear, button.cooldown)
+		end
 	end
 
 	-- Built-in duration text, for users without OmniCC.

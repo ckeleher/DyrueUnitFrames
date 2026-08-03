@@ -152,6 +152,25 @@ function Options.GradientColor(name, order, getList, index, apply, overrides)
 	return option
 end
 
+--- A notice shown on an element group whose circuit breaker has tripped.
+--
+-- Without this the checkbox looks like it works and does nothing, which is a
+-- worse failure than the original error. Toggling the element off and on again
+-- clears the breaker (see Units/Factory ApplyConfig).
+function Options.BreakerNotice(unitKey, elementName, order)
+	local context = unitKey .. ":" .. elementName
+	return {
+		type = "description",
+		order = order or 0.5,
+		hidden = function() return not ns.Errors:IsDisabled(context) end,
+		name = function()
+			return "|cffff5555" .. string.format(
+				L["%s errored repeatedly and was switched off for this session."],
+				elementName) .. "|r " .. L["Turn it off and on again to retry it, or use /duf errors reset. /duf debug prints what went wrong."]
+		end,
+	}
+end
+
 --- Build a range control from one of the FR-1.2 presets.
 function Options.Range(name, order, preset, getTable, key, apply, overrides)
 	local range = Options.RANGES[preset] or Options.RANGES.offset

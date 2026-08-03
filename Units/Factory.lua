@@ -95,10 +95,26 @@ function methods:ApplyConfig()
 
 	for _, def in ipairs(ns.elementOrder) do
 		local elementConfig = self.cfg[def.configKey]
-		local wanted = enabled
+		local context = self.unitKey .. ":" .. def.name
+
+		-- What the CONFIG asks for, before the circuit breaker gets a vote.
+		local configWants = enabled and def.IsEnabled(self, elementConfig) and true or false
+
+		-- Turning an element back on is a user asking for another go, so it
+		-- clears the breaker. Without this a single transient error disables an
+		-- element for the whole session and the checkbox becomes a no-op with
+		-- no indication why -- which is a bad failure mode for a safety net.
+		-- Keyed on the transition rather than on the current value, so a normal
+		-- refresh of an already-enabled element does not keep resetting the
+		-- count and defeat the breaker entirely.
+		if configWants and self.configWanted[def.name] == false then
+			Errors:Reset(context)
+		end
+		self.configWanted[def.name] = configWants
+
+		local wanted = configWants
 			and Errors:IsElementAllowed(def.name)
-			and not Errors:IsDisabled(self.unitKey .. ":" .. def.name)
-			and def.IsEnabled(self, elementConfig) and true or false
+			and not Errors:IsDisabled(context) and true or false
 
 		if wanted then
 			if not self.elements[def.name] then
@@ -420,6 +436,7 @@ function Factory:Create(def)
 	frame.def = def
 	frame.elements = {}
 	frame.activeElements = {}
+	frame.configWanted = {}     -- last known config intent, for breaker resets
 	frame.eventMap = {}
 	frame.changeEvents = {}
 	frame.configured = false

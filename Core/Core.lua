@@ -417,13 +417,23 @@ function addon:SlashCommand(input)
 	end
 
 	if cmd == "errors" then
+		if stripToken(rest) == "reset" then
+			Errors:Reset()
+			ns:RefreshAll()
+			Errors:Print(L["Error counts cleared. Anything that was disabled will be tried again."])
+			return
+		end
 		local counts, disabled = Errors:GetCounts()
 		local any = false
 		for context, n in pairs(counts) do
 			any = true
 			Errors:Print(string.format("%s: %d%s", context, n, disabled[context] and L[" (disabled)"] or ""))
 		end
-		if not any then Errors:Print(L["No errors recorded this session."]) end
+		if not any then
+			Errors:Print(L["No errors recorded this session."])
+		else
+			Errors:Print(L["|cffffcc00/duf errors reset|r clears these and retries anything that was disabled."])
+		end
 		return
 	end
 

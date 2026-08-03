@@ -33,7 +33,10 @@ function stub.reset()
 	stub.inGroup = false
 	stub.inRaid = false
 	stub.chat = {}
+	stub.failTemplates = {}
 end
+
+stub.failTemplates = {}
 
 --------------------------------------------------------------------------------
 -- Widgets
@@ -195,7 +198,14 @@ widgetMT = {
 	end,
 }
 
+-- Set stub.failTemplates.SomeTemplate = true to make CreateFrame throw for it,
+-- which is how a Blizzard template that has moved or gone behaves. The harness
+-- otherwise ignores templates entirely, so this is the only way to reach the
+-- addon's guards around them.
 function _G.CreateFrame(objectType, name, parent, template)
+	if template and stub.failTemplates and stub.failTemplates[template] then
+		error("CreateFrame: unknown template '" .. tostring(template) .. "'", 2)
+	end
 	local f = newWidget(objectType, name, parent)
 	f.__template = template
 	if name then _G[name] = f end

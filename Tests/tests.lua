@@ -1631,7 +1631,174 @@ local function testTextures()
 end
 
 --------------------------------------------------------------------------------
--- 25. Shapeshift mana readout
+-- 25. Player buffs (Plan 4)
+--
+-- The aura suite only ever exercised the TARGET frame, with buffs enabled from
+-- the start. Two paths were therefore never reached: the player's own auras,
+-- which is the only case that builds a right-click-cancel overlay, and turning
+-- a group off and on again.
+--------------------------------------------------------------------------------
+
+local function playerBuffGroup()
+	local el = ns.frames.player.elements.auras
+	return el and el.buffs
+end
+
+local function shownButtons(group)
+	local shown, positions = 0, {}
+	for i = 1, #group.buttons do
+		local button = group.buttons[i]
+		if button and button:IsShown() then
+			shown = shown + 1
+			local _, _, _, x, y = button:GetPoint(1)
+			positions[#positions + 1] = string.format("%.2f,%.2f", x or 0, y or 0)
+		end
+	end
+	return shown, positions
+end
+
+local function testPlayerBuffs()
+	local player = ns.frames.player
+	local buffs = ns.Options.table.args.units.args.player.args.auras.args.buffs.args
+
+	-- Three of the player's own buffs, as in the report.
+	stub.units.player.auras = {
+		HELPFUL = {
+			{ name = "Mark of the Wild", icon = 11, applications = 0, duration = 1800,
+			  expirationTime = 2800, sourceUnit = "player", spellId = 3001, isHelpful = true },
+			{ name = "Thorns", icon = 12, applications = 0, duration = 600,
+			  expirationTime = 1600, sourceUnit = "player", spellId = 3002, isHelpful = true },
+			{ name = "Omen of Clarity", icon = 13, applications = 0, duration = 0,
+			  expirationTime = 0, sourceUnit = "player", spellId = 3003, isHelpful = true },
+		},
+		HARMFUL = {},
+	}
+
+	ns.Errors:Reset()
+	buffs.enabled.set(nil, true)
+	ns.CombatQueue:Flush()
+
+	-- The symptom the user saw, asserted directly.
+	local counts = ns.Errors:GetCounts()
+	check("playerbuffs/updating player auras does not error",
+		counts["player:auras"] == nil,
+		"player:auras errored " .. tostring(counts["player:auras"]) .. " time(s)")
+
+	local group = playerBuffGroup()
+	check("playerbuffs/buff group built", group ~= nil)
+	if not group then return end
+
+	equal("playerbuffs/all three scanned", #group.list, 3)
+
+	local shown, positions = shownButtons(group)
+	equal("playerbuffs/all three shown", shown, 3)
+
+	-- "I can't tell if they're all being put over the same spot" -- so check.
+	local seen, duplicates = {}, 0
+	for _, p in ipairs(positions) do
+		if seen[p] then duplicates = duplicates + 1 end
+		seen[p] = true
+	end
+	equal("playerbuffs/icons are at distinct positions", duplicates, 0)
+
+	-- Own auras get a cancel overlay; nothing else does. This is the only path
+	-- unique to the player's own buffs.
+	check("playerbuffs/own buff has a cancel overlay", group.buttons[1].cancel ~= nil)
+	check("playerbuffs/cancel overlay is a secure action button",
+		group.buttons[1].cancel == nil or group.buttons[1].cancelFailed ~= true)
+
+	-- Disable, then re-enable.
+	buffs.enabled.set(nil, false)
+	ns.CombatQueue:Flush()
+	shown = shownButtons(group)
+	equal("playerbuffs/all hidden when disabled", shown, 0)
+
+	buffs.enabled.set(nil, true)
+	ns.CombatQueue:Flush()
+	shown = shownButtons(group)
+	equal("playerbuffs/all back when re-enabled", shown, 3)
+
+	-- And the design gap: once the breaker trips, ApplyConfig refuses to
+	-- re-enable the element no matter what the checkbox says.
+	ns.Errors.threshold = 1
+	ns.Errors:Record("player:auras", "synthetic failure")
+	check("playerbuffs/breaker trips", ns.Errors:IsDisabled("player:auras"))
+
+	buffs.enabled.set(nil, false)
+	ns.CombatQueue:Flush()
+	buffs.enabled.set(nil, true)
+	ns.CombatQueue:Flush()
+
+	check("playerbuffs/re-enabling clears the breaker",
+		not ns.Errors:IsDisabled("player:auras"))
+	shown = shownButtons(playerBuffGroup())
+	equal("playerbuffs/icons return after a breaker trip", shown, 3)
+
+	ns.Errors.threshold = 5
+	ns.Errors:Reset()
+
+	-- "Degrade, never cascade" (SPEC §5.9). The right-click-cancel overlay and
+	-- the cooldown swipe are conveniences built from Blizzard templates; a
+	-- template that has moved must cost its own feature and nothing else.
+	for _, template in ipairs({ "SecureActionButtonTemplate", "CooldownFrameTemplate" }) do
+		buffs.enabled.set(nil, false)
+		ns.CombatQueue:Flush()
+
+		-- New buttons, so the guards are actually exercised.
+		playerBuffGroup().buttons = {}
+		stub.failTemplates[template] = true
+
+		buffs.enabled.set(nil, true)
+		ns.CombatQueue:Flush()
+
+		local failCounts = ns.Errors:GetCounts()
+		check("playerbuffs/" .. template .. " failure does not error the element",
+			failCounts["player:auras"] == nil,
+			tostring(failCounts["player:auras"]) .. " error(s)")
+
+		local stillShown = shownButtons(playerBuffGroup())
+		equal("playerbuffs/icons still display without " .. template, stillShown, 3)
+
+		stub.failTemplates[template] = nil
+		ns.Errors:Reset()
+	end
+
+	-- No secure overlay is built during combat: RegisterForClicks, SetAttribute
+	-- and Hide are all protected, so a buff gained mid-fight would throw.
+	buffs.enabled.set(nil, false)
+	ns.CombatQueue:Flush()
+	playerBuffGroup().buttons = {}
+	stub.inCombat = true
+	buffs.enabled.set(nil, true)
+	ns.CombatQueue:Flush()
+
+	local combatCounts = ns.Errors:GetCounts()
+	check("playerbuffs/no error building auras in combat",
+		combatCounts["player:auras"] == nil,
+		tostring(combatCounts["player:auras"]) .. " error(s)")
+	check("playerbuffs/no cancel overlay built in combat",
+		playerBuffGroup().buttons[1] == nil or playerBuffGroup().buttons[1].cancel == nil)
+	check("playerbuffs/combat failure is not permanent",
+		playerBuffGroup().buttons[1] == nil or playerBuffGroup().buttons[1].cancelFailed ~= true)
+
+	stub.inCombat = false
+	ns.CombatQueue:Flush()
+	player:FullUpdate()
+	check("playerbuffs/overlay built once combat ends",
+		playerBuffGroup().buttons[1].cancel ~= nil)
+
+	ns.Errors:Reset()
+	buffs.enabled.set(nil, false)
+	ns.CombatQueue:Flush()
+	stub.units.player.auras = nil
+	ns.Defaults:ResetUnit(ns:Profile(), "player")
+	ns:BumpSerial()
+	ns:RefreshUnit("player")
+	ns.CombatQueue:Flush()
+end
+
+--------------------------------------------------------------------------------
+-- 26. Shapeshift mana readout
 --
 -- The bar appears and disappears with form, so its text has to as well.
 --------------------------------------------------------------------------------
@@ -2165,6 +2332,7 @@ local suites = {
 	{ "slash-commands", testSlashCommands },
 	{ "frame-appearance", testFrameAppearance },
 	{ "textures", testTextures },
+	{ "player-buffs", testPlayerBuffs },
 	{ "mana-text", testManaText },
 	{ "brightness", testBrightness },
 	{ "bar-stack", testBarStack },

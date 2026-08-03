@@ -1,10 +1,51 @@
 # Plan 4 — Player Buff Display
 
-**Status:** Not started — diagnosis first, and there is already strong evidence
+**Status:** Implemented on `Plan-4-player-buffs-fix`. One symptom fixed
+outright; the other is hardened but still needs the in-game traceback to
+confirm the root cause.
 **Created:** 2 August 2026
-**Branch:** `first`
+**Branch:** `Plan-4-player-buffs-fix`
 **Priority:** Highest of the six. Two elements are currently erroring on the
 player frame at login.
+
+---
+
+## Outcome
+
+Step 1 of this plan said reproduce before fixing. A new headless suite
+(`player-buffs`) exercises the player's own buffs, which the harness had never
+done. Results:
+
+**Symptom 2 — reproduced exactly.** Once the breaker trips, `ApplyConfig`
+refuses to re-enable the element no matter what the checkbox says. The test
+failed on exactly the two assertions predicted. **Fixed.**
+
+**Symptom 1 — did not reproduce.** Three buffs, three icons, three distinct
+positions, no error. That is itself informative: the harness models everything
+except `CreateFrame`'s *templates*, which it ignores. So the cause is almost
+certainly a real Blizzard template behaving differently in the client —
+candidates 1 and 2 below, and nothing else in the ranked list.
+
+Both candidates are now guarded, so neither can take the aura element down
+whatever they do. That is not the same as knowing which one it was, and the
+traceback is still worth collecting.
+
+### What changed
+
+| Change | Confirmed by |
+|---|---|
+| Re-enabling an element clears its breaker, keyed on the config transition so a routine refresh does not defeat the breaker | Test |
+| `CooldownFrameTemplate` creation guarded; a missing swipe costs the swipe only | Test, via a stub that makes named templates throw |
+| `SecureActionButtonTemplate` overlay fully guarded; failure disables right-click-cancel for that button alone | Test, same mechanism |
+| No secure overlay built during combat — `RegisterForClicks`, `SetAttribute` and `Hide` are all protected, so a buff gained mid-fight would have thrown | Test |
+| `/duf errors reset`, and an in-options notice when an element has been switched off | — |
+
+### Still open
+
+The actual traceback. `/duf debug` then `/reload` on the affected character. If
+`player:auras` no longer appears, one of the two guards caught it and the
+question is which. `player:text` is a separate line of enquiry and is untouched
+by this work.
 
 ---
 

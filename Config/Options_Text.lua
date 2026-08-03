@@ -417,6 +417,8 @@ function Options.BuildTexts(def)
 			}
 		end
 
+		args.breaker = Options.BreakerNotice(def.key, "text", 1.5)
+
 		args.add = {
 			type = "execute", order = 2, name = L["Add a text element"],
 			func = function()
