@@ -520,9 +520,30 @@ libs["AceAddon-3.0"] = {
 
 libs["AceDB-3.0"] = {
 	New = function(_, name, defaults, defaultProfile)
-		local db = { profile = {}, global = {}, char = {} }
+		local active = {}
+		local db = {
+			profile = active,
+			global = {},
+			char = {},
+			-- The raw profile store, as AceDB exposes it. The active profile is
+			-- the same table, by reference, under its own name.
+			profiles = { Default = active },
+			keys = { profile = "Default" },
+		}
 		db.RegisterCallback = function() end
 		db.ResetProfile = function() end
+		function db:GetCurrentProfile() return self.keys.profile end
+		--- Test helper: add an inactive profile, as another character would.
+		function db:AddProfile(profileName, contents)
+			self.profiles[profileName] = contents
+			return contents
+		end
+		--- Test helper: switch the active profile without AceDB's machinery.
+		function db:SelectProfile(profileName)
+			self.keys.profile = profileName
+			self.profile = self.profiles[profileName]
+			return self.profile
+		end
 		stub.db = db
 		return db
 	end,
