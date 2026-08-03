@@ -72,6 +72,8 @@ local API_PATHS = {
 	"issecretvalue",
 	"canaccessvalue",
 	"Enum.PowerType",
+	"GetComboPoints",
+	"MAX_COMBO_POINTS",
 	"GetCreatureDifficultyColor",
 	"GetQuestDifficultyColor",
 	"PowerBarColor",
@@ -109,6 +111,7 @@ local EVENTS = {
 	"UNIT_AURA", "UNIT_TARGET", "UNIT_PET", "UNIT_HAPPINESS",
 	"UNIT_PORTRAIT_UPDATE", "UNIT_MODEL_CHANGED", "UNIT_CLASSIFICATION_CHANGED",
 	"UNIT_NAME_UPDATE", "UNIT_LEVEL", "UNIT_CONNECTION", "UNIT_FACTION", "UNIT_FLAGS",
+	"UNIT_COMBO_POINTS",
 	"PLAYER_TARGET_CHANGED", "PLAYER_FOCUS_CHANGED", "PLAYER_FLAGS_CHANGED",
 	"UPDATE_SHAPESHIFT_FORM", "GROUP_ROSTER_UPDATE", "PARTY_LEADER_CHANGED",
 	"RAID_TARGET_UPDATE", "PLAYER_REGEN_ENABLED", "PLAYER_REGEN_DISABLED",
@@ -150,6 +153,34 @@ local function survey()
 
 	record.manaEnum = Enum and Enum.PowerType and Enum.PowerType.Mana
 	out("Enum.PowerType.Mana =", tostring(record.manaEnum), "(0 is the fallback)")
+
+	header("Combo points (Plan 9)")
+	record.maxComboPoints = MAX_COMBO_POINTS
+	record.comboEnum = Enum and Enum.PowerType and Enum.PowerType.ComboPoints
+	out("MAX_COMBO_POINTS =", tostring(record.maxComboPoints), "(5 is the fallback)")
+	out("Enum.PowerType.ComboPoints =", tostring(record.comboEnum))
+	if record.comboEnum == 4 then
+		out("|cffffcc00Note:|r 4 is HAPPINESS in the Classic power numbering. This is")
+		out("why the addon never uses a numeric literal for combo points.")
+	end
+	if GetComboPoints then
+		local ok, points = pcall(GetComboPoints, "player", "target")
+		record.comboPointsNow = ok and points or nil
+		out("GetComboPoints('player','target') =", tostring(record.comboPointsNow))
+	else
+		out("|cffff5555GetComboPoints is gone|r - the addon falls back to the Enum path.")
+	end
+	-- The open question this is here to answer: does UnitPowerMax report a real
+	-- capacity for combo points? If it returns 5 for a rogue and 0 for, say, a
+	-- mage, a later revision can use it as a genuine capability probe and offer
+	-- an always-visible empty bar with no class check. Until it is seen in game,
+	-- nothing is gated on it.
+	if record.comboEnum then
+		local ok, maximum = pcall(UnitPowerMax, "player", record.comboEnum)
+		record.comboPowerMax = ok and maximum or nil
+		out("UnitPowerMax('player', ComboPoints) =", tostring(record.comboPowerMax),
+			"(5 here would make an always-visible bar possible without a class check)")
+	end
 
 	header("Events")
 	for _, event in ipairs(EVENTS) do

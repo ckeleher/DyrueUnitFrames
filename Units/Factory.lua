@@ -307,21 +307,46 @@ function methods:RegisterEvents()
 	-- to follow the substitution or the stand-in data would never update.
 	local unit = self.unit or self.def.token
 
+	-- Which unit each event ended up filtered against, so a second element
+	-- asking for the same event under a different one can be detected. `false`
+	-- records "already widened to unfiltered".
+	local UNFILTERED = false
+	local filteredAs = {}
+
 	local function subscribe(event, def)
+		-- An element may override the unit for one of its events. Combo points
+		-- are what forces this: UNIT_COMBO_POINTS fires with "player" as its
+		-- payload but the bar lives on the TARGET frame, so filtering it against
+		-- the frame's own display unit means the handler never runs -- with no
+		-- error and no warning, just a bar that never updates.
+		local wanted = isUnitEvent(event)
+			and ((def.eventUnits and def.eventUnits[event]) or unit)
+			or nil
+
 		local list = self.eventMap[event]
 		if not list then
 			list = {}
 			self.eventMap[event] = list
 			if isUnitEvent(event) then
-				if not Compat.RegisterUnitEvent(self, event, unit) then
+				if not Compat.RegisterUnitEvent(self, event, wanted) then
 					self.eventMap[event] = nil
 					return
 				end
+				filteredAs[event] = wanted
 			else
 				if not Compat.RegisterEvent(self, event) then
 					self.eventMap[event] = nil
 					return
 				end
+			end
+		elseif wanted and filteredAs[event] ~= nil
+			and filteredAs[event] ~= UNFILTERED and filteredAs[event] ~= wanted then
+			-- Two elements want the same event under different units. Re-filtering
+			-- to the second one's unit would silently starve the first, so widen
+			-- instead: an unfiltered registration reaches both, and dispatch
+			-- already runs every element in the list.
+			if Compat.RegisterEvent(self, event) then
+				filteredAs[event] = UNFILTERED
 			end
 		end
 		list[#list + 1] = def

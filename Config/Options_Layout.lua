@@ -480,6 +480,99 @@ local function manaGroup(def)
 end
 
 --------------------------------------------------------------------------------
+-- Combo points (Plan 9)
+--------------------------------------------------------------------------------
+
+local function comboGroup(def)
+	local unitKey = def.key
+	local function combo() local c = ns:UnitConfig(unitKey); return c and c.combo end
+	local apply = Options.ApplyUnit(unitKey)
+
+	local args = {
+		notice = Options.CombatNotice(0),
+		breaker = Options.BreakerNotice(unitKey, "combo", 0.5),
+		explain = {
+			type = "description", order = 1,
+			name = L["Combo points are the player's, spent on the player's target, so this reads your own points and draws them on this frame. It ships on the target frame, hidden until you actually have a point -- which is also what keeps it out of the way for every class that has no combo points at all."],
+		},
+		enabled = {
+			type = "toggle", order = 2, name = L["Enable"],
+			get = function() return combo().enabled end,
+			set = function(_, v) combo().enabled = v; apply() end,
+		},
+		hideWhenEmpty = {
+			type = "toggle", order = 3, name = L["Hide at zero points"],
+			desc = L["Off shows an empty row instead, which is a capacity readout for classes that have combo points and a permanent row of dark rectangles for the ones that do not."],
+			get = function() return combo().hideWhenEmpty end,
+			set = function(_, v) combo().hideWhenEmpty = v; apply() end,
+		},
+
+		layoutHeader = { type = "header", order = 10, name = L["Layout"] },
+		layoutNote = {
+			type = "description", order = 10.5,
+			name = L["The bar sits outside the frame, above its top edge, so nothing inside the frame moves when it appears. The target's buff row is offset to clear it; if you move one, check the other."],
+		},
+		anchorTo = {
+			type = "select", order = 11, name = L["Anchor to"],
+			values = function() return ns:AnchorWidgetValues() end,
+			get = function() return combo().anchorTo end,
+			set = function(_, v) combo().anchorTo = v; apply() end,
+		},
+		point = {
+			type = "select", order = 12, name = L["Point on the bar"],
+			values = ns.Anchoring:PointValues(),
+			get = function() return combo().point end,
+			set = function(_, v) combo().point = v; apply() end,
+		},
+		relativePoint = {
+			type = "select", order = 13, name = L["Point on the anchor"],
+			values = ns.Anchoring:PointValues(),
+			get = function() return combo().relativePoint end,
+			set = function(_, v) combo().relativePoint = v; apply() end,
+		},
+		x = Options.Range(L["X offset"], 14, "offset", combo, "x", apply),
+		y = Options.Range(L["Y offset"], 15, "offset", combo, "y", apply),
+		widthMode = {
+			type = "select", order = 16, name = L["Width"],
+			desc = L["A custom width will usually want the two points above set to BOTTOM and TOP, which centers the bar instead of leaving it flush left."],
+			values = { inherit = L["Match the frame"], custom = L["Custom"] },
+			get = function() return combo().widthMode end,
+			set = function(_, v) combo().widthMode = v; apply() end,
+		},
+		width = Options.Range(L["Custom width"], 17, "width", combo, "width", apply, {
+			hidden = function() return combo().widthMode ~= "custom" end,
+		}),
+		height = Options.Range(L["Height"], 18, "height", combo, "height", apply),
+		growth = {
+			type = "select", order = 19, name = L["Fill direction"],
+			values = ns.elements.combo.GrowthValues(),
+			get = function() return combo().growth end,
+			set = function(_, v) combo().growth = v; apply() end,
+		},
+		alpha = {
+			type = "range", order = 20, name = L["Opacity"],
+			min = 0, max = 1, step = 0.01,
+			get = function() return combo().alpha end,
+			set = function(_, v) combo().alpha = v; apply() end,
+		},
+
+		colorHeader = { type = "header", order = 30, name = L["Color"] },
+		color = Options.Color(L["Filled"], 31, combo, "color", apply),
+		emptyColor = Options.Color(L["Empty"], 32, combo, "emptyColor", apply, { hasAlpha = true }),
+		borderColor = Options.Color(L["Border"], 33, combo, "borderColor", apply, { hasAlpha = true }),
+		borderSize = {
+			type = "range", order = 34, name = L["Border thickness"],
+			desc = L["Applied all the way round the group and in the gaps between rectangles. Adjacent rectangles share one line, so the border reads the same thickness everywhere. The rectangles absorb any remainder, which is why two of them may differ by a pixel."],
+			min = 0, max = 8, step = 1,
+			get = function() return combo().borderSize end,
+			set = function(_, v) combo().borderSize = v; apply() end,
+		},
+	}
+
+	return { type = "group", order = 4.5, name = L["Combo points"], args = args }
+end
+
+--------------------------------------------------------------------------------
 -- Portrait (SPEC §4.7)
 --------------------------------------------------------------------------------
 
@@ -747,6 +840,14 @@ function Options.BuildUnit(def)
 		health = healthGroup(def),
 		power = powerGroup(def),
 		mana = manaGroup(def),
+		-- SPEC §FR-8.5: absent rather than present-and-broken. Combo points are
+		-- the player's resource against the player's target; on a party frame
+		-- the control would be meaningless.
+		combo = (function()
+			local group = comboGroup(def)
+			group.hidden = not (def.key == "player" or def.key == "target")
+			return group
+		end)(),
 		portrait = portraitGroup(def),
 		indicators = indicatorsGroup(def),
 		highlight = highlightGroup(def),

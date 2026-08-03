@@ -1,8 +1,23 @@
 # Plan 9 — Target Combo Points
 
-**Status:** Not started
+**Status:** Implemented on `Plan-9-target-combo-points`.
 **Created:** 2 August 2026
-**Branch:** `Plan-9-target-combo-points` (to be created from `main`)
+**Branch:** `Plan-9-target-combo-points`
+
+**Deviation from the plan as written:** the schema numbers moved. This plan was
+written against schema 11 and says "migration step `[11]`, schema goes to 12".
+Plan 8 part 2 landed first, collapsing schemas 1–11 into one declarative step
+and taking `SCHEMA_VERSION` to 12. So the buff-row change is **step `[12]`** and
+the schema goes to **13**. Nothing else about it changed: a profile arriving
+from any version ≤ 11 runs the collapsed step, lands on 12, and then takes step
+12 to 13, so old profiles get the raise too.
+
+One test was written differently from the plan's wording: the plan asks for
+`container:GetTop() > frame:GetTop()`, but the headless widget stub does not
+model resolved screen coordinates (`GetTop` is an unmodelled no-op). The
+assertion is made against the anchor instead — `BOTTOMLEFT` to `TOPLEFT` on
+`frame.content` with a positive `y` — which is what actually encodes "sits on
+the top edge and grows upward".
 
 ---
 

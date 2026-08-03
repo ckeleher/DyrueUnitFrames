@@ -24,8 +24,9 @@ local type, pairs, ipairs, next = type, pairs, ipairs, next
 
 -- Schemas 1-11 are folded into a single declarative step in Core/Migrate.lua;
 -- see the header there for why, and for the rule about when collapsing is safe.
--- 12 is the first version after that collapse.
-Defaults.SCHEMA_VERSION = 12
+-- 12 was the first version after that collapse; 13 raises the target's buff row
+-- off the combo bar added in Plan 9.
+Defaults.SCHEMA_VERSION = 13
 
 --------------------------------------------------------------------------------
 -- Table helpers
@@ -316,6 +317,40 @@ local function unit(overrides)
 			},
 		},
 
+		-- Plan 9 — combo points. Present on every unit for schema uniformity,
+		-- the same reasoning the comment on `mana` gives; only ever *enabled* on
+		-- the target, and only ever *offered* on the player and the target.
+		--
+		-- Sits outside the frame's bounds, above its top edge, so it takes no
+		-- slot in the bar stack and nothing inside the frame moves when it
+		-- appears. hideWhenEmpty is what keeps it invisible for the eight classes
+		-- that have no combo points at all, with no class table anywhere.
+		combo = {
+			enabled = false,           -- true on target; see buildUnits
+			anchorTo = "frame",        -- frame | health | power | mana | portrait
+			point = "BOTTOMLEFT",
+			relativePoint = "TOPLEFT",
+			x = 0,
+			y = 2,
+			widthMode = "inherit",     -- inherit | custom
+			width = 200,
+			height = 10,
+			borderSize = 1,
+			growth = "RIGHT",          -- RIGHT | LEFT
+			-- Full magenta is (1, 0, 1) and is punishing as a block of flat fill
+			-- -- the same problem health's brightness = 0.8 exists to solve. This
+			-- is magenta pulled back in both saturation and value: unmistakably
+			-- magenta, and it sits next to a class-colored health bar without
+			-- shouting. One color picker away from anything else.
+			color = color(0.72, 0.33, 0.63),
+			-- Five rectangles are the CAPACITY readout, so an unspent point is
+			-- drawn dark rather than blanked -- blanking it loses that.
+			emptyColor = color(0.12, 0.12, 0.12, 0.9),
+			borderColor = color(0, 0, 0, 1),
+			hideWhenEmpty = true,
+			alpha = 1,
+		},
+
 		highlight = {
 			targetEnabled = true,
 			targetColor = color(1, 1, 1, 0.9),
@@ -426,8 +461,13 @@ local function buildUnits()
 		width = 220, height = 48,
 		anchor = { to = "UIParent", point = "TOPLEFT", relativePoint = "CENTER", x = 180, y = -140 },
 		texts = targetTexts(),
+		combo = { enabled = true },
 		auras = {
-			buffs = auraGroup({ enabled = true, maxShown = 32, perRow = 8, rows = 4 }),
+			-- Raised clear of the combo bar. Both anchor to the frame's top edge,
+			-- and at the shared y = 2 they overlapped outright: the bar occupies
+			-- [top + 2, top + 12] and the first buff row [top + 2, top + 22].
+			-- 14 is the bar's height plus its two borders plus a 2px gap.
+			buffs = auraGroup({ enabled = true, maxShown = 32, perRow = 8, rows = 4, y = 14 }),
 			debuffs = auraGroup({
 				enabled = true, maxShown = 16, perRow = 8, rows = 2,
 				point = "TOPLEFT", relativePoint = "BOTTOMLEFT", y = -2,

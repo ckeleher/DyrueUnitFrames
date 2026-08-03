@@ -224,8 +224,31 @@ end
 -- those in. Steps are for renames, restructures and changed default values.
 --------------------------------------------------------------------------------
 
+--- 12 -> 13. Plan 9 put a combo-point bar on the target frame's top edge, where
+-- the buff row already was: both anchored BOTTOMLEFT to TOPLEFT at y = 2, so
+-- the bar's [top + 2, top + 12] sat inside the first buff row's
+-- [top + 2, top + 22]. hideWhenEmpty contains it -- the overlap only exists
+-- while points are up -- but that is exactly when the bar is being looked at,
+-- so the shipped default is fixed rather than left for the user to find.
+--
+-- Only the EXACT untouched default moves. Anyone who has positioned their
+-- target buffs keeps their position, which is the same rule steps 7-10 followed
+-- before the collapse.
+local function raiseTargetBuffs(profile)
+	local buffs = profile.units and profile.units.target
+		and profile.units.target.auras and profile.units.target.auras.buffs
+	if type(buffs) ~= "table" then return profile end
+
+	if buffs.anchorTo == "frame" and buffs.point == "BOTTOMLEFT"
+		and buffs.relativePoint == "TOPLEFT" and buffs.x == 0 and buffs.y == 2 then
+		buffs.y = 14
+	end
+
+	return profile
+end
+
 local steps = {
-	-- [12] = function(profile) ... return profile end,
+	[12] = raiseTargetBuffs,
 }
 
 Migrate.steps = steps

@@ -246,6 +246,7 @@ for _, e in ipairs({
 	"UNIT_DISPLAYPOWER", "UNIT_AURA", "UNIT_TARGET", "UNIT_PET", "UNIT_HAPPINESS",
 	"UNIT_PORTRAIT_UPDATE", "UNIT_MODEL_CHANGED", "UNIT_CLASSIFICATION_CHANGED",
 	"UNIT_NAME_UPDATE", "UNIT_LEVEL", "UNIT_CONNECTION", "UNIT_FACTION", "UNIT_FLAGS",
+	"UNIT_COMBO_POINTS",
 	"PLAYER_TARGET_CHANGED", "PLAYER_FOCUS_CHANGED", "PLAYER_FLAGS_CHANGED",
 	"PLAYER_ENTERING_WORLD", "PLAYER_LOGIN",
 	"UPDATE_SHAPESHIFT_FORM", "GROUP_ROSTER_UPDATE", "PARTY_LEADER_CHANGED",
@@ -359,6 +360,14 @@ function _G.UnitPowerMax(u, powerType)
 	end
 	return d.powerMax or 0
 end
+
+-- Combo points belong to the player and are held ON a unit, so the count lives
+-- on the TARGET's data (`combo`) rather than on the player's.
+function _G.GetComboPoints(owner, u)
+	local d = unit(u)
+	return (d and d.combo) or 0
+end
+_G.MAX_COMBO_POINTS = 5
 
 function _G.GetGuildInfo(u) local d = unit(u); return d and d.guild end
 function _G.GetRaidTargetIndex(u) local d = unit(u); return d and d.raidTarget end
