@@ -1,0 +1,44 @@
+## Interface: 11509, 20506
+## Title: Dyrue Unit Frames
+## Notes: Unit frames for Classic Era and TBC Anniversary.
+## Author: Clayton
+## Version: 1.0.0
+## SavedVariables: DyrueUnitFramesDB
+## X-Category: Unit Frames
+## X-License: MIT
+## IconTexture: Interface\Icons\Spell_Nature_HealingTouch
+
+Libs\Libs.xml
+
+Core\Locale.lua
+Core\Compat.lua
+Core\Errors.lua
+Core\Defaults.lua
+Core\Migrate.lua
+Core\CombatQueue.lua
+Core\Core.lua
+
+Systems\Colors.lua
+Systems\Tags.lua
+Systems\ColorRules.lua
+Systems\Anchoring.lua
+
+Elements\HealthBar.lua
+Elements\PowerBar.lua
+Elements\ShapeshiftMana.lua
+Elements\Portrait.lua
+Elements\Text.lua
+Elements\Auras.lua
+Elements\Highlight.lua
+
+Units\Registry.lua
+Units\Factory.lua
+Units\PartyGroup.lua
+Units\DerivedPoller.lua
+
+Config\Options.lua
+Config\Options_Layout.lua
+Config\Options_Text.lua
+Config\Options_Auras.lua
+Config\DragMode.lua
+Config\TestMode.lua

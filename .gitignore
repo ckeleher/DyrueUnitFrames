@@ -1,0 +1,20 @@
+# WoW saved variables, if anyone ever copies them in for migration testing
+*.lua.bak
+SavedVariables/
+
+# Editor / OS noise
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Local-only dev config (paths differ per machine)
+Tools/dev.local.ps1
+
+# Test harness environment (see Tests/README.md)
+venv/
+.venv/
+__pycache__/
+*.pyc

@@ -1,0 +1,9 @@
+## Interface: 11509, 20506
+## Title: Dyrue Unit Frames |cff808080Probe|r
+## Notes: Diagnostic addon for DyrueUnitFrames. Answers the questions in PLAN.md Phase 0 and is re-run on patch day.
+## Author: Clayton
+## Version: 1.0.0
+## SavedVariables: DyrueUnitFramesProbeDB
+## X-License: MIT
+
+Probe.lua
