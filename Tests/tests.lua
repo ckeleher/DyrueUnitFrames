@@ -664,7 +664,23 @@ local function testMigration()
 		v5.units.focus.texts[1].format, "[mana:perc]")
 	equal("migrate/nothing added where the bar is off", #v5.units.target.texts, 1)
 
-	-- Step 7 -> 8: target of target moves left of the target frame. Unlike the
+	-- Step 9 -> 10: indicators raised clear of the name text.
+	local v9 = {
+		schemaVersion = 9,
+		general = { blizzardFrames = "hide", blizzardParty = true },
+		units = {
+			player = { indicators = { point = "TOPLEFT", relativePoint = "TOPLEFT", x = 0, y = 0 } },
+			-- Already positioned by hand, so left alone.
+			target = { indicators = { point = "TOPLEFT", relativePoint = "TOPLEFT", x = 0, y = -30 } },
+			pet = { indicators = { point = "BOTTOMRIGHT", relativePoint = "BOTTOMRIGHT", x = 0, y = 0 } },
+		},
+	}
+	Migrate:Run(v9, {})
+	equal("migrate/indicators raised", v9.units.player.indicators.y, 10)
+	equal("migrate/a moved indicator row is left alone", v9.units.target.indicators.y, -30)
+	equal("migrate/a re-anchored indicator row is left alone", v9.units.pet.indicators.y, 0)
+
+	-- Step 7 -> 8: target of target moves right of the target frame. Unlike the
 	-- cosmetic steps, this one can tell an untouched default from a moved
 	-- frame, because drag mode writes to these same values.
 	local function v7(anchor)
@@ -1755,7 +1771,11 @@ local function testIndicators()
 		ns:UnitConfig("target").indicators.enabled, false)
 	equal("indicators/anchored to the health bar", cfg.anchorTo, "health")
 	equal("indicators/top left of it", cfg.point, "TOPLEFT")
-	equal("indicators/no offset, so it sits over the bar", cfg.x + cfg.y, 0)
+	equal("indicators/no horizontal offset", cfg.x, 0)
+	-- Raised clear of the name text, which on the shipped 48px frame has its
+	-- top edge at -13 while a 20px icon at y = 0 reaches -20.
+	check("indicators/raised clear of the name text", cfg.y - cfg.size >= -13,
+		"y=" .. cfg.y .. " reaches " .. (cfg.y - cfg.size))
 	equal("indicators/grows right", cfg.growth, "RIGHT")
 
 	local el = player.elements.indicators
