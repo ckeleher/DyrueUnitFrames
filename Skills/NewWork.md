@@ -47,6 +47,10 @@ rather than asking for the work itself to be done.
 9. **If there was only one request**, ask afterwards whether to start
    implementing it. With several, summarize and let the user pick.
 
+10. **A plan leaves `Plans/` when its work merges.** Moving it into
+    `Plans/Archive/` is the last action of the merge, so the top level stays a
+    list of what is still open. See `Skills/ArchivePlan.md`.
+
 ---
 
 ## Git procedure
