@@ -327,7 +327,7 @@ by advancing time and firing events.
 | Two sweep lines on one bar are unreadable | Different default colour and a documented reason; both are user-configurable |
 | Diverging from Plan 2 into a second module and a fifth ticker | One module, one ticker, two providers — argued above and asserted by a test |
 | Plan 2 lands later and reshapes the module | This plan defines the provider contract, so Plan 2 becomes an added table entry either way |
-| 5s window ending before regen actually resumes reads as a bug | Deliberate, per the user's choice; Plan 2's tick line covers the remainder. Re-check by eye once both are in |
+| 5s window ending before regen actually resumes reads as a bug | Deliberate, per the user's choice; Plan 2's tick line covers the remainder. **Checked in game 3 August 2026 and accepted — reads as correct, no follow-up** |
 
 ---
 
@@ -400,7 +400,7 @@ Three details that matter:
   themselves; this is an interaction between two of them, so it belongs at the
   level that can see both.
 
-**Still to check by eye in game**, per this plan's own risk table: that the line
-landing on the far edge while regen is still up to one tick away reads as
-correct rather than as a bug, with Plan 2's tick line on the same bar covering
-the remainder.
+**Checked by eye in game, 3 August 2026, and accepted.** The open question from
+this plan's risk table — whether the line landing on the far edge while regen is
+still up to one tick away would read as a bug — is closed. It reads as correct.
+The 5s window remains the right thing to measure, and no follow-up is needed.
