@@ -67,13 +67,16 @@ It does not apply. Blizzard's 12.0.7 API notes state explicitly that secret-valu
 | Cast bars for units other than the player | Classic clients do not broadcast `UNIT_SPELLCAST_*` for other units; only guesswork is possible |
 | Arena and battleground frames | Meaningful only for a use case not stated; deferrable |
 | Nameplates | Separate problem domain; Blizzard's new nameplate options cover much of it |
-| Combat text, threat meters, incoming-heal prediction | Out of domain |
+| Combat text, threat meters | Out of domain |
+| ~~Incoming-heal prediction~~ | **Amended by Plan 11 (3 August 2026) — built.** It was filed here with the other-addon-domain exclusions, and it belongs with the cannot-be-supported ones: it is a property of a health bar rather than a separate display, and the only thing making it look foreign was the absent API. Derived instead, at the cost of one new module and no new dependency, ticker or Blizzard frame contact. See §2.3 and `Documents/COMPAT_FINDINGS.md` |
 | Retail (Mainline) support | Would require a Secret Values–safe parallel implementation; roughly doubles the work |
 | Lua-scriptable tags | Deliberate: declarative rules instead (see §4.3.3) |
 
 ### 2.3 Deferred to v1.x (designed for, not built)
 
 Player cast bar, profile import/export strings, aura filter presets, further derived units (`pettarget`, `targettargettarget`).
+
+**Absorb shield indication** (Plan 12). Split from Plan 11 deliberately: heal prediction is a number the game will shortly make true, whereas nothing on these clients ever reports how much of a shield is left, so the accuracy ceiling and the failure mode are both worse. The color slot and the segment loop it needs are already built.
 
 ---
 

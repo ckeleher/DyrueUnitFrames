@@ -4248,6 +4248,284 @@ local function testNoGlobalLeaks()
 end
 
 --------------------------------------------------------------------------------
+-- Heal prediction (Plan 11)
+--
+-- First coverage in this suite of COMBAT_LOG_EVENT_UNFILTERED and the
+-- UNIT_SPELLCAST_* family, which is most of why the stub grew for this.
+--------------------------------------------------------------------------------
+
+local function testHealPrediction()
+	local HealPrediction = ns.HealPrediction
+	local def = ns.elements.healPrediction
+	local player = ns.frames.player
+	local cfg = ns:UnitConfig("player").healPrediction
+	local healthCfg = ns:UnitConfig("player").health
+
+	local savedTime = stub.time
+	local tickersBefore = stub.activeTickers()
+
+	----------------------------------------------------------------------------
+	-- Defaults
+	----------------------------------------------------------------------------
+
+	equal("heal/ships enabled", cfg.enabled, true)
+	equal("heal/separate colors ship on", cfg.separateColors, true)
+	equal("heal/overflow ships on", cfg.overflow, true)
+	equal("heal/overflow ships at 10%", cfg.overflowAmount, 0.10)
+
+	-- Same reasoning as the sweep lines: the swatch has no alpha channel, so
+	-- opacity cannot live in it without the color picker resetting it.
+	equal("heal/opacity is its own setting", cfg.alpha, 0.55)
+	equal("heal/color swatch is fully opaque", cfg.directColor.a, 1)
+
+	check("heal/the two categories do not ship the same color",
+		not (cfg.directColor.r == cfg.hotColor.r
+			and cfg.directColor.g == cfg.hotColor.g
+			and cfg.directColor.b == cfg.hotColor.b))
+
+	-- Plan 11 adds keys and changes no stored value, so EnsureProfile fills it
+	-- and there is nothing to migrate. Pinned, because a later bump made for
+	-- some other reason should not be able to claim this one needed it.
+	--
+	-- The number is whatever main is at, not a version this plan owns. It was
+	-- 13 when the branch was written and moved to 15 underneath it (Plans 13
+	-- and 14); re-pinned on rebase after checking this branch's Defaults.lua
+	-- still matches main's exactly. Re-pin the same way if it moves again --
+	-- what the assertion guards is that Plan 11 adds no bump of its own.
+	equal("heal/added keys without a schema bump", ns.Defaults.SCHEMA_VERSION, 15)
+
+	equal("heal/every unit carries the block",
+		ns:UnitConfig("targettarget").healPrediction ~= nil, true)
+
+	----------------------------------------------------------------------------
+	-- Learning
+	--
+	-- The first assertion here is the most important one in the file. Learning
+	-- `amount` alone would teach 100 for a heal that was really a 500-point
+	-- heal landing on a nearly-full target -- and it would do it most reliably
+	-- on exactly the targets a healer is watching.
+	----------------------------------------------------------------------------
+
+	HealPrediction:Reset()
+	HealPrediction:SetActive(player, true)
+
+	local store = HealPrediction:Store()
+
+	equal("heal/identifies the player on subscribe",
+		HealPrediction.state.playerGUID, "player-1")
+
+	stub.healLine("SPELL_HEAL", "player-1", "player-1", 5000, 100, 400, false)
+	equal("heal/learns the size of the heal, not what landed", store.direct[5000], 500)
+
+	stub.healLine("SPELL_HEAL", "player-1", "player-1", 6000, 900, 0, true)
+	equal("heal/crits are discarded rather than scaled", store.direct[6000], nil)
+
+	stub.healLine("SPELL_HEAL", "player-2", "player-1", 7000, 900, 0, false)
+	equal("heal/another healer's heal teaches nothing", store.direct[7000], nil)
+
+	stub.healLine("SPELL_HEAL", "player-1", "player-1", 5000, 1000, 0, false)
+	near("heal/a second sample blends rather than replaces",
+		store.direct[5000], 500 * 0.7 + 1000 * 0.3)
+
+	----------------------------------------------------------------------------
+	-- Prediction lifecycle
+	----------------------------------------------------------------------------
+
+	stub.time = 100
+	stub.casting = { endTime = 102 }
+
+	-- SENT is the only event carrying the target, and it carries a NAME.
+	stub.fire("UNIT_SPELLCAST_SENT", "player", "Dyrue", "cast-1", 5000)
+	stub.fire("UNIT_SPELLCAST_START", "player", "cast-1", 5000)
+
+	local direct = HealPrediction:IncomingHeal("player")
+	near("heal/a started cast predicts its learned amount", direct, 650)
+
+	local elsewhere = HealPrediction:IncomingHeal("party1")
+	equal("heal/and predicts nothing for anyone else", elsewhere, 0)
+
+	stub.fire("UNIT_SPELLCAST_SUCCEEDED", "player", "cast-1", 5000)
+	equal("heal/a completed cast stops predicting",
+		HealPrediction:IncomingHeal("player"), 0)
+
+	stub.fire("UNIT_SPELLCAST_SENT", "player", "Dyrue", "cast-2", 5000)
+	stub.fire("UNIT_SPELLCAST_START", "player", "cast-2", 5000)
+	stub.fire("UNIT_SPELLCAST_INTERRUPTED", "player", "cast-2", 5000)
+	equal("heal/an interrupted cast stops predicting",
+		HealPrediction:IncomingHeal("player"), 0)
+
+	-- The documented first-cast behavior, asserted so it stays deliberate.
+	stub.fire("UNIT_SPELLCAST_SENT", "player", "Dyrue", "cast-3", 9999)
+	stub.fire("UNIT_SPELLCAST_START", "player", "cast-3", 9999)
+	equal("heal/an unlearned spell predicts nothing",
+		HealPrediction:IncomingHeal("player"), 0)
+
+	-- Lazy expiry: this is what pins the no-ticker design. Nothing has run
+	-- between the cast starting and the clock moving past its end.
+	stub.fire("UNIT_SPELLCAST_SENT", "player", "Dyrue", "cast-4", 5000)
+	stub.fire("UNIT_SPELLCAST_START", "player", "cast-4", 5000)
+	near("heal/predicting mid-cast", HealPrediction:IncomingHeal("player"), 650)
+	stub.time = 104
+	equal("heal/a stale prediction expires on read",
+		HealPrediction:IncomingHeal("player"), 0)
+
+	----------------------------------------------------------------------------
+	-- HoTs
+	----------------------------------------------------------------------------
+
+	stub.time = 200
+	stub.healLine("SPELL_PERIODIC_HEAL", "player-1", "player-1", 8000, 60, 40, false)
+	equal("heal/periodic amounts learn into their own store", store.periodic[8000], 100)
+	equal("heal/and not into the direct one", store.direct[8000], nil)
+
+	stub.time = 203
+	stub.healLine("SPELL_PERIODIC_HEAL", "player-1", "player-1", 8000, 60, 40, false)
+	near("heal/tick interval is observed, not assumed", store.interval[8000], 3)
+
+	-- Two HoTs of the same spell on two people interleave, and the gap between
+	-- one target's tick and another's is not a tick interval at all.
+	stub.time = 203.5
+	stub.healLine("SPELL_PERIODIC_HEAL", "player-1", "player-2", 8000, 60, 40, false)
+	near("heal/a tick on another target is not an interval sample",
+		store.interval[8000], 3)
+
+	local savedAuras = stub.units.player.auras
+	stub.units.player.auras = {
+		HELPFUL = {
+			{ name = "Rejuvenation", icon = 1, applications = 0, duration = 12,
+			  expirationTime = 219, spellId = 8000, isHelpful = true,
+			  isFromPlayerOrPlayerPet = true },
+		},
+	}
+
+	stub.time = 210
+	local _, hot = HealPrediction:IncomingHeal("player")
+	equal("heal/a HoT predicts its remaining ticks", hot, 300)
+
+	-- The remainder shrinks with the clock alone, which is the property that
+	-- makes a ticker unnecessary: between ticks the number does not move.
+	stub.time = 213
+	local _, shrunk = HealPrediction:IncomingHeal("player")
+	equal("heal/and shrinks as ticks land", shrunk, 200)
+
+	stub.units.player.auras.HELPFUL[1].isFromPlayerOrPlayerPet = false
+	local _, notMine = HealPrediction:IncomingHeal("player")
+	equal("heal/somebody else's HoT is not predicted", notMine, 0)
+	stub.units.player.auras.HELPFUL[1].isFromPlayerOrPlayerPet = true
+
+	----------------------------------------------------------------------------
+	-- Geometry
+	----------------------------------------------------------------------------
+
+	local el = player.elements.healPrediction
+	check("heal/element built on the player frame", el ~= nil and el.direct ~= nil)
+
+	local bar = el.bar
+	bar:SetSize(200, 36)
+
+	-- Overflow off: full health leaves nowhere to draw.
+	cfg.overflow = false
+	def.Place(player, el, cfg, 5000, 5000, 2000, 0)
+	equal("heal/with overflow off nothing draws past the end",
+		el.direct:IsShown(), false)
+
+	-- Overflow on: exactly the configured fraction of the bar, and no more.
+	-- `near` rather than `equal` throughout the overflow assertions: the limit is
+	-- width * (1 + amount), and 200 * 1.1 is not exactly 220 in a double. The
+	-- implementation deliberately does not round -- sub-pixel widths are normal
+	-- and the renderer resolves them -- so the tolerance belongs here.
+	cfg.overflow = true
+	def.Place(player, el, cfg, 5000, 5000, 2000, 0)
+	near("heal/overflow clips at the configured amount", el.direct:GetWidth(), 20)
+
+	-- Half health, a heal worth a quarter of max health.
+	def.Place(player, el, cfg, 2500, 5000, 1250, 0)
+	equal("heal/segment width tracks the predicted amount", el.direct:GetWidth(), 50)
+	local point, _, _, x = el.direct:GetPoint(1)
+	equal("heal/segment starts where the fill ends", x, 100)
+	equal("heal/and is anchored from the left", point, "TOPLEFT")
+
+	-- The two segments abut, direct first.
+	def.Place(player, el, cfg, 2500, 5000, 500, 500)
+	local _, _, _, hotX = el.hot:GetPoint(1)
+	equal("heal/the HoT segment follows the direct one", hotX, 120)
+
+	-- A clipped first segment must not leave room for the second: the cursor
+	-- advances by the full width, not the drawn width.
+	def.Place(player, el, cfg, 5000, 5000, 5000, 5000)
+	near("heal/an overrun direct segment clips at the limit",
+		el.direct:GetWidth(), 20)
+	equal("heal/and leaves no room for the HoT segment", el.hot:IsShown(), false)
+
+	-- Inverse fill mirrors both segments.
+	healthCfg.inverseFill = true
+	def.Place(player, el, cfg, 2500, 5000, 1250, 0)
+	local ipoint, _, _, ix = el.direct:GetPoint(1)
+	equal("heal/inverse fill anchors from the right", ipoint, "TOPRIGHT")
+	equal("heal/inverse fill mirrors the offset", ix, -100)
+	healthCfg.inverseFill = false
+
+	----------------------------------------------------------------------------
+	-- Gating
+	----------------------------------------------------------------------------
+
+	stub.time = 100
+	stub.fire("UNIT_SPELLCAST_SENT", "player", "Onyxia", "cast-5", 5000)
+	stub.fire("UNIT_SPELLCAST_START", "player", "cast-5", 5000)
+
+	-- SPEC §FR-4.7. The system knows the number; the element refuses to draw it,
+	-- because a boss reports health on a 0-100 scale and there is no max health
+	-- to turn an absolute heal into a fraction of.
+	local targetFrame = ns.frames.target
+	local targetEl = targetFrame.elements.healPrediction
+	check("heal/the amount is known for a percent-health unit",
+		HealPrediction:IncomingHeal("target") > 0)
+	targetFrame:UpdateElement("healPrediction")
+	equal("heal/but nothing is drawn on one", targetEl.direct:IsShown(), false)
+
+	stub.fire("UNIT_SPELLCAST_SENT", "player", "Dyrue", "cast-6", 5000)
+	stub.fire("UNIT_SPELLCAST_START", "player", "cast-6", 5000)
+	player:UpdateElement("healPrediction")
+	equal("heal/draws on a unit with real health values", el.direct:IsShown(), true)
+
+	stub.units.player.dead = true
+	player:UpdateElement("healPrediction")
+	equal("heal/a dead unit draws nothing", el.direct:IsShown(), false)
+	stub.units.player.dead = false
+
+	equal("heal/element is off where the health bar is off",
+		def.IsEnabled({ cfg = { health = { enabled = false } } }, cfg), false)
+
+	----------------------------------------------------------------------------
+	-- Idle to zero (SPEC §6)
+	--
+	-- COMBAT_LOG_EVENT_UNFILTERED cannot be unit-filtered and is the noisiest
+	-- event in the game. "Not subscribed when nothing wants it" is the claim the
+	-- performance budget rests on, so it is asserted rather than described.
+	----------------------------------------------------------------------------
+
+	check("heal/listening while a frame wants it", HealPrediction:IsListening())
+
+	for _, frame in pairs(ns.frames) do
+		HealPrediction:SetActive(frame, false)
+	end
+	equal("heal/unsubscribes when nothing wants it", HealPrediction:IsListening(), false)
+
+	-- Not just the flag: the registration is really gone.
+	stub.healLine("SPELL_HEAL", "player-1", "player-1", 12345, 700, 0, false)
+	equal("heal/and stops learning once unsubscribed", store.direct[12345], nil)
+
+	equal("heal/created no ticker", stub.activeTickers(), tickersBefore)
+
+	----------------------------------------------------------------------------
+
+	stub.units.player.auras = savedAuras
+	stub.casting = nil
+	stub.time = savedTime
+	ns:RefreshAll()
+end
+
+--------------------------------------------------------------------------------
 -- Runner
 --------------------------------------------------------------------------------
 
@@ -4290,6 +4568,7 @@ local suites = {
 	{ "combo-points", testComboPoints },
 	{ "bar-sweep", testBarSweep },
 	{ "highlight", testHighlight },
+	{ "heal-prediction", testHealPrediction },
 	{ "global-leaks", testNoGlobalLeaks },
 }
 

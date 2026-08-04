@@ -264,6 +264,33 @@ local function unit(overrides)
 			tapColor = color(0.6, 0.6, 0.6),
 		},
 
+		-- Plan 11. Its own top-level key rather than a block nested under
+		-- `health`, because it is a registered element and the element registry
+		-- keys config by configKey. The options UI puts it inside the Health tab
+		-- regardless -- where a setting is stored and where it is edited are
+		-- separate questions.
+		--
+		-- Ships ON, unlike the sweep lines below. That is what was asked for,
+		-- and it is defensible on its own: a prediction is only useful in the
+		-- second before a heal lands, which is not a moment anyone can reach the
+		-- options panel in.
+		healPrediction = {
+			enabled = true,
+			separateColors = true,
+			-- Distinct from the health fill in hue rather than in brightness, so
+			-- it still reads as "more health arriving" against a green bar, a
+			-- class-colored bar or a gradient.
+			directColor = color(0.1, 0.85, 0.4),
+			hotColor = color(0.3, 0.6, 1),
+			-- Opacity is its own setting rather than the color's alpha channel,
+			-- for the reason recorded on sweep() above: the swatch ships without
+			-- an alpha channel, so storing it there means touching the color
+			-- silently resets it to opaque.
+			alpha = 0.55,
+			overflow = true,
+			overflowAmount = 0.10,
+		},
+
 		power = {
 			enabled = true,
 			height = 10,
@@ -682,6 +709,26 @@ end
 
 function Defaults:EnsureGlobal(global)
 	return ensure(global, self:BuildGlobal())
+end
+
+--- Per-character scope (Plan 11).
+--
+-- Separate from `global` because everything in it is a function of THIS
+-- character's gear and talents, and separate from `profile` because it is not a
+-- setting -- nobody chose any of it, and sharing a profile between two
+-- characters must not share one's heal sizes with the other.
+--
+-- Everything here is derived data with no user meaning. It is safe to discard
+-- at any time: the cost of a wipe is one cast per spell to relearn, which is
+-- why there is no migration for it and never will be.
+function Defaults:BuildChar()
+	return {
+		heals = { direct = {}, periodic = {}, interval = {} },
+	}
+end
+
+function Defaults:EnsureChar(char)
+	return ensure(char, self:BuildChar())
 end
 
 --- Reset one unit to its shipped defaults, in place.

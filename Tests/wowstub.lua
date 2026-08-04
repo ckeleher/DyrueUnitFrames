@@ -312,10 +312,15 @@ for _, e in ipairs({
 	"PLAYER_ENTERING_WORLD", "PLAYER_LOGIN",
 	"UPDATE_SHAPESHIFT_FORM", "GROUP_ROSTER_UPDATE", "PARTY_LEADER_CHANGED",
 	"RAID_TARGET_UPDATE", "PLAYER_REGEN_ENABLED", "PLAYER_REGEN_DISABLED",
-	-- Not used yet. Present for the `spellcast` trigger sketched in
-	-- Systems/BarSweep.lua's TRIGGERS table, so adding it does not also mean
-	-- editing the stub.
-	"UNIT_SPELLCAST_SUCCEEDED",
+	-- Plan 11. The heal prediction listener subscribes to all of these against
+	-- "player", plus the combat log below, which is where every amount it
+	-- predicts is learned from.
+	"UNIT_SPELLCAST_SENT", "UNIT_SPELLCAST_START", "UNIT_SPELLCAST_STOP",
+	"UNIT_SPELLCAST_SUCCEEDED", "UNIT_SPELLCAST_INTERRUPTED", "UNIT_SPELLCAST_FAILED",
+	"UNIT_SPELLCAST_DELAYED",
+	"UNIT_SPELLCAST_CHANNEL_START", "UNIT_SPELLCAST_CHANNEL_UPDATE",
+	"UNIT_SPELLCAST_CHANNEL_STOP",
+	"COMBAT_LOG_EVENT_UNFILTERED",
 }) do
 	stub.validEvents[e] = true
 end
@@ -349,6 +354,58 @@ function stub.fire(event, ...)
 			end
 		end
 	end
+end
+
+--------------------------------------------------------------------------------
+-- Combat log and casting (Plan 11)
+--
+-- CombatLogGetCurrentEventInfo reads whatever the last fireCombatLog call put
+-- in place, which is exactly the contract the real one has: the payload belongs
+-- to the event currently being dispatched and is not available outside it.
+--------------------------------------------------------------------------------
+
+stub.combatLog = nil
+
+function _G.CombatLogGetCurrentEventInfo()
+	local line = stub.combatLog
+	if not line then return nil end
+	return unpack(line, 1, line.n or #line)
+end
+
+--- Fire one combat-log line. Arguments are positional exactly as the game
+-- delivers them, so a test that gets the order wrong fails the same way the
+-- addon would.
+function stub.fireCombatLog(...)
+	stub.combatLog = { n = select("#", ...), ... }
+	stub.fire("COMBAT_LOG_EVENT_UNFILTERED")
+	stub.combatLog = nil
+end
+
+--- Build a SPELL_HEAL / SPELL_PERIODIC_HEAL line with the eleven base fields in
+-- front of it, so tests express the interesting half and not the boilerplate.
+function stub.healLine(subevent, sourceGUID, destGUID, spellID, amount, overhealing, critical)
+	return stub.fireCombatLog(
+		stub.time, subevent, false,
+		sourceGUID, "Source", 0, 0,
+		destGUID, "Dest", 0, 0,
+		spellID, "Spell", 2,
+		amount, overhealing, 0, critical and true or false)
+end
+
+-- stub.casting = { endTime = <seconds> } drives both of these; the game reports
+-- milliseconds, and dividing by 1000 is a real step in Compat that a stub
+-- returning seconds would hide.
+stub.casting = nil
+stub.channeling = nil
+
+function _G.UnitCastingInfo(u)
+	if u ~= "player" or not stub.casting then return nil end
+	return "Cast", "Cast", nil, stub.casting.startTime or 0, (stub.casting.endTime or 0) * 1000
+end
+
+function _G.UnitChannelInfo(u)
+	if u ~= "player" or not stub.channeling then return nil end
+	return "Channel", "Channel", nil, stub.channeling.startTime or 0, (stub.channeling.endTime or 0) * 1000
 end
 
 --------------------------------------------------------------------------------

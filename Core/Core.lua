@@ -295,6 +295,12 @@ function addon:OnInitialize()
 	-- there and has to happen before anything reads them.
 	Defaults:EnsureProfile(ns.db.profile)
 
+	-- Plan 11's learned heal sizes. Per character, and deliberately outside the
+	-- profile: it is observed data rather than a setting, so copying a profile
+	-- to an alt must not carry one character's numbers onto another's gear.
+	Defaults:EnsureChar(ns.db.char)
+	ns.HealPrediction:BindStore(ns.db.char.heals)
+
 	Errors.debug = ns.db.global.debug and true or false
 	Errors.safeMode = ns.db.global.safeMode and true or false
 	Errors.threshold = ns.db.profile.general.errorThreshold or 5
@@ -607,6 +613,12 @@ function ns:ProfileReport()
 		ns.BarSweep:TickObserved() and L["observed"] or L["assumed"]))
 	Errors:Print(string.format(L["  five second rule: %s"],
 		ns.BarSweep:IsFiveSecondRuleRunning() and L["running"] or L["idle"]))
+
+	-- Plan 11. Not a ticker -- it is a subscription, and the expensive one:
+	-- COMBAT_LOG_EVENT_UNFILTERED cannot be unit-filtered and fires thousands of
+	-- times a minute in a raid. "Not listening" with the feature off is the
+	-- claim §6's budget rests on, so it is reported rather than assumed.
+	Errors:Print(string.format(L["Heal prediction: %s"], ns.HealPrediction:Describe()))
 
 	Errors:Print(string.format(L["Queued layout changes: %d"], ns.CombatQueue:PendingCount()))
 end
