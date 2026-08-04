@@ -2513,6 +2513,448 @@ local function testPortrait()
 end
 
 --------------------------------------------------------------------------------
+-- 27. Combo points (Plan 9)
+--------------------------------------------------------------------------------
+
+--- The unit an event's registration is filtered against on `frame`.
+--
+-- There was no test anywhere asserting WHICH unit an element's events are
+-- registered against, and that is a silent failure mode: a wrong unit produces
+-- no error and no warning, just a widget that never updates. Written generally
+-- so it covers the UNIT_TARGET/owner handling too.
+--
+-- @return string|nil unit, or nil for an unfiltered registration
+-- @return boolean whether the event is registered at all
+local function eventFilter(frame, event)
+	local reg = frame.__events[event]
+	if reg == nil then return nil, false end
+	if type(reg) ~= "table" then return nil, true end
+	return reg[1], true
+end
+
+--- Is `elementName` on the dispatch list for `event`?
+--
+-- Deliberately not a count: which elements happen to want a shared event is
+-- unrelated wiring that moves (the target frame's power TEXT wants
+-- UNIT_POWER_UPDATE too), and a count would break every time it did.
+local function dispatchesTo(frame, event, elementName)
+	local list = frame.eventMap[event]
+	if not list then return false end
+	for i = 1, #list do
+		if list[i].name == elementName then return true end
+	end
+	return false
+end
+
+--- Measured borders and pip widths, read back from the actual placements
+-- rather than recomputed. `gaps` is outer-left, each gap between pips, then
+-- outer-right: one more entry than there are pips.
+local function comboGeometry(el)
+	local gaps, widths = {}, {}
+	local previousRight = 0
+	for i = 1, #el.pips do
+		local _, _, _, x = el.pips[i]:GetPoint(1)
+		widths[i] = el.pips[i]:GetWidth()
+		gaps[#gaps + 1] = x - previousRight
+		previousRight = x + widths[i]
+	end
+	gaps[#gaps + 1] = el.container:GetWidth() - previousRight
+	return gaps, widths
+end
+
+local function pipIsFilled(el, index, cfg)
+	local c = el.pips[index].__color
+	return c ~= nil and c[1] == cfg.color.r and c[2] == cfg.color.g and c[3] == cfg.color.b
+end
+
+local function pipIsEmpty(el, index, cfg)
+	local c = el.pips[index].__color
+	return c ~= nil and c[1] == cfg.emptyColor.r and c[2] == cfg.emptyColor.g
+		and c[3] == cfg.emptyColor.b
+end
+
+--- A profile at the schema the combo bar was added on top of, carrying the
+-- target buff anchor exactly as it shipped there.
+local function schema12Profile()
+	local function buffs(y)
+		return { enabled = true, anchorTo = "frame", point = "BOTTOMLEFT",
+			relativePoint = "TOPLEFT", x = 0, y = y, growthY = "UP" }
+	end
+	return {
+		schemaVersion = 12,
+		general = {},
+		units = {
+			target = { auras = { buffs = buffs(2) } },
+			player = { auras = { buffs = buffs(2) } },
+		},
+	}
+end
+
+local function testComboPoints()
+	local Compat = ns.Compat
+	local target = ns.frames.target
+	local cfg = ns:UnitConfig("target").combo
+	local opts = ns.Options.table.args.units.args.target.args.combo.args
+
+	----------------------------------------------------------------------------
+	-- Reading the value, and the trap underneath it
+	----------------------------------------------------------------------------
+
+	equal("combo/max read from Compat, not written as a 5", Compat.MAX_COMBO_POINTS, 5)
+	check("combo/GetComboPoints is the live path", Compat.hasGetComboPoints)
+	check("combo/capabilities reported by /duf compat",
+		Compat.Describe().maxComboPoints == 5
+		and Compat.Describe().hasGetComboPoints == true
+		and Compat.Describe().hasComboPointEnum == false)
+
+	stub.units.target.combo = 4
+	equal("combo/points are read against the target", Compat.GetComboPoints("target"), 4)
+
+	-- THE TRAP. Power type 4 is HAPPINESS in the numbering Compat carries; it
+	-- only means combo points under the modern Enum. With neither API present
+	-- the answer must be zero rather than a pet's happiness.
+	local realGetComboPoints = _G.GetComboPoints
+	stub.units.player.powers[4] = 3
+	_G.GetComboPoints = nil
+	equal("combo/no API reads zero, never HAPPINESS", Compat.GetComboPoints("target"), 0)
+
+	-- With a real Enum entry, that path works and reads the right index.
+	_G.Enum.PowerType.ComboPoints = 14
+	stub.units.player.powers[14] = 5
+	equal("combo/enum fallback reads its own power index",
+		Compat.GetComboPoints("target"), 5)
+
+	_G.Enum.PowerType.ComboPoints = nil
+	_G.GetComboPoints = realGetComboPoints
+	stub.units.player.powers[4] = nil
+	stub.units.player.powers[14] = nil
+
+	----------------------------------------------------------------------------
+	-- Defaults and options
+	----------------------------------------------------------------------------
+
+	equal("combo/on for the target by default", cfg.enabled, true)
+	equal("combo/off on the player", ns:UnitConfig("player").combo.enabled, false)
+	equal("combo/off on the pet", ns:UnitConfig("pet").combo.enabled, false)
+	equal("combo/off on a party frame", ns:UnitConfig("party1").combo.enabled, false)
+
+	-- Dull magenta, not the full (1, 0, 1), which is punishing as flat fill.
+	check("combo/default color is not full magenta",
+		not (cfg.color.r == 1 and cfg.color.g == 0 and cfg.color.b == 1))
+	check("combo/default color is recognizably magenta",
+		cfg.color.r > cfg.color.g and cfg.color.b > cfg.color.g,
+		string.format("%s/%s/%s", cfg.color.r, cfg.color.g, cfg.color.b))
+
+	local units = ns.Options.table.args.units.args
+	check("combo/options offered on the target", units.target.args.combo ~= nil)
+	check("combo/options offered on the player", units.player.args.combo ~= nil)
+	equal("combo/options not hidden on the target", units.target.args.combo.hidden, false)
+	equal("combo/options hidden on a party frame", units.party1.args.combo.hidden, true)
+	equal("combo/options hidden on target of target",
+		units.targettarget.args.combo.hidden, true)
+
+	----------------------------------------------------------------------------
+	-- Geometry
+	----------------------------------------------------------------------------
+
+	local el = target.elements.combo
+	check("combo/element built", el ~= nil)
+	if not el then return end
+
+	equal("combo/five rectangles", #el.pips, Compat.MAX_COMBO_POINTS)
+
+	-- Outside the frame's bounds, growing up off the top edge: it takes no slot
+	-- in the bar stack and nothing inside the frame moves when it appears.
+	stub.units.target.combo = 1
+	target:FullUpdate()
+	local point, relative, relativePoint, _, y = el.container:GetPoint(1)
+	equal("combo/bottom edge sits on the frame's top edge", point, "BOTTOMLEFT")
+	equal("combo/anchored to the frame's top", relativePoint, "TOPLEFT")
+	equal("combo/anchored to the frame itself", relative, target.content)
+	check("combo/grows upward from that edge", y > 0, tostring(y))
+	equal("combo/takes no slot in the bar stack",
+		target.elements.health.bar:GetHeight(),
+		ns:UnitConfig("target").height - ns:UnitConfig("target").power.height)
+
+	-- 200 divides by five cleanly once the six borders are taken out.
+	opts.widthMode.set(nil, "custom")
+	opts.width.set(nil, 200)
+	opts.borderSize.set(nil, 1)
+
+	local gaps, widths = comboGeometry(el)
+	local total = 0
+	for i = 1, #widths do total = total + widths[i] end
+	equal("combo/pip widths fill the bar minus its borders", total, 200 - 6)
+	equal("combo/six borders for five pips", #gaps, 6)
+	local uniform, worst = true, nil
+	for i = 1, #gaps do
+		if gaps[i] ~= 1 then uniform = false; worst = gaps[i] end
+	end
+	check("combo/every border is exactly the requested thickness", uniform,
+		"found a gap of " .. tostring(worst))
+
+	-- A width that does NOT divide by five: the borders are the quantity held
+	-- constant and the pips absorb the remainder, never the other way round.
+	opts.width.set(nil, 202)
+	gaps, widths = comboGeometry(el)
+	uniform, worst = true, nil
+	for i = 1, #gaps do
+		if gaps[i] ~= 1 then uniform = false; worst = gaps[i] end
+	end
+	check("combo/borders stay exact on an indivisible width", uniform,
+		"found a gap of " .. tostring(worst))
+	local smallest, largest = widths[1], widths[1]
+	total = 0
+	for i = 1, #widths do
+		if widths[i] < smallest then smallest = widths[i] end
+		if widths[i] > largest then largest = widths[i] end
+		total = total + widths[i]
+	end
+	check("combo/pips differ by at most one", largest - smallest <= 1,
+		tostring(smallest) .. ".." .. tostring(largest))
+	equal("combo/and still fill the bar", total, 202 - 6)
+
+	-- A thicker border still leaves every gap exact.
+	opts.borderSize.set(nil, 3)
+	gaps = comboGeometry(el)
+	uniform = true
+	for i = 1, #gaps do
+		if gaps[i] ~= 3 then uniform = false end
+	end
+	check("combo/a thicker border is exact too", uniform)
+	equal("combo/pip height clears both borders",
+		el.pips[1]:GetHeight(), cfg.height - 6)
+	opts.borderSize.set(nil, 1)
+
+	equal("combo/custom width is used", el.container:GetWidth(), 202)
+
+	-- Inherited width tracks the frame through ApplyConfig.
+	opts.widthMode.set(nil, "inherit")
+	equal("combo/inherited width matches the frame",
+		el.container:GetWidth(), ns:UnitConfig("target").width)
+	local layoutOpts = units.target.args.layout.args.size.args
+	local originalWidth = ns:UnitConfig("target").width
+	layoutOpts.width.set(nil, 260)
+	equal("combo/inherited width follows a frame resize", el.container:GetWidth(), 260)
+	layoutOpts.width.set(nil, originalWidth)
+
+	----------------------------------------------------------------------------
+	-- Value
+	----------------------------------------------------------------------------
+
+	stub.units.target.combo = 0
+	target:FullUpdate()
+	check("combo/hidden at zero points", not el.container:IsShown())
+
+	opts.hideWhenEmpty.set(nil, false)
+	target:FullUpdate()
+	check("combo/shown at zero when asked to be", el.container:IsShown())
+	local allEmpty = true
+	for i = 1, #el.pips do
+		if not pipIsEmpty(el, i, cfg) then allEmpty = false end
+	end
+	check("combo/all five read as capacity at zero", allEmpty)
+	opts.hideWhenEmpty.set(nil, true)
+
+	stub.units.target.combo = 3
+	target:FullUpdate()
+	check("combo/three points fill the first three",
+		pipIsFilled(el, 1, cfg) and pipIsFilled(el, 2, cfg) and pipIsFilled(el, 3, cfg))
+	check("combo/and leave the last two empty",
+		pipIsEmpty(el, 4, cfg) and pipIsEmpty(el, 5, cfg))
+
+	opts.growth.set(nil, "LEFT")
+	target:FullUpdate()
+	check("combo/growing left fills from the right-hand pip",
+		pipIsFilled(el, 5, cfg) and pipIsFilled(el, 4, cfg) and pipIsFilled(el, 3, cfg))
+	check("combo/and leaves the left-hand ones empty",
+		pipIsEmpty(el, 1, cfg) and pipIsEmpty(el, 2, cfg))
+	opts.growth.set(nil, "RIGHT")
+
+	stub.units.target.combo = 5
+	target:FullUpdate()
+	local allFilled = true
+	for i = 1, #el.pips do
+		if not pipIsFilled(el, i, cfg) then allFilled = false end
+	end
+	check("combo/five points fill every pip", allFilled)
+
+	-- A value above the maximum clamps rather than erroring on pip six.
+	stub.units.target.combo = 9
+	local survived = pcall(function() target:FullUpdate() end)
+	check("combo/a value above the maximum does not error", survived)
+	allFilled = true
+	for i = 1, #el.pips do
+		if not pipIsFilled(el, i, cfg) then allFilled = false end
+	end
+	check("combo/and clamps to a full row", allFilled)
+
+	-- Anchored to a bar that is not showing: hide, like bar-anchored text.
+	stub.units.target.combo = 3
+	local targetCfg = ns:UnitConfig("target")
+	targetCfg.combo.anchorTo = "mana"
+	targetCfg.mana.enabled = false
+	ns:BumpSerial()
+	ns:RefreshUnit("target")
+	target:FullUpdate()
+	check("combo/hidden when the anchor bar is not showing", not el.container:IsShown())
+	targetCfg.combo.anchorTo = "frame"
+	ns:BumpSerial()
+	ns:RefreshUnit("target")
+
+	----------------------------------------------------------------------------
+	-- Events
+	--
+	-- The regression test for the bug this shipped with. Combo points are the
+	-- PLAYER's, so their events carry "player" -- but the element lives on the
+	-- TARGET frame, and Factory filters every UNIT_* event against the frame's
+	-- own display unit. Getting that wrong produces no error and no warning,
+	-- just a bar that never updates until something else forces a full update.
+	--
+	-- And the event it was originally written against does not exist here at
+	-- all, which is the other half of the same failure: Compat skips an invalid
+	-- event silently, so the element was subscribed to nothing.
+	----------------------------------------------------------------------------
+
+	check("combo/UNIT_COMBO_POINTS is absent on this client",
+		not Compat.HasEvent("UNIT_COMBO_POINTS"))
+	check("combo/and that is visible from /duf compat",
+		Compat.Describe().hasUnitComboPoints == false)
+	local _, registered = eventFilter(target, "UNIT_COMBO_POINTS")
+	check("combo/so it is not registered", not registered)
+
+	-- The live path. The power bar on this same frame already wants
+	-- UNIT_POWER_UPDATE for "target", so this is a genuine two-element conflict
+	-- rather than a contrived one -- and it must not cost either of them.
+	local filter
+	filter, registered = eventFilter(target, "UNIT_POWER_UPDATE")
+	check("combo/UNIT_POWER_UPDATE is registered on the target frame", registered)
+	check("combo/the combo bar is on its dispatch list",
+		dispatchesTo(target, "UNIT_POWER_UPDATE", "combo"))
+	check("combo/and so is the power bar it shares with",
+		dispatchesTo(target, "UNIT_POWER_UPDATE", "power"))
+
+	-- Served by ONE registration filtered against BOTH units. Dropping the
+	-- filter would also work and is the fallback, but it would wake the target
+	-- frame for every raid member's energy tick (SPEC §5.7).
+	local reg = target.__events["UNIT_POWER_UPDATE"]
+	check("combo/still unit-filtered, not widened to everything",
+		type(reg) == "table", "registration was dropped to unfiltered")
+	-- Guarded rather than indexed straight: if the check above ever fails, `reg`
+	-- is a boolean and indexing it would crash the whole suite, hiding every
+	-- assertion after this one.
+	local filtered = (type(reg) == "table") and reg or {}
+	local servesPlayer = (filtered[1] == "player") or (filtered[2] == "player")
+	local servesTarget = (filtered[1] == "target") or (filtered[2] == "target")
+	check("combo/filtered against the player, for the combo bar", servesPlayer)
+	check("combo/and the target, for the power bar", servesTarget)
+
+	-- The same helper over the cases that have always had this shape and have
+	-- never been asserted: UNIT_TARGET belongs to the derived frame's owner.
+	equal("combo/derived frames still watch their owner's target",
+		(eventFilter(ns.frames.targettarget, "UNIT_TARGET")), "target")
+	equal("combo/and the pet frame watches its owner",
+		(eventFilter(ns.frames.pet, "UNIT_PET")), "player")
+
+	-- Firing it updates the pips on its own, without a full update. Health is
+	-- moved at the same time and must NOT follow: that is what proves only the
+	-- elements listening for this event ran.
+	local healthBefore = target.elements.health.bar:GetValue()
+	stub.units.target.health = 12
+	stub.units.target.combo = 2
+	stub.fire("UNIT_POWER_UPDATE", "player")
+	check("combo/a player power event updates the pips",
+		pipIsFilled(el, 2, cfg) and pipIsEmpty(el, 3, cfg))
+	equal("combo/without running a full update",
+		target.elements.health.bar:GetValue(), healthBefore)
+	stub.units.target.health = 87
+
+	-- The event the combo count rides on fires several times a second for an
+	-- energy user and carries a changed count on almost none of them.
+	stub.units.target.combo = 5
+	el.pips[5]:SetColorTexture(0, 0, 0, 0)      -- deliberately wrong
+	el.lastPoints = 5
+	stub.fire("UNIT_POWER_UPDATE", "player")
+	check("combo/an unchanged count does not repaint",
+		not pipIsFilled(el, 5, cfg))
+	-- ...but anything that is not that event must still repaint unconditionally,
+	-- or a config change would leave the bar stale.
+	target:FullUpdate()
+	check("combo/a full update repaints regardless", pipIsFilled(el, 5, cfg))
+
+	-- PLAYER_TARGET_CHANGED is a change event on this frame, so assert the
+	-- outcome rather than the path.
+	stub.units.target.combo = 1
+	stub.fire("PLAYER_TARGET_CHANGED")
+	check("combo/a target change re-reads the points",
+		pipIsFilled(el, 1, cfg) and pipIsEmpty(el, 2, cfg))
+
+	-- Three elements wanting three different units cannot be expressed by a
+	-- filter, so that -- and only that -- drops to unfiltered.
+	local highlight = ns.elements.highlight
+	local savedEvents, savedUnits = highlight.events, highlight.eventUnits
+	highlight.events = { UNIT_POWER_UPDATE = true }
+	highlight.eventUnits = { UNIT_POWER_UPDATE = "focus" }
+	target:RegisterEvents()
+	check("combo/a third unit drops the filter rather than starving anyone",
+		type(target.__events["UNIT_POWER_UPDATE"]) ~= "table")
+	check("combo/and every element is still served",
+		dispatchesTo(target, "UNIT_POWER_UPDATE", "combo")
+		and dispatchesTo(target, "UNIT_POWER_UPDATE", "power")
+		and dispatchesTo(target, "UNIT_POWER_UPDATE", "highlight"))
+
+	highlight.events, highlight.eventUnits = savedEvents, savedUnits
+	target:RegisterEvents()
+	reg = target.__events["UNIT_POWER_UPDATE"]
+	check("combo/the filter comes back once the conflict is gone",
+		type(reg) == "table"
+		and ((reg[1] == "player") or (reg[2] == "player")))
+
+	----------------------------------------------------------------------------
+	-- Migration: the target buff row is raised off the new bar
+	----------------------------------------------------------------------------
+
+	local shipped = schema12Profile()
+	check("combo/schema 12 profile migrates", (ns.Migrate:Run(shipped, {})))
+	equal("combo/the shipped target buff row is raised",
+		shipped.units.target.auras.buffs.y, 14)
+	equal("combo/a non-target unit's buffs are left alone",
+		shipped.units.player.auras.buffs.y, 2)
+	equal("combo/and it lands on the current schema",
+		shipped.schemaVersion, ns.Defaults.SCHEMA_VERSION)
+
+	-- Anyone who has positioned their buffs keeps their position. One differing
+	-- field is enough to mean "deliberate".
+	local moved = schema12Profile()
+	moved.units.target.auras.buffs.y = 6
+	ns.Migrate:Run(moved, {})
+	equal("combo/a moved buff row is untouched", moved.units.target.auras.buffs.y, 6)
+
+	local nudged = schema12Profile()
+	nudged.units.target.auras.buffs.x = 8
+	ns.Migrate:Run(nudged, {})
+	equal("combo/so is one nudged sideways", nudged.units.target.auras.buffs.y, 2)
+
+	local reanchored = schema12Profile()
+	reanchored.units.target.auras.buffs.anchorTo = "health"
+	ns.Migrate:Run(reanchored, {})
+	equal("combo/and one anchored elsewhere",
+		reanchored.units.target.auras.buffs.y, 2)
+
+	-- The shipped default must agree with what the migration produces, or new
+	-- and upgraded profiles would disagree about where the buffs go.
+	equal("combo/the shipped default matches the migration",
+		ns:UnitConfig("target").auras.buffs.y, 14)
+
+	stub.units.target.combo = nil
+	stub.units.target.health = 87
+	ns.Defaults:ResetUnit(ns:Profile(), "target")
+	ns:BumpSerial()
+	ns:RefreshUnit("target")
+	target:FullUpdate()
+end
+
+--------------------------------------------------------------------------------
 -- 25. No stray globals
 --
 -- A leaked global in an addon is how two addons quietly break each other.
@@ -2593,6 +3035,7 @@ local suites = {
 	{ "draw-order", testDrawOrder },
 	{ "bar-background", testBarBackground },
 	{ "portrait", testPortrait },
+	{ "combo-points", testComboPoints },
 	{ "global-leaks", testNoGlobalLeaks },
 }
 

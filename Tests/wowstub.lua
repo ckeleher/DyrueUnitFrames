@@ -253,7 +253,15 @@ for _, e in ipairs({
 }) do
 	stub.validEvents[e] = true
 end
--- Deliberately absent, mirroring a modern client: UNIT_HEALTH_FREQUENT.
+-- Deliberately absent, mirroring a modern client: UNIT_HEALTH_FREQUENT, and
+-- UNIT_COMBO_POINTS.
+--
+-- The second one is absent because it is absent in game: on the Anniversary
+-- client C_EventUtils.IsEventValid("UNIT_COMBO_POINTS") returns false, the
+-- shared code having retired it in favour of delivering combo points as a
+-- power type. Modelling a client that still had it is what let the combo bar
+-- pass every test here and never update in game. Pass 4 of run_tests.py adds
+-- it back, for the client that does have it.
 
 _G.C_EventUtils = {
 	IsEventValid = function(event) return stub.validEvents[event] == true end,
@@ -359,6 +367,14 @@ function _G.UnitPowerMax(u, powerType)
 	end
 	return d.powerMax or 0
 end
+
+-- Combo points belong to the player and are held ON a unit, so the count lives
+-- on the TARGET's data (`combo`) rather than on the player's.
+function _G.GetComboPoints(owner, u)
+	local d = unit(u)
+	return (d and d.combo) or 0
+end
+_G.MAX_COMBO_POINTS = 5
 
 function _G.GetGuildInfo(u) local d = unit(u); return d and d.guild end
 function _G.GetRaidTargetIndex(u) local d = unit(u); return d and d.raidTarget end

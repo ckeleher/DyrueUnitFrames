@@ -165,6 +165,43 @@ function Compat.GetPowerType(unit)
 end
 
 --------------------------------------------------------------------------------
+-- Combo points (Plan 9)
+--
+-- A player-owned resource that is spent on a target, so it is read as "the
+-- player's points ON this unit" rather than as a property of the unit.
+--
+-- THE TRAP: do not reach for UnitPower("player", 4). In the numbering the table
+-- above carries, 4 is HAPPINESS; 4 only means combo points under the modern
+-- Enum.PowerType. The Enum branch below is therefore gated on the Enum entry
+-- actually existing and never on a literal.
+--
+-- GetComboPoints is what Blizzard's own ComboFrame uses on these clients, so it
+-- is the primary path. The Enum branch is insurance against the shared-code UI
+-- eventually retiring it.
+--------------------------------------------------------------------------------
+
+Compat.MAX_COMBO_POINTS = tonumber(_G.MAX_COMBO_POINTS) or 5
+
+Compat.hasGetComboPoints = (_G.GetComboPoints ~= nil)
+Compat.hasComboPointEnum =
+	(_G.Enum and _G.Enum.PowerType and _G.Enum.PowerType.ComboPoints ~= nil) and true or false
+
+--- Combo points the player currently has on `unit`.
+-- @return number 0 when this client has no way to answer
+function Compat.GetComboPoints(unit)
+	local fn = _G.GetComboPoints
+	if fn then
+		local ok, points = pcall(fn, "player", unit or "target")
+		if ok then return points or 0 end
+	end
+	local enumType = _G.Enum and _G.Enum.PowerType and _G.Enum.PowerType.ComboPoints
+	if enumType then
+		return UnitPower("player", enumType) or 0
+	end
+	return 0
+end
+
+--------------------------------------------------------------------------------
 -- Colors
 --------------------------------------------------------------------------------
 
@@ -587,6 +624,14 @@ function Compat.Describe()
 		hasAuraInstanceLookup = Compat.hasAuraInstanceLookup,
 		incrementalAurasSeen = Compat.SupportsIncrementalAuraUpdates(),
 		MANA = Compat.MANA,
+		hasGetComboPoints = Compat.hasGetComboPoints,
+		hasComboPointEnum = Compat.hasComboPointEnum,
+		maxComboPoints = Compat.MAX_COMBO_POINTS,
+		-- False on the Anniversary client. Reported here rather than left to
+		-- the probe addon because when this is false the combo bar depends
+		-- entirely on the power-event path, and "which path is live" is the
+		-- first thing worth knowing if it ever stops updating again.
+		hasUnitComboPoints = Compat.HasEvent("UNIT_COMBO_POINTS"),
 		hasUnitHealthFrequent = Compat.HasEvent("UNIT_HEALTH_FREQUENT"),
 		hasUnitAura = Compat.HasEvent("UNIT_AURA"),
 		hasPlayerFocusChanged = Compat.HasEvent("PLAYER_FOCUS_CHANGED"),

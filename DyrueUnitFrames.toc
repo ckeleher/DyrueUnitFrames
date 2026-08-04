@@ -26,6 +26,7 @@ Systems\Anchoring.lua
 Elements\HealthBar.lua
 Elements\PowerBar.lua
 Elements\ShapeshiftMana.lua
+Elements\ComboPoints.lua
 Elements\Portrait.lua
 Elements\Text.lua
 Elements\Auras.lua

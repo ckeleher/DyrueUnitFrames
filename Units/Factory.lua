@@ -307,20 +307,61 @@ function methods:RegisterEvents()
 	-- to follow the substitution or the stand-in data would never update.
 	local unit = self.unit or self.def.token
 
+	-- Which units each event is filtered against, so a second element asking
+	-- for the same event under a different one can be detected. `false` records
+	-- "widened to unfiltered".
+	local filteredAs = {}
+
 	local function subscribe(event, def)
+		-- An element may override the unit for one of its events. Combo points
+		-- are what forces this: UNIT_COMBO_POINTS fires with "player" as its
+		-- payload but the bar lives on the TARGET frame, so filtering it against
+		-- the frame's own display unit means the handler never runs -- with no
+		-- error and no warning, just a bar that never updates.
+		local wanted = isUnitEvent(event)
+			and ((def.eventUnits and def.eventUnits[event]) or unit)
+			or nil
+
 		local list = self.eventMap[event]
 		if not list then
 			list = {}
 			self.eventMap[event] = list
 			if isUnitEvent(event) then
-				if not Compat.RegisterUnitEvent(self, event, unit) then
+				if not Compat.RegisterUnitEvent(self, event, wanted) then
 					self.eventMap[event] = nil
 					return
 				end
+				filteredAs[event] = { wanted }
 			else
 				if not Compat.RegisterEvent(self, event) then
 					self.eventMap[event] = nil
 					return
+				end
+			end
+		elseif wanted and filteredAs[event] then
+			local units = filteredAs[event]
+			local known = false
+			for i = 1, #units do
+				if units[i] == wanted then known = true end
+			end
+
+			if not known then
+				units[#units + 1] = wanted
+				-- Two elements want the same event under different units.
+				-- Re-filtering to the second one's unit would silently starve
+				-- the first, so serve both -- and RegisterUnitEvent takes TWO
+				-- units, which covers every case this addon actually has. The
+				-- combo bar is the live one: it wants UNIT_POWER_UPDATE for
+				-- "player" on the target frame, where the power bar already
+				-- wants it for "target".
+				if #units == 2 then
+					Compat.RegisterUnitEvent(self, event, units[1], units[2])
+				elseif Compat.RegisterEvent(self, event) then
+					-- Three or more: no filter can express it. Dropping the
+					-- filter still delivers to every element, but it means the
+					-- frame wakes for units it does not draw -- a real cost on
+					-- a noisy event in a raid (SPEC §5.7) -- so it is last.
+					filteredAs[event] = false
 				end
 			end
 		end

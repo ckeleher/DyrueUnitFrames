@@ -54,9 +54,47 @@ Phase 0 is for.
 | `RegisterUnitWatch` | Present | | | Show/hide for conditional units |
 | `frame:RegisterUnitEvent` | Present | | | Per-unit registration (SPEC §5.7) |
 | `UNIT_HEALTH_FREQUENT` | **Probably removed** | | | Not required. `Compat.HasEvent` skips anything invalid rather than erroring |
+| `UNIT_COMBO_POINTS` | Present | | **ABSENT — verified 2 Aug 2026** | Combo bar. See the verified finding below; the live path is `UNIT_POWER_UPDATE` for `"player"` |
+| `GetComboPoints` | Present | | **Present — verified 2 Aug 2026** | `Compat.GetComboPoints`. Only the event went, not the reader |
 | `GetPetHappiness` | Present (Classic/TBC only) | | | `[happiness]` tag |
 | `ClickCastFrames` | Only with Clique installed | | | Clique interop |
 | `GetAddOnMemoryUsage` vs `C_AddOns.*` | Both handled | | | `/duf profile` |
+
+### VERIFIED — `UNIT_COMBO_POINTS` does not exist on TBC Anniversary
+
+**Observed 2 August 2026, TBC Anniversary.** The first row in this file that is
+a measurement rather than an assumption.
+
+```
+/run print(C_EventUtils.IsEventValid("UNIT_COMBO_POINTS"))
+false
+```
+
+`GetComboPoints("player", "target")` still works and returns the right number —
+only the *event* is gone. These clients run the modern shared code, which
+retired `UNIT_COMBO_POINTS` and delivers combo points as a power type instead,
+so `UNIT_POWER_UPDATE` for `"player"` is the live path.
+
+**How it presented, because the shape is worth remembering.** Plan 9 registered
+`UNIT_COMBO_POINTS` and nothing else. `Compat.RegisterUnitEvent` skips any event
+`HasEvent` rejects — deliberately, so an unknown event never throws — and it
+does so *silently*, so the element was subscribed to nothing. The bar showed the
+correct count, but only after something forced a full update: changing target
+worked, spending a combo point did not. No error, no warning, and a headless
+suite that was green because `Tests/wowstub.lua` modelled a client that still
+had the event.
+
+Three things changed as a result:
+
+- `Elements/ComboPoints.lua` declares **both** events and lets `Compat.HasEvent`
+  pick. Feature-probe, never version-check — if a client has the old event it is
+  used, and pass 4 of `Tests/run_tests.py` covers that client.
+- `Compat.Describe()` reports `hasUnitComboPoints`, so `/duf compat` answers
+  "which path is live" without the probe addon installed.
+- The stub no longer lists `UNIT_COMBO_POINTS` as valid. **A stub that models a
+  more capable client than the real one turns the suite into a rubber stamp**,
+  and that is the general lesson: when a finding here says an API is absent, the
+  stub has to say so too.
 
 ### The event-registration assumption
 
