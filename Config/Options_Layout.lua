@@ -365,6 +365,15 @@ local function sweepGroup(unitKey, getBar, apply, key, order, name, description)
 			get = function() return sweep().fade end,
 			set = function(_, v) sweep().fade = v; apply() end,
 		}
+		args.hideTick = {
+			-- Full width so the label is not clipped, the same lesson the
+			-- at-maximum-power control above learned the hard way.
+			type = "toggle", order = 8, width = "full",
+			name = L["Hide the power tick line while this counts down"],
+			desc = L["Only on this bar, and only for the five seconds themselves. Two lines sweeping one bar in opposite directions is hard to read, and during the rule the mana tick is still landing but has no Spirit contribution to add - so this one is the more informative of the two. A druid's energy bar is never affected, since the rule does not apply there."],
+			get = function() return sweep().hideTick end,
+			set = function(_, v) sweep().hideTick = v; apply() end,
+		}
 	end
 
 	return {

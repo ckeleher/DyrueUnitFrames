@@ -377,6 +377,29 @@ share one constructor in `Core/Defaults.lua`. Both keys are inert for the tick
 line, which holds full opacity, and the options panel builds the fade control
 only for `fsr` — asserted, so the control cannot quietly appear on the wrong one.
 
+### Added after seeing it in game
+
+**`hideTick`, on by default: the rule suppresses the tick line while it counts
+down.** This plan's risk table lists "two sweep lines on one bar are unreadable"
+and answers it with different default colors. In practice that was not enough —
+two lines sweeping one bar in opposite directions is hard to read whatever
+colors they are. The rule now hides the tick line for the five seconds it is
+running, which is also the more honest reading: during the window the mana tick
+is still landing but has no Spirit contribution to add, so the rule is the more
+informative of the two.
+
+Three details that matter:
+
+- **Scoped to the same bar**, not global. The rule only ever attaches to a bar
+  showing mana, so a druid's energy bar — which the rule has no bearing on —
+  can never have its tick suppressed. Asserted in both directions by a cat-form
+  test: the mana bar's tick goes, the energy bar's stays.
+- **The fade is excluded.** "Counting down" is the five seconds, so the tick
+  returns as the rule expires and the rule's own line fades out over it.
+- **It lives in `Render`, not in a provider.** Providers answer questions about
+  themselves; this is an interaction between two of them, so it belongs at the
+  level that can see both.
+
 **Still to check by eye in game**, per this plan's own risk table: that the line
 landing on the far edge while regen is still up to one tick away reads as
 correct rather than as a bug, with Plan 2's tick line on the same bar covering

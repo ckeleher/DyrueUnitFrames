@@ -3024,6 +3024,12 @@ local function testBarSweep()
 		powerCfg.tick.atMax, "always")
 	equal("sweep/no at-max setting on the rule", powerCfg.fsr.atMax, nil)
 
+	-- Suppressing the tick is the rule's business, not the tick's.
+	equal("sweep/hiding the tick during the rule ships on",
+		powerCfg.fsr.hideTick, true)
+	equal("sweep/no hide-tick setting on the tick block",
+		powerCfg.tick.hideTick, nil)
+
 	----------------------------------------------------------------------------
 	-- Options, and the player-only boundary (SPEC §FR-8.5)
 	----------------------------------------------------------------------------
@@ -3070,6 +3076,11 @@ local function testBarSweep()
 	check("sweep/opacity slider on the tick line", powerOpts.tick.args.alpha ~= nil)
 	check("sweep/opacity slider on the five second rule",
 		powerOpts.fsr.args.alpha ~= nil)
+
+	check("sweep/hide-tick control on the five second rule",
+		powerOpts.fsr.args.hideTick ~= nil)
+	equal("sweep/no hide-tick control on the tick line",
+		powerOpts.tick.args.hideTick, nil)
 
 	----------------------------------------------------------------------------
 	-- The trigger, made swappable
@@ -3384,6 +3395,66 @@ local function testBarSweep()
 	units.player.args.mana.args.tick.args.enabled.set(nil, true)
 	units.player.args.mana.args.fsr.args.enabled.set(nil, true)
 	powerOpts.fsr.args.enabled.set(nil, true)
+
+	----------------------------------------------------------------------------
+	-- The rule suppresses the tick line while it counts down
+	----------------------------------------------------------------------------
+
+	-- Caster shape, so both lines are on the power bar at once.
+	stub.units.player.powerType = 0
+	stub.units.player.powerToken = "MANA"
+	powerOpts.tick.args.enabled.set(nil, true)
+	powerOpts.fsr.args.enabled.set(nil, true)
+	BarSweep:Reset()
+	player:FullUpdate()
+
+	BarSweep:NoteManaSpent(14000)
+	powerBar:SetSize(200, 10)
+	BarSweep:Render(14002)
+	check("sweep/the tick line is hidden while the rule counts down",
+		not tickLine:IsShown())
+	check("sweep/the rule's own line still draws", fsrLine:IsShown())
+	check("sweep/the driver keeps running on the rule alone", BarSweep:IsRunning())
+
+	-- The fade is not part of the countdown: the tick returns as the rule
+	-- expires and the rule's line fades out over it.
+	powerBar:SetSize(200, 10)
+	BarSweep:Render(14005.15)
+	check("sweep/the tick line returns as the rule expires, before the fade ends",
+		tickLine:IsShown())
+
+	-- Turned off, the two coexist.
+	powerOpts.fsr.args.hideTick.set(nil, false)
+	BarSweep:NoteManaSpent(14100)
+	powerBar:SetSize(200, 10)
+	BarSweep:Render(14102)
+	check("sweep/with the option off both lines draw at once",
+		tickLine:IsShown() and fsrLine:IsShown())
+	powerOpts.fsr.args.hideTick.set(nil, true)
+
+	-- Scoped to the bar the rule is on. In cat form the rule is on the
+	-- shapeshift mana bar and suppresses that bar's tick; the energy bar's tick
+	-- is untouched, because energy regen has nothing to do with the five second
+	-- rule. This is the half that would be wrong if suppression were global.
+	units.player.args.mana.args.tick.args.enabled.set(nil, true)
+	units.player.args.mana.args.fsr.args.enabled.set(nil, true)
+	stub.units.player.powerType = 3
+	stub.units.player.powerToken = "ENERGY"
+	player:FullUpdate()
+	BarSweep:NoteManaSpent(14200)
+	powerBar:SetSize(200, 10)
+	manaBar:SetSize(200, 8)
+	BarSweep:Render(14202)
+	check("sweep/the energy bar's tick survives the rule running on the mana bar",
+		tickLine:IsShown())
+	check("sweep/the mana bar's own tick is suppressed",
+		not BarSweep:Line(manaBar, "tick"):IsShown())
+
+	-- Back to caster shape for the section below, which needs the rule attached
+	-- to the power bar.
+	stub.units.player.powerType = 0
+	stub.units.player.powerToken = "MANA"
+	player:FullUpdate()
 
 	----------------------------------------------------------------------------
 	-- The ticker, and the claim that pays for it

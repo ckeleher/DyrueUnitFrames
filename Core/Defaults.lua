@@ -269,6 +269,10 @@ local function unit(overrides)
 			tick = sweep("RIGHT", color(1, 1, 1), { atMax = "always" }),
 			fsr = sweep("LEFT", color(0.45, 0.75, 1), {
 				fade = 0.3,
+				-- On by default. Two lines sweeping one bar in opposite
+				-- directions is hard to read, and during those five seconds the
+				-- mana tick has no Spirit contribution to add anyway.
+				hideTick = true,
 				-- Which detector starts the five-second clock. One strategy
 				-- exists, so there is no dropdown yet; see BarSweep.TRIGGERS.
 				trigger = "manaSpent",
@@ -304,6 +308,10 @@ local function unit(overrides)
 			tick = sweep("RIGHT", color(1, 1, 1), { atMax = "always" }),
 			fsr = sweep("LEFT", color(0.45, 0.75, 1), {
 				fade = 0.3,
+				-- On by default. Two lines sweeping one bar in opposite
+				-- directions is hard to read, and during those five seconds the
+				-- mana tick has no Spirit contribution to add anyway.
+				hideTick = true,
 				-- Which detector starts the five-second clock. One strategy
 				-- exists, so there is no dropdown yet; see BarSweep.TRIGGERS.
 				trigger = "manaSpent",

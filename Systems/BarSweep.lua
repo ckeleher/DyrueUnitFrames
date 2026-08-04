@@ -317,11 +317,33 @@ function BarSweep:Render(now)
 
 	for bar, byProvider in pairs(attached) do
 		local visible = bar:IsVisible()
+
+		-- A cross-provider interaction, so it lives here rather than inside a
+		-- provider: while this bar's five second rule is counting down, that same
+		-- bar's tick line is suppressed. Two lines sweeping one bar in opposite
+		-- directions is hard to read, and for those five seconds the mana tick is
+		-- still landing but has no Spirit contribution to add, so the rule is the
+		-- more informative of the two.
+		--
+		-- Scoped to the SAME bar deliberately. The rule only ever attaches to a
+		-- bar that is showing mana, so a druid's energy bar — which the rule has
+		-- no bearing on whatsoever — can never have its tick suppressed by it.
+		--
+		-- The fade is excluded: "counting down" is the five seconds, so the tick
+		-- returns as the rule expires and the rule's own line fades out over it.
+		local suppressTick = false
+		local rule = byProvider.fsr
+		if rule and rule.active and rule.cfg and rule.cfg.hideTick ~= false
+			and self:IsFiveSecondRuleRunning(now) then
+			suppressTick = true
+		end
+
 		for name, record in pairs(byProvider) do
 			local provider = PROVIDERS[name]
 			local cfg = record.cfg
 
 			if record.active and provider and cfg and visible
+				and not (name == "tick" and suppressTick)
 				and provider.IsActive(state, now, cfg, record) then
 				anyActive = true
 				place(record, position(provider.Fraction(state, now, cfg), cfg))
