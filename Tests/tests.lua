@@ -3047,6 +3047,24 @@ local function testBarSweep()
 	equal("sweep/no at-max control on the five second rule",
 		powerOpts.fsr.args.atMax, nil)
 	check("sweep/at-max control on the tick line", powerOpts.tick.args.atMax ~= nil)
+	-- A dropdown sizes its pullout to its own half-column width and clipped two
+	-- of these four labels. Radio rows are full width and cannot truncate.
+	equal("sweep/at-max is a radio group, not a truncating dropdown",
+		powerOpts.tick.args.atMax.style, "radio")
+	equal("sweep/at-max radio rows are full width",
+		powerOpts.tick.args.atMax.width, "full")
+	-- Every value has a row, and the order is spelled out rather than falling
+	-- back to a sort by key.
+	equal("sweep/at-max lists every option exactly once",
+		#powerOpts.tick.args.atMax.sorting, 4)
+	local listed = {}
+	for _, key in ipairs(powerOpts.tick.args.atMax.sorting) do listed[key] = true end
+	local missing = nil
+	for key in pairs(powerOpts.tick.args.atMax.values) do
+		if not listed[key] then missing = key end
+	end
+	check("sweep/no at-max option is left out of the ordering",
+		missing == nil, tostring(missing))
 
 	-- Opacity is offered on both.
 	check("sweep/opacity slider on the tick line", powerOpts.tick.args.alpha ~= nil)

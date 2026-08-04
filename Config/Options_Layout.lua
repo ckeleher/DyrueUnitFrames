@@ -325,7 +325,21 @@ local function sweepGroup(unitKey, getBar, apply, key, order, name, description)
 
 	if key == "tick" then
 		args.atMax = {
-			type = "select", order = 7, name = L["At maximum power"],
+			-- Radio rather than a dropdown, and full width on purpose.
+			--
+			-- An AceGUI dropdown sizes its pullout to the dropdown's OWN width
+			-- (AceGUIWidget-DropDown.lua, `SetWidth(self.pulloutWidth or
+			-- self.frame:GetWidth())`), and in a two-column flow that is half a
+			-- panel — which clipped two of these four labels to "Keep it on
+			-- energy, hide i...". There is no option key for pullout width, and
+			-- Libs/ is version-pinned and not patched in place.
+			--
+			-- A radio row is laid out full width with its label anchored across
+			-- the whole row, so nothing can be truncated whatever the label says
+			-- or is later translated to. Showing all four at once also suits a
+			-- setting whose options are only meaningful next to each other.
+			type = "select", style = "radio", width = "full",
+			order = 7, name = L["At maximum power"],
 			desc = L["At full power the tick is still landing, it just has nothing to add. A healer watching for the next mana tick usually wants the countdown anyway; a line sweeping a permanently full energy bar is usually just noise. This is which of those you are."],
 			values = {
 				always = L["Keep showing it"],
@@ -333,6 +347,11 @@ local function sweepGroup(unitKey, getBar, apply, key, order, name, description)
 				energy = L["Keep it on energy, hide it on mana"],
 				never = L["Hide it"],
 			},
+			-- Without this the entries come out sorted by KEY, which is how the
+			-- dropdown was ordering them: always, energy, mana, never. Spelling
+			-- the order out puts the two "keep it" cases together between the
+			-- unconditional ones.
+			sorting = { "always", "mana", "energy", "never" },
 			get = function() return sweep().atMax end,
 			set = function(_, v) sweep().atMax = v; apply() end,
 		}
