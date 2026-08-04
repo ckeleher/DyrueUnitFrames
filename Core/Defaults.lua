@@ -82,6 +82,30 @@ local function color(r, g, b, a)
 end
 Defaults.Color = color
 
+--- One sweep-line indicator on a bar (Plans 2 and 10, Systems/BarSweep.lua).
+--
+-- Both ship OFF. They are niche readouts — the tick line means nothing to most
+-- classes and the five second rule means nothing to a class with no mana — and
+-- a moving line on by default is intrusive.
+--
+-- The two default colors differ deliberately. Both lines can be on the same
+-- mana bar at once, and two identical white lines crossing each other is
+-- unreadable; a mana-blue reads as "this one is about mana".
+local function sweep(direction, lineColor)
+	return {
+		enabled = false,
+		width = 2,
+		color = lineColor,
+		direction = direction,     -- RIGHT = left to right | LEFT = right to left
+		-- Five second rule only; harmless on the tick block, which holds its
+		-- line at full opacity for as long as it is shown.
+		fade = 0.3,
+		-- Which detector starts the five-second clock. One strategy exists, so
+		-- there is no dropdown yet; see BarSweep.TRIGGERS.
+		trigger = "manaSpent",
+	}
+end
+
 --- One text element.
 local function text(cfg)
 	return ensure(cfg or {}, {
@@ -238,6 +262,8 @@ local function unit(overrides)
 			bgMultiplier = 0.25,
 			bgAlpha = 1,
 			hideWhenEmpty = false,
+			tick = sweep("RIGHT", color(1, 1, 1, 0.9)),
+			fsr = sweep("LEFT", color(0.45, 0.75, 1, 0.9)),
 		},
 
 		-- SPEC §4.2 — shapeshift mana. Present on every unit for schema
@@ -262,6 +288,8 @@ local function unit(overrides)
 			-- fallback is needed on 2.5.6 / 1.15.9 at all.
 			tickerMode = "auto",       -- auto | on | off
 			tickerInterval = 0.2,
+			tick = sweep("RIGHT", color(1, 1, 1, 0.9)),
+			fsr = sweep("LEFT", color(0.45, 0.75, 1, 0.9)),
 		},
 
 		-- SPEC §4.7

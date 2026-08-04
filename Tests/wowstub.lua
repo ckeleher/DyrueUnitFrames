@@ -250,6 +250,10 @@ for _, e in ipairs({
 	"PLAYER_ENTERING_WORLD", "PLAYER_LOGIN",
 	"UPDATE_SHAPESHIFT_FORM", "GROUP_ROSTER_UPDATE", "PARTY_LEADER_CHANGED",
 	"RAID_TARGET_UPDATE", "PLAYER_REGEN_ENABLED", "PLAYER_REGEN_DISABLED",
+	-- Not used yet. Present for the `spellcast` trigger sketched in
+	-- Systems/BarSweep.lua's TRIGGERS table, so adding it does not also mean
+	-- editing the stub.
+	"UNIT_SPELLCAST_SUCCEEDED",
 }) do
 	stub.validEvents[e] = true
 end

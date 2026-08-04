@@ -174,6 +174,11 @@ function element.ApplyVisibility(frame, el, cfg)
 			visibleCount = visibleCount - 1
 			el.lastValue = nil
 		end
+		-- Shifting out of form takes this bar's sweep lines with it. Render
+		-- would hide them anyway once the bar stops being visible, but detaching
+		-- on the transition keeps the attachment state honest rather than
+		-- leaving lines that only look inactive.
+		ns.BarSweep:Detach(el.bar)
 	end
 	refreshTicker(frame)
 
@@ -198,7 +203,27 @@ function element.Update(frame, el, cfg, event)
 
 	el.bar:SetMinMaxValues(0, maximum > 0 and maximum or 1)
 	el.bar:SetValue(maximum > 0 and current or 0)
+
+	local previous = el.lastValue
 	el.lastValue = current
+
+	if frame.unitKey == "player" then
+		-- Plan 10, detection source 2, and the reason it exists: the header
+		-- above records that UNIT_POWER_UPDATE for mana has historically not
+		-- fired reliably while shapeshifted, which is exactly the case this
+		-- feature most needs. Sitting on the assignment to lastValue rather than
+		-- inside the fallback ticker means EVERY path that refreshes the value
+		-- feeds detection — the events when they work, the ticker when they do
+		-- not. No new sampling and no new timer: the mechanism built for that
+		-- unreliability simply gets a second consumer.
+		if previous and current < previous then
+			ns.BarSweep:NoteManaSpent()
+		end
+
+		-- Both indicators, on the bar that is a mana bar by definition.
+		ns.BarSweep:Attach(frame, el.bar, "tick", cfg.tick)
+		ns.BarSweep:Attach(frame, el.bar, "fsr", cfg.fsr)
+	end
 end
 
 function element.Disable(frame, el)
@@ -207,6 +232,7 @@ function element.Disable(frame, el)
 		visibleCount = visibleCount - 1
 	end
 	el.shown = false
+	ns.BarSweep:Detach(el.bar)
 	el.bar:Hide()
 	refreshTicker(frame)
 end

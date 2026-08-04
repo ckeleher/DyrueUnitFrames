@@ -279,6 +279,66 @@ local function healthGroup(def)
 end
 
 --------------------------------------------------------------------------------
+-- Sweep lines (Plans 2 and 10, Systems/BarSweep.lua)
+--
+-- The same controls appear on both bars for both indicators, so they are built
+-- once. Player only: another unit's tick cadence and mana expenditure are not
+-- observable, so the controls are absent rather than present and permanently
+-- idle — the §FR-8.5 call the combo bar also makes.
+--------------------------------------------------------------------------------
+
+local SWEEP_DIRECTIONS = {
+	RIGHT = L["Left to right"],
+	LEFT = L["Right to left"],
+}
+
+local function sweepGroup(unitKey, getBar, apply, key, order, name, description)
+	local function sweep() local bar = getBar(); return bar and bar[key] end
+
+	local args = {
+		explain = { type = "description", order = 1, name = description },
+		enabled = {
+			type = "toggle", order = 2, name = L["Enable"],
+			get = function() return sweep().enabled end,
+			set = function(_, v) sweep().enabled = v; apply() end,
+		},
+		direction = {
+			type = "select", order = 3, name = L["Direction"],
+			values = SWEEP_DIRECTIONS,
+			get = function() return sweep().direction end,
+			set = function(_, v) sweep().direction = v; apply() end,
+		},
+		width = {
+			type = "range", order = 4, name = L["Line width"],
+			min = 1, max = 10, step = 1,
+			get = function() return sweep().width end,
+			set = function(_, v) sweep().width = v; apply() end,
+		},
+		color = Options.Color(L["Color"], 5, sweep, "color", apply),
+	}
+
+	if key == "fsr" then
+		args.fade = {
+			type = "range", order = 6, name = L["Fade out"],
+			desc = L["Seconds spent fading at the far edge once the five seconds are up, instead of vanishing outright."],
+			min = 0, max = 2, step = 0.05,
+			get = function() return sweep().fade end,
+			set = function(_, v) sweep().fade = v; apply() end,
+		}
+	end
+
+	return {
+		type = "group", inline = true, order = order, name = name,
+		hidden = unitKey ~= "player",
+		args = args,
+	}
+end
+
+local TICK_DESCRIPTION = L["A thin line sweeping across the bar towards the next energy or mana regeneration tick. The interval is measured from the game as it runs rather than assumed to be two seconds, so it stays correct if the cadence is ever different from what is expected."]
+
+local FSR_DESCRIPTION = L["Spending mana suppresses Spirit-based regeneration for five seconds, and every fresh expenditure restarts it. The line sweeps for exactly that window. Regeneration resumes on the first tick AFTER the window closes, so it can be up to one tick later than the line suggests - the power tick indicator above covers that remainder. Only shown while this bar is showing mana."]
+
+--------------------------------------------------------------------------------
 -- Power bar
 --------------------------------------------------------------------------------
 
@@ -364,6 +424,11 @@ local function powerGroup(def)
 			get = function() return power().bgAlpha end,
 			set = function(_, v) power().bgAlpha = v; apply() end,
 		},
+
+		tick = sweepGroup(unitKey, power, apply, "tick", 40,
+			L["Power tick indicator"], TICK_DESCRIPTION),
+		fsr = sweepGroup(unitKey, power, apply, "fsr", 50,
+			L["Five second rule indicator"], FSR_DESCRIPTION),
 	}
 
 	local order = 30
@@ -474,6 +539,11 @@ local function manaGroup(def)
 					ticks, corrections)
 			end,
 		},
+
+		tick = sweepGroup(unitKey, mana, apply, "tick", 30,
+			L["Power tick indicator"], TICK_DESCRIPTION),
+		fsr = sweepGroup(unitKey, mana, apply, "fsr", 40,
+			L["Five second rule indicator"], FSR_DESCRIPTION),
 	}
 
 	return { type = "group", order = 4, name = L["Shapeshift mana"], args = args }

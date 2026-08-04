@@ -1,10 +1,12 @@
 # Plan 10 — Five Second Rule Indicator
 
-**Status:** Not started
+**Status:** Implemented
 **Created:** 2 August 2026
-**Branch:** `Plan-10-five-second-rule` (to be created from `main`)
+**Branch:** `Plan-2-power-tick-indicators`
 **Related:** [Plan 2](Plan_2_PowerTickIndicators.md) — shares one ticker and one
-line-rendering path with this. See *Sequencing* below.
+line-rendering path with this. See *Sequencing* below. Both were built together
+on the one branch, so neither "goes first"; see *Implementation notes* at the
+foot of this document.
 
 ---
 
@@ -340,3 +342,42 @@ the attach/detach lifecycle on both bar elements, and the COMPAT_FINDINGS entry.
 Either way this is the cheaper of the two plans: the timing is a fixed constant
 rather than Plan 2's derived-and-clamped interval, which is the part of that
 plan needing in-game observation before it can be settled.
+
+---
+
+## Implementation notes
+
+Where the build departed from the plan above, and why.
+
+**Neither plan went first.** Both were built in one pass on one branch, so the
+"whichever plan is implemented first creates the module" split never had to be
+resolved. `Systems/BarSweep.lua`, the `TRIGGERS` table, the attach/detach
+lifecycle on both bar elements and the COMPAT_FINDINGS entry all landed
+together, and the fourth-ticker deviation is recorded once.
+
+**Spend detection sits on the assignment to `el.lastValue`, not inside the
+fallback ticker.** The plan asks for the shapeshift-mana ticker to call
+`NoteManaSpent` when its comparison shows a decrease. Putting the check where
+`lastValue` is written instead covers *every* path that refreshes the value —
+the events when they work, the 0.2s ticker when they do not — in one line rather
+than two, and it cannot be missed by a future edit that changes which path
+delivers the value. The cat-form regression test is written against the ticker
+path regardless, since that is the case that matters.
+
+**No fifth ticker, and not a fourth `C_Timer` either.** The driver is a hidden
+frame's `OnUpdate`, started by `Show` and stopped by `Hide`, so there is no timer
+object at all. A test asserts that enabling both indicators leaves exactly one
+driver and adds no `C_Timer` ticker.
+
+**Providers answer `IsActive`, `Fraction` and `Alpha`.** The third is what the
+fade needs; the tick provider answers it with a constant 1.
+
+**`fade` and `trigger` exist on the `tick` config block too.** The two blocks
+share one constructor in `Core/Defaults.lua`. Both keys are inert for the tick
+line, which holds full opacity, and the options panel builds the fade control
+only for `fsr` — asserted, so the control cannot quietly appear on the wrong one.
+
+**Still to check by eye in game**, per this plan's own risk table: that the line
+landing on the far edge while regen is still up to one tick away reads as
+correct rather than as a bug, with Plan 2's tick line on the same bar covering
+the remainder.

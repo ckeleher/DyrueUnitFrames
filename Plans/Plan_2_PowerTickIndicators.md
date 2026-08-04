@@ -1,8 +1,11 @@
 # Plan 2 — Power Tick Indicators
 
-**Status:** Not started
+**Status:** Implemented
 **Created:** 2 August 2026
-**Branch:** `first`
+**Branch:** `Plan-2-power-tick-indicators`
+**Built with:** [Plan 10](Plan_10_FiveSecondRuleIndicator.md) — one module, one
+ticker, two providers, as Plan 10's *Sequencing* section argues. See
+*Implementation notes* at the foot of this document.
 
 ---
 
@@ -175,3 +178,41 @@ and firing `UNIT_POWER_UPDATE` covers the detection logic properly.
 
 4–6 hours. The tick-detection heuristic is the uncertain part and will want
 in-game observation before the interval clamps are settled.
+
+---
+
+## Implementation notes
+
+Where the build departed from the plan above, and why.
+
+**The module is `Systems/BarSweep.lua`, not `Systems/PowerTick.lua`.** Plan 10
+generalizes the name because the same module serves both indicators. Design
+option (a) was taken as written otherwise.
+
+**The sweep wraps rather than clamping at the far edge.** The plan's *Tests*
+section asks for "fraction clamps to 1 when more than one interval has elapsed
+with no tick", but its own *Determining the tick* section says the sweep should
+"keep running on the last known interval rather than freezing" at full power.
+Those are contradictory, and the second one is right: a line parked against the
+right edge until the player next spends energy reads as broken. `Fraction` is
+therefore `(elapsed % interval) / interval`, which preserves the phase of the
+last observed tick across a silent stretch. The clamp to 0..1 is still there and
+is still asserted — the fraction never leaves the range — it is just never
+reached by elapsed time alone.
+
+**Outliers are rejected, not clamped in.** A sample outside 1.5–3.0s is dropped
+before the smoothing rather than pulled to the nearest bound. A 4s gap is a
+*missed* tick, not evidence of a 4s cadence, and clamping it to 3.0 would still
+drag the interval towards a value that was never observed.
+
+**The line travels the bar's width minus its own thickness.** The plan sketches
+`fraction * bar:GetWidth()`, which puts the line entirely off the right edge at
+fraction 1. Travelling `width - lineWidth` keeps it fully visible at both ends.
+
+**Providers answer three questions, not two.** `IsActive` and `Fraction` as
+Plan 10 specifies, plus `Alpha`, which the five second rule's fade needs and the
+tick line answers with a constant 1.
+
+**`/duf profile` reports the derived interval and whether it has been observed
+or is still the seeded 2.0.** A derived value nobody can see is a derived value
+nobody can check.
