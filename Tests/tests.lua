@@ -2955,7 +2955,560 @@ local function testComboPoints()
 end
 
 --------------------------------------------------------------------------------
--- 25. No stray globals
+-- 25. Bar sweep: the power tick and five second rule indicators
+--
+-- Plans 2 and 10. The animation itself is not testable headlessly, but
+-- everything that decides WHETHER and WHERE it draws is, and so is the claim
+-- that justifies adding a fourth ticker at all: that it idles to zero.
+--------------------------------------------------------------------------------
+
+--- Frames carrying an OnUpdate script. The sweep driver is the only thing in
+-- the addon that uses one, so this counts drivers.
+local function sweepDrivers()
+	local n = 0
+	for _, f in ipairs(stub.frames or {}) do
+		if f.__scripts and f.__scripts.OnUpdate then n = n + 1 end
+	end
+	return n
+end
+
+local function lineX(line)
+	local _, _, _, x = line:GetPoint(1)
+	return x
+end
+
+local function testBarSweep()
+	local BarSweep = ns.BarSweep
+	local Compat = ns.Compat
+	local st = BarSweep.state
+	local tick, fsr = BarSweep.PROVIDERS.tick, BarSweep.PROVIDERS.fsr
+
+	local player = ns.frames.player
+	local powerCfg = ns:UnitConfig("player").power
+	local manaCfg = ns:UnitConfig("player").mana
+	local units = ns.Options.table.args.units.args
+	local powerOpts = units.player.args.power.args
+
+	----------------------------------------------------------------------------
+	-- Defaults
+	----------------------------------------------------------------------------
+
+	equal("sweep/tick ships off", powerCfg.tick.enabled, false)
+	equal("sweep/five second rule ships off", powerCfg.fsr.enabled, false)
+	equal("sweep/tick sweeps left to right", powerCfg.tick.direction, "RIGHT")
+	equal("sweep/five second rule sweeps right to left", powerCfg.fsr.direction, "LEFT")
+	equal("sweep/both blocks exist on the shapeshift mana bar too",
+		manaCfg.tick ~= nil and manaCfg.fsr ~= nil, true)
+
+	-- Both lines can be on the same mana bar at once, and two identical white
+	-- lines crossing each other is unreadable.
+	check("sweep/the two lines do not ship the same color",
+		not (manaCfg.tick.color.r == manaCfg.fsr.color.r
+			and manaCfg.tick.color.g == manaCfg.fsr.color.g
+			and manaCfg.tick.color.b == manaCfg.fsr.color.b))
+
+	-- The five seconds are a game rule, not a setting.
+	equal("sweep/five second duration is a constant", BarSweep.FSR_DURATION, 5)
+	equal("sweep/no user control over the five seconds", powerCfg.fsr.duration, nil)
+
+	-- Opacity is its own setting, not the color's alpha channel. The swatch
+	-- ships fully opaque so that touching the color picker -- which has no alpha
+	-- channel and therefore writes a = 1 -- cannot silently change the opacity.
+	equal("sweep/tick ships at 0.9 opacity", powerCfg.tick.alpha, 0.9)
+	equal("sweep/rule ships at 0.9 opacity", powerCfg.fsr.alpha, 0.9)
+	equal("sweep/tick color swatch is fully opaque", powerCfg.tick.color.a, 1)
+	equal("sweep/rule color swatch is fully opaque", powerCfg.fsr.color.a, 1)
+
+	-- At maximum power: the tick's business, not the rule's.
+	equal("sweep/at-max behavior defaults to always showing",
+		powerCfg.tick.atMax, "always")
+	equal("sweep/no at-max setting on the rule", powerCfg.fsr.atMax, nil)
+
+	-- Suppressing the tick is the rule's business, not the tick's.
+	equal("sweep/hiding the tick during the rule ships on",
+		powerCfg.fsr.hideTick, true)
+	equal("sweep/no hide-tick setting on the tick block",
+		powerCfg.tick.hideTick, nil)
+
+	----------------------------------------------------------------------------
+	-- Options, and the player-only boundary (SPEC §FR-8.5)
+	----------------------------------------------------------------------------
+
+	equal("sweep/tick options offered on the player", powerOpts.tick.hidden, false)
+	equal("sweep/rule options offered on the player", powerOpts.fsr.hidden, false)
+	equal("sweep/tick options hidden on the target",
+		units.target.args.power.args.tick.hidden, true)
+	equal("sweep/rule options hidden on the target",
+		units.target.args.power.args.fsr.hidden, true)
+	equal("sweep/rule options hidden on a party frame",
+		units.party1.args.power.args.fsr.hidden, true)
+	equal("sweep/rule options hidden on target of target",
+		units.targettarget.args.power.args.fsr.hidden, true)
+	equal("sweep/options offered on the shapeshift mana bar",
+		units.player.args.mana.args.fsr.hidden, false)
+
+	-- Controls that belong to one indicator and not the other.
+	equal("sweep/no fade control on the tick line", powerOpts.tick.args.fade, nil)
+	check("sweep/fade control on the five second rule", powerOpts.fsr.args.fade ~= nil)
+	equal("sweep/no at-max control on the five second rule",
+		powerOpts.fsr.args.atMax, nil)
+	check("sweep/at-max control on the tick line", powerOpts.tick.args.atMax ~= nil)
+	-- A dropdown sizes its pullout to its own half-column width and clipped two
+	-- of these four labels. Radio rows are full width and cannot truncate.
+	equal("sweep/at-max is a radio group, not a truncating dropdown",
+		powerOpts.tick.args.atMax.style, "radio")
+	equal("sweep/at-max radio rows are full width",
+		powerOpts.tick.args.atMax.width, "full")
+	-- Every value has a row, and the order is spelled out rather than falling
+	-- back to a sort by key.
+	equal("sweep/at-max lists every option exactly once",
+		#powerOpts.tick.args.atMax.sorting, 4)
+	local listed = {}
+	for _, key in ipairs(powerOpts.tick.args.atMax.sorting) do listed[key] = true end
+	local missing = nil
+	for key in pairs(powerOpts.tick.args.atMax.values) do
+		if not listed[key] then missing = key end
+	end
+	check("sweep/no at-max option is left out of the ordering",
+		missing == nil, tostring(missing))
+
+	-- Opacity is offered on both.
+	check("sweep/opacity slider on the tick line", powerOpts.tick.args.alpha ~= nil)
+	check("sweep/opacity slider on the five second rule",
+		powerOpts.fsr.args.alpha ~= nil)
+
+	check("sweep/hide-tick control on the five second rule",
+		powerOpts.fsr.args.hideTick ~= nil)
+	equal("sweep/no hide-tick control on the tick line",
+		powerOpts.tick.args.hideTick, nil)
+
+	----------------------------------------------------------------------------
+	-- The trigger, made swappable
+	----------------------------------------------------------------------------
+
+	equal("sweep/manaSpent is the default trigger",
+		BarSweep:Trigger(), BarSweep.TRIGGERS.manaSpent)
+	equal("sweep/an unknown trigger falls back rather than erroring",
+		BarSweep:Trigger("nosuchtrigger"), BarSweep.TRIGGERS.manaSpent)
+	check("sweep/manaSpent fires on a decrease",
+		BarSweep.TRIGGERS.manaSpent.Detect(100, 90))
+	check("sweep/manaSpent ignores an increase",
+		not BarSweep.TRIGGERS.manaSpent.Detect(90, 100))
+
+	----------------------------------------------------------------------------
+	-- Deriving the tick interval
+	----------------------------------------------------------------------------
+
+	BarSweep:Reset()
+	equal("sweep/interval is seeded at 2.0s", BarSweep:TickInterval(), 2.0)
+	equal("sweep/seeded interval is reported as assumed, not observed",
+		BarSweep:TickObserved(), false)
+
+	BarSweep:NoteTick(2000)
+	check("sweep/the first tick is recorded", BarSweep:TickObserved())
+
+	-- A clean 2.5s cadence pulls the interval onto it.
+	for i = 1, 25 do BarSweep:NoteTick(2000 + i * 2.5) end
+	near("sweep/interval converges on the observed cadence",
+		BarSweep:TickInterval(), 2.5, 0.02)
+
+	-- A 9s gap is a MISSED tick, not evidence of a 9s cadence.
+	local held = BarSweep:TickInterval()
+	BarSweep:NoteTick(2000 + 25 * 2.5 + 9.0)
+	equal("sweep/an outlier gap does not move the interval",
+		BarSweep:TickInterval(), held)
+
+	-- Nor does an implausibly fast one.
+	for i = 1, 20 do BarSweep:NoteTick(3000 + i * 0.1) end
+	equal("sweep/a too-fast sample does not move the interval either",
+		BarSweep:TickInterval(), held)
+
+	-- ...and a real cadence at the edge of the band is accepted and stays in it.
+	BarSweep:Reset()
+	BarSweep:NoteTick(4000)
+	for i = 1, 40 do BarSweep:NoteTick(4000 + i * 2.9) end
+	check("sweep/interval never leaves the 1.5-3.0s band",
+		BarSweep:TickInterval() >= 1.5 and BarSweep:TickInterval() <= 3.0,
+		tostring(BarSweep:TickInterval()))
+	near("sweep/a slow-but-plausible cadence is accepted",
+		BarSweep:TickInterval(), 2.9, 0.02)
+
+	----------------------------------------------------------------------------
+	-- Detection: increases, decreases, and the trap in between
+	----------------------------------------------------------------------------
+
+	BarSweep:Reset()
+	BarSweep:NotePlayerPower(Compat.MANA, 500, 5000)
+	equal("sweep/the first sample cannot be a tick", BarSweep:TickObserved(), false)
+
+	BarSweep:NotePlayerPower(Compat.MANA, 560, 5002)
+	check("sweep/a power increase records a tick", BarSweep:TickObserved())
+	check("sweep/an increase is not a spend",
+		not BarSweep:IsFiveSecondRuleRunning(5002))
+
+	BarSweep:NotePlayerPower(Compat.MANA, 400, 5004)
+	check("sweep/a mana decrease starts the five second rule",
+		BarSweep:IsFiveSecondRuleRunning(5004))
+
+	-- Spending energy fires the same event with a decrease and must not touch
+	-- the rule: a rogue has no five second rule to run.
+	BarSweep:Reset()
+	BarSweep:NotePlayerPower(3, 100, 6000)
+	BarSweep:NotePlayerPower(3, 60, 6001)
+	check("sweep/spending energy does not start the five second rule",
+		not BarSweep:IsFiveSecondRuleRunning(6001))
+	check("sweep/spending energy is not a tick either", not BarSweep:TickObserved())
+
+	-- A power TYPE change is a shapeshift. The two values are different
+	-- resources and comparing them would read as an enormous spend or tick.
+	BarSweep:Reset()
+	BarSweep:NotePlayerPower(Compat.MANA, 3000, 7000)
+	BarSweep:NotePlayerPower(3, 100, 7001)
+	check("sweep/a power type change is neither a tick nor a spend",
+		not BarSweep:TickObserved() and not BarSweep:IsFiveSecondRuleRunning(7001))
+
+	----------------------------------------------------------------------------
+	-- The sweep maths
+	----------------------------------------------------------------------------
+
+	BarSweep:Reset()
+	BarSweep:NoteTick(8000)
+	near("sweep/tick fraction is 0 at the tick", tick.Fraction(st, 8000), 0)
+	near("sweep/tick fraction is 0.5 at half an interval", tick.Fraction(st, 8001), 0.5)
+	near("sweep/tick fraction restarts at a whole interval", tick.Fraction(st, 8002), 0)
+
+	-- Plan 2's edge case: at full power nothing increases, so no tick is ever
+	-- observed, but the server's tick keeps happening. The sweep keeps its phase
+	-- rather than parking against the far edge.
+	near("sweep/phase survives a stretch with no observed tick",
+		tick.Fraction(st, 8000 + 5.0), 0.5)
+	local strayed = nil
+	for i = 0, 60 do
+		local f = tick.Fraction(st, 8000 + i * 0.37)
+		if f < 0 or f > 1 then strayed = f end
+	end
+	check("sweep/tick fraction never leaves 0..1", strayed == nil, tostring(strayed))
+
+	local fsrCfg = { enabled = true, fade = 0.3, direction = "LEFT", width = 2 }
+	BarSweep:Reset()
+	BarSweep:NoteManaSpent(9000)
+	near("sweep/rule fraction is 0 at the spend", fsr.Fraction(st, 9000), 0)
+	near("sweep/rule fraction is 0.5 at 2.5s", fsr.Fraction(st, 9002.5), 0.5)
+	near("sweep/rule fraction is 1 at 5s", fsr.Fraction(st, 9005), 1)
+	near("sweep/rule is fully opaque inside the window",
+		fsr.Alpha(st, 9004, fsrCfg), 1)
+	near("sweep/rule holds at the far edge during the fade",
+		fsr.Fraction(st, 9005.15), 1)
+	near("sweep/rule is halfway through a 0.3s fade at 5.15s",
+		fsr.Alpha(st, 9005.15, fsrCfg), 0.5)
+	check("sweep/rule still active mid-fade", fsr.IsActive(st, 9005.15, fsrCfg))
+	check("sweep/rule inactive once the fade is done",
+		not fsr.IsActive(st, 9005.4, fsrCfg))
+
+	BarSweep:NoteManaSpent(9003)
+	near("sweep/a spend restarts the sweep from the origin",
+		fsr.Fraction(st, 9003), 0)
+	BarSweep:NoteManaSpent(9005.15)
+	near("sweep/a spend mid-fade restores full opacity",
+		fsr.Alpha(st, 9005.15, fsrCfg), 1)
+
+	----------------------------------------------------------------------------
+	-- At maximum power
+	--
+	-- `record` carries the power type of the bar the line is on, because the
+	-- same tick line is attached to the power bar and the shapeshift mana bar at
+	-- once and "at max" means a different thing on each.
+	----------------------------------------------------------------------------
+
+	local fullMana = { atMax = true, powerType = Compat.MANA }
+	local fullEnergy = { atMax = true, powerType = Compat.ENERGY }
+	local notFull = { atMax = false, powerType = Compat.ENERGY }
+
+	check("sweep/always keeps the line on a full bar",
+		tick.IsActive(st, 0, { atMax = "always" }, fullMana))
+	check("sweep/never drops it on a full bar",
+		not tick.IsActive(st, 0, { atMax = "never" }, fullMana))
+	check("sweep/mana keeps it on a full mana bar",
+		tick.IsActive(st, 0, { atMax = "mana" }, fullMana))
+	check("sweep/mana drops it on a full energy bar",
+		not tick.IsActive(st, 0, { atMax = "mana" }, fullEnergy))
+	check("sweep/energy keeps it on a full energy bar",
+		tick.IsActive(st, 0, { atMax = "energy" }, fullEnergy))
+	check("sweep/energy drops it on a full mana bar",
+		not tick.IsActive(st, 0, { atMax = "energy" }, fullMana))
+
+	-- Below maximum the setting has no say at all: every mode shows the line.
+	check("sweep/below max every mode shows the line",
+		tick.IsActive(st, 0, { atMax = "never" }, notFull)
+		and tick.IsActive(st, 0, { atMax = "mana" }, notFull)
+		and tick.IsActive(st, 0, { atMax = "energy" }, notFull))
+	check("sweep/an unknown at-max mode shows it rather than erroring",
+		tick.IsActive(st, 0, { atMax = "nonsense" }, fullMana))
+	check("sweep/a missing at-max mode shows it rather than erroring",
+		tick.IsActive(st, 0, {}, fullMana))
+
+	----------------------------------------------------------------------------
+	-- Attachment: "only applies to mana bars"
+	----------------------------------------------------------------------------
+
+	powerOpts.tick.args.enabled.set(nil, true)
+	powerOpts.fsr.args.enabled.set(nil, true)
+	units.player.args.mana.args.tick.args.enabled.set(nil, true)
+	units.player.args.mana.args.fsr.args.enabled.set(nil, true)
+
+	local powerBar = player.elements.power.bar
+	local manaBar = player.elements.mana.bar
+
+	-- Cat form: energy displayed, mana pool present, so the shapeshift mana bar
+	-- is up. Both halves of the request are asserted here — the rule belongs on
+	-- the mana bar and NOT on the energy bar, while the tick belongs on both.
+	stub.units.player.powerType = 3
+	stub.units.player.powerToken = "ENERGY"
+	player:FullUpdate()
+	check("sweep/mana bar is up in cat form", player.elements.mana.shown)
+	check("sweep/rule is not on the energy bar",
+		not BarSweep:IsAttached(powerBar, "fsr"))
+	check("sweep/rule is on the shapeshift mana bar",
+		BarSweep:IsAttached(manaBar, "fsr"))
+	check("sweep/tick is on both bars while shifted",
+		BarSweep:IsAttached(powerBar, "tick") and BarSweep:IsAttached(manaBar, "tick"))
+
+	-- UNIT_DISPLAYPOWER flipping the displayed type re-evaluates the attachment
+	-- with no config reload. This is why the call lives in Update, not Layout.
+	stub.units.player.powerType = 0
+	stub.units.player.powerToken = "MANA"
+	stub.fire("UNIT_DISPLAYPOWER", "player")
+	check("sweep/rule attaches to the power bar once it shows mana",
+		BarSweep:IsAttached(powerBar, "fsr"))
+	check("sweep/mana bar hides when mana is the displayed power",
+		not player.elements.mana.shown)
+	check("sweep/a hidden mana bar keeps no attachments",
+		not BarSweep:IsAttached(manaBar, "tick")
+		and not BarSweep:IsAttached(manaBar, "fsr"))
+
+	-- Turning the option off detaches rather than merely hiding.
+	powerOpts.tick.args.enabled.set(nil, false)
+	check("sweep/disabling the option detaches the line",
+		not BarSweep:IsAttached(powerBar, "tick"))
+	powerOpts.tick.args.enabled.set(nil, true)
+
+	----------------------------------------------------------------------------
+	-- Geometry and direction
+	----------------------------------------------------------------------------
+
+	local tickLine = BarSweep:Line(powerBar, "tick")
+	check("sweep/a line texture exists", tickLine ~= nil)
+
+	st.interval = 2.0
+	BarSweep:NoteTick(10000)
+
+	powerBar:SetSize(200, 10)
+	BarSweep:Render(10000)
+	equal("sweep/line is the configured thickness", tickLine:GetWidth(), 2)
+	equal("sweep/line spans the bar's full height", tickLine:GetHeight(), 10)
+	-- Travel is the bar less the line's own thickness, so the line stays fully
+	-- visible at both ends instead of hanging off the far edge.
+	equal("sweep/RIGHT starts at the left edge", lineX(tickLine), 0)
+
+	powerBar:SetSize(200, 10)
+	BarSweep:Render(10001)
+	near("sweep/RIGHT is halfway across at half an interval",
+		lineX(tickLine), (200 - 2) / 2)
+
+	powerOpts.tick.args.direction.set(nil, "LEFT")
+	powerBar:SetSize(200, 10)
+	BarSweep:NoteTick(11000)
+	BarSweep:Render(11000)
+	equal("sweep/LEFT mirrors it and starts at the right edge",
+		lineX(tickLine), 200 - 2)
+	powerOpts.tick.args.direction.set(nil, "RIGHT")
+
+	-- The requested right-to-left travel for the five second rule, which is the
+	-- default and the whole reason its direction differs from the tick's.
+	local fsrLine = BarSweep:Line(powerBar, "fsr")
+	BarSweep:NoteManaSpent(12000)
+	powerBar:SetSize(200, 10)
+	BarSweep:Render(12000)
+	equal("sweep/the rule starts at the right edge on the spend",
+		lineX(fsrLine), 200 - 2)
+	powerBar:SetSize(200, 10)
+	BarSweep:Render(12005)
+	equal("sweep/the rule reaches the left edge as it expires", lineX(fsrLine), 0)
+
+	----------------------------------------------------------------------------
+	-- Opacity
+	----------------------------------------------------------------------------
+
+	powerOpts.tick.args.alpha.set(nil, 0.5)
+	powerBar:SetSize(200, 10)
+	BarSweep:NoteTick(12500)
+	BarSweep:Render(12500)
+	near("sweep/opacity reaches the line", tickLine:GetAlpha(), 0.5)
+
+	-- The user's opacity and the rule's fade are independent and multiply. If
+	-- one replaced the other, a faded line would jump back to full opacity or a
+	-- dimmed line would never fade.
+	powerOpts.fsr.args.alpha.set(nil, 0.8)
+	BarSweep:NoteManaSpent(12600)
+	powerBar:SetSize(200, 10)
+	BarSweep:Render(12605.15)
+	near("sweep/opacity multiplies with the fade rather than replacing it",
+		fsrLine:GetAlpha(), 0.8 * 0.5)
+
+	powerOpts.tick.args.alpha.set(nil, 0.9)
+	powerOpts.fsr.args.alpha.set(nil, 0.9)
+
+	----------------------------------------------------------------------------
+	-- At maximum power, end to end
+	--
+	-- Isolated to the power bar's tick line: the rule and the mana bar are off,
+	-- so the driver's state can only be about the setting under test.
+	----------------------------------------------------------------------------
+
+	powerOpts.fsr.args.enabled.set(nil, false)
+	units.player.args.mana.args.tick.args.enabled.set(nil, false)
+	units.player.args.mana.args.fsr.args.enabled.set(nil, false)
+	stub.units.player.powerType = 0
+	stub.units.player.powerToken = "MANA"
+	stub.units.player.power = stub.units.player.powerMax
+
+	powerOpts.tick.args.atMax.set(nil, "never")
+	BarSweep:Reset()
+	player:FullUpdate()
+	check("sweep/a full bar with 'never' idles the driver outright",
+		not BarSweep:IsRunning())
+
+	powerOpts.tick.args.atMax.set(nil, "mana")
+	player:FullUpdate()
+	check("sweep/'mana' keeps a full mana bar sweeping", BarSweep:IsRunning())
+
+	powerOpts.tick.args.atMax.set(nil, "energy")
+	player:FullUpdate()
+	check("sweep/'energy' drops that same full mana bar", not BarSweep:IsRunning())
+
+	-- Below maximum the setting has no say, whatever it is set to.
+	stub.units.player.power = 60
+	player:FullUpdate()
+	check("sweep/below max the at-max setting has no say", BarSweep:IsRunning())
+
+	powerOpts.tick.args.atMax.set(nil, "always")
+	units.player.args.mana.args.tick.args.enabled.set(nil, true)
+	units.player.args.mana.args.fsr.args.enabled.set(nil, true)
+	powerOpts.fsr.args.enabled.set(nil, true)
+
+	----------------------------------------------------------------------------
+	-- The rule suppresses the tick line while it counts down
+	----------------------------------------------------------------------------
+
+	-- Caster shape, so both lines are on the power bar at once.
+	stub.units.player.powerType = 0
+	stub.units.player.powerToken = "MANA"
+	powerOpts.tick.args.enabled.set(nil, true)
+	powerOpts.fsr.args.enabled.set(nil, true)
+	BarSweep:Reset()
+	player:FullUpdate()
+
+	BarSweep:NoteManaSpent(14000)
+	powerBar:SetSize(200, 10)
+	BarSweep:Render(14002)
+	check("sweep/the tick line is hidden while the rule counts down",
+		not tickLine:IsShown())
+	check("sweep/the rule's own line still draws", fsrLine:IsShown())
+	check("sweep/the driver keeps running on the rule alone", BarSweep:IsRunning())
+
+	-- The fade is not part of the countdown: the tick returns as the rule
+	-- expires and the rule's line fades out over it.
+	powerBar:SetSize(200, 10)
+	BarSweep:Render(14005.15)
+	check("sweep/the tick line returns as the rule expires, before the fade ends",
+		tickLine:IsShown())
+
+	-- Turned off, the two coexist.
+	powerOpts.fsr.args.hideTick.set(nil, false)
+	BarSweep:NoteManaSpent(14100)
+	powerBar:SetSize(200, 10)
+	BarSweep:Render(14102)
+	check("sweep/with the option off both lines draw at once",
+		tickLine:IsShown() and fsrLine:IsShown())
+	powerOpts.fsr.args.hideTick.set(nil, true)
+
+	-- Scoped to the bar the rule is on. In cat form the rule is on the
+	-- shapeshift mana bar and suppresses that bar's tick; the energy bar's tick
+	-- is untouched, because energy regen has nothing to do with the five second
+	-- rule. This is the half that would be wrong if suppression were global.
+	units.player.args.mana.args.tick.args.enabled.set(nil, true)
+	units.player.args.mana.args.fsr.args.enabled.set(nil, true)
+	stub.units.player.powerType = 3
+	stub.units.player.powerToken = "ENERGY"
+	player:FullUpdate()
+	BarSweep:NoteManaSpent(14200)
+	powerBar:SetSize(200, 10)
+	manaBar:SetSize(200, 8)
+	BarSweep:Render(14202)
+	check("sweep/the energy bar's tick survives the rule running on the mana bar",
+		tickLine:IsShown())
+	check("sweep/the mana bar's own tick is suppressed",
+		not BarSweep:Line(manaBar, "tick"):IsShown())
+
+	-- Back to caster shape for the section below, which needs the rule attached
+	-- to the power bar.
+	stub.units.player.powerType = 0
+	stub.units.player.powerToken = "MANA"
+	player:FullUpdate()
+
+	----------------------------------------------------------------------------
+	-- The ticker, and the claim that pays for it
+	----------------------------------------------------------------------------
+
+	-- One driver, no matter how many lines. This is the point of building
+	-- Plans 2 and 10 as one module rather than two.
+	equal("sweep/exactly one driver with every line enabled", sweepDrivers(), 1)
+
+	local timersBefore = stub.activeTickers()
+	BarSweep:Refresh()
+	equal("sweep/the driver is not a fifth C_Timer ticker",
+		stub.activeTickers(), timersBefore)
+
+	-- With only the five second rule enabled and no spend, nothing runs. This is
+	-- the claim that justifies the feature's cost and should fail loudly.
+	powerOpts.tick.args.enabled.set(nil, false)
+	units.player.args.mana.args.tick.args.enabled.set(nil, false)
+	BarSweep:Reset()
+	powerOpts.fsr.args.enabled.set(nil, true)
+	check("sweep/the rule is attached", BarSweep:IsAttached(powerBar, "fsr"))
+	check("sweep/idle with the rule enabled and no spend", not BarSweep:IsRunning())
+
+	stub.time = 13000
+	BarSweep:NoteManaSpent(13000)
+	check("sweep/a spend starts the driver", BarSweep:IsRunning())
+	BarSweep:Render(13005.4)
+	check("sweep/the driver stops once the window and fade are done",
+		not BarSweep:IsRunning())
+
+	-- The tick line, by contrast, holds the driver open for as long as its bar
+	-- is visible — that is the cost Plan 2 argued for and Plan 10 rides on.
+	powerOpts.tick.args.enabled.set(nil, true)
+	check("sweep/the tick line keeps the driver running", BarSweep:IsRunning())
+	equal("sweep/still exactly one driver", sweepDrivers(), 1)
+
+	----------------------------------------------------------------------------
+	-- Put the world back for the suites that follow
+	----------------------------------------------------------------------------
+
+	powerOpts.tick.args.enabled.set(nil, false)
+	powerOpts.fsr.args.enabled.set(nil, false)
+	units.player.args.mana.args.tick.args.enabled.set(nil, false)
+	units.player.args.mana.args.fsr.args.enabled.set(nil, false)
+	BarSweep:Reset()
+	stub.units.player.powerType = 1
+	stub.units.player.powerToken = "RAGE"
+	stub.units.player.power = 60
+	stub.time = 1000
+	player:FullUpdate()
+end
+
+--------------------------------------------------------------------------------
+-- 26. No stray globals
 --
 -- A leaked global in an addon is how two addons quietly break each other.
 --------------------------------------------------------------------------------
@@ -3036,6 +3589,7 @@ local suites = {
 	{ "bar-background", testBarBackground },
 	{ "portrait", testPortrait },
 	{ "combo-points", testComboPoints },
+	{ "bar-sweep", testBarSweep },
 	{ "global-leaks", testNoGlobalLeaks },
 }
 

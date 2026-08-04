@@ -82,6 +82,30 @@ local function color(r, g, b, a)
 end
 Defaults.Color = color
 
+--- One sweep-line indicator on a bar (Plans 2 and 10, Systems/BarSweep.lua).
+--
+-- Both ship OFF. They are niche readouts — the tick line means nothing to most
+-- classes and the five second rule means nothing to a class with no mana — and
+-- a moving line on by default is intrusive.
+--
+-- The two default colors differ deliberately. Both lines can be on the same
+-- mana bar at once, and two identical white lines crossing each other is
+-- unreadable; a mana-blue reads as "this one is about mana".
+local function sweep(direction, lineColor, extra)
+	local block = {
+		enabled = false,
+		width = 2,
+		color = lineColor,
+		-- Opacity is its own setting rather than the color's alpha channel. The
+		-- color picker ships without an alpha channel, so storing it there means
+		-- touching the swatch silently resets it to fully opaque.
+		alpha = 0.9,
+		direction = direction,     -- RIGHT = left to right | LEFT = right to left
+	}
+	for k, v in pairs(extra or {}) do block[k] = v end
+	return block
+end
+
 --- One text element.
 local function text(cfg)
 	return ensure(cfg or {}, {
@@ -238,6 +262,21 @@ local function unit(overrides)
 			bgMultiplier = 0.25,
 			bgAlpha = 1,
 			hideWhenEmpty = false,
+			-- What to do once the bar is already full. The tick keeps happening,
+			-- it just has nothing to add, so whether the sweep is still wanted is
+			-- a judgement call: always | mana | energy | never, where the middle
+			-- two mean "keep it at max only on that kind of bar".
+			tick = sweep("RIGHT", color(1, 1, 1), { atMax = "always" }),
+			fsr = sweep("LEFT", color(0.45, 0.75, 1), {
+				fade = 0.3,
+				-- On by default. Two lines sweeping one bar in opposite
+				-- directions is hard to read, and during those five seconds the
+				-- mana tick has no Spirit contribution to add anyway.
+				hideTick = true,
+				-- Which detector starts the five-second clock. One strategy
+				-- exists, so there is no dropdown yet; see BarSweep.TRIGGERS.
+				trigger = "manaSpent",
+			}),
 		},
 
 		-- SPEC §4.2 — shapeshift mana. Present on every unit for schema
@@ -262,6 +301,21 @@ local function unit(overrides)
 			-- fallback is needed on 2.5.6 / 1.15.9 at all.
 			tickerMode = "auto",       -- auto | on | off
 			tickerInterval = 0.2,
+			-- What to do once the bar is already full. The tick keeps happening,
+			-- it just has nothing to add, so whether the sweep is still wanted is
+			-- a judgement call: always | mana | energy | never, where the middle
+			-- two mean "keep it at max only on that kind of bar".
+			tick = sweep("RIGHT", color(1, 1, 1), { atMax = "always" }),
+			fsr = sweep("LEFT", color(0.45, 0.75, 1), {
+				fade = 0.3,
+				-- On by default. Two lines sweeping one bar in opposite
+				-- directions is hard to read, and during those five seconds the
+				-- mana tick has no Spirit contribution to add anyway.
+				hideTick = true,
+				-- Which detector starts the five-second clock. One strategy
+				-- exists, so there is no dropdown yet; see BarSweep.TRIGGERS.
+				trigger = "manaSpent",
+			}),
 		},
 
 		-- SPEC §4.7

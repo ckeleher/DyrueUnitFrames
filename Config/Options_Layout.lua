@@ -279,6 +279,115 @@ local function healthGroup(def)
 end
 
 --------------------------------------------------------------------------------
+-- Sweep lines (Plans 2 and 10, Systems/BarSweep.lua)
+--
+-- The same controls appear on both bars for both indicators, so they are built
+-- once. Player only: another unit's tick cadence and mana expenditure are not
+-- observable, so the controls are absent rather than present and permanently
+-- idle — the §FR-8.5 call the combo bar also makes.
+--------------------------------------------------------------------------------
+
+local SWEEP_DIRECTIONS = {
+	RIGHT = L["Left to right"],
+	LEFT = L["Right to left"],
+}
+
+local function sweepGroup(unitKey, getBar, apply, key, order, name, description)
+	local function sweep() local bar = getBar(); return bar and bar[key] end
+
+	local args = {
+		explain = { type = "description", order = 1, name = description },
+		enabled = {
+			type = "toggle", order = 2, name = L["Enable"],
+			get = function() return sweep().enabled end,
+			set = function(_, v) sweep().enabled = v; apply() end,
+		},
+		direction = {
+			type = "select", order = 3, name = L["Direction"],
+			values = SWEEP_DIRECTIONS,
+			get = function() return sweep().direction end,
+			set = function(_, v) sweep().direction = v; apply() end,
+		},
+		width = {
+			type = "range", order = 4, name = L["Line width"],
+			min = 1, max = 10, step = 1,
+			get = function() return sweep().width end,
+			set = function(_, v) sweep().width = v; apply() end,
+		},
+		color = Options.Color(L["Color"], 5, sweep, "color", apply),
+		alpha = {
+			type = "range", order = 6, name = L["Opacity"],
+			min = 0, max = 1, step = 0.01,
+			get = function() return sweep().alpha end,
+			set = function(_, v) sweep().alpha = v; apply() end,
+		},
+	}
+
+	if key == "tick" then
+		args.atMax = {
+			-- Radio rather than a dropdown, and full width on purpose.
+			--
+			-- An AceGUI dropdown sizes its pullout to the dropdown's OWN width
+			-- (AceGUIWidget-DropDown.lua, `SetWidth(self.pulloutWidth or
+			-- self.frame:GetWidth())`), and in a two-column flow that is half a
+			-- panel — which clipped two of these four labels to "Keep it on
+			-- energy, hide i...". There is no option key for pullout width, and
+			-- Libs/ is version-pinned and not patched in place.
+			--
+			-- A radio row is laid out full width with its label anchored across
+			-- the whole row, so nothing can be truncated whatever the label says
+			-- or is later translated to. Showing all four at once also suits a
+			-- setting whose options are only meaningful next to each other.
+			type = "select", style = "radio", width = "full",
+			order = 7, name = L["At maximum power"],
+			desc = L["At full power the tick is still landing, it just has nothing to add. A healer watching for the next mana tick usually wants the countdown anyway; a line sweeping a permanently full energy bar is usually just noise. This is which of those you are."],
+			values = {
+				always = L["Keep showing it"],
+				mana = L["Keep it on mana, hide it on energy"],
+				energy = L["Keep it on energy, hide it on mana"],
+				never = L["Hide it"],
+			},
+			-- Without this the entries come out sorted by KEY, which is how the
+			-- dropdown was ordering them: always, energy, mana, never. Spelling
+			-- the order out puts the two "keep it" cases together between the
+			-- unconditional ones.
+			sorting = { "always", "mana", "energy", "never" },
+			get = function() return sweep().atMax end,
+			set = function(_, v) sweep().atMax = v; apply() end,
+		}
+	end
+
+	if key == "fsr" then
+		args.fade = {
+			type = "range", order = 7, name = L["Fade out"],
+			desc = L["Seconds spent fading at the far edge once the five seconds are up, instead of vanishing outright."],
+			min = 0, max = 2, step = 0.05,
+			get = function() return sweep().fade end,
+			set = function(_, v) sweep().fade = v; apply() end,
+		}
+		args.hideTick = {
+			-- Full width so the label is not clipped, the same lesson the
+			-- at-maximum-power control above learned the hard way.
+			type = "toggle", order = 8, width = "full",
+			name = L["Hide the power tick line while this counts down"],
+			desc = L["Only on this bar, and only for the five seconds themselves. Two lines sweeping one bar in opposite directions is hard to read, and during the rule the mana tick is still landing but has no Spirit contribution to add - so this one is the more informative of the two. A druid's energy bar is never affected, since the rule does not apply there."],
+			get = function() return sweep().hideTick end,
+			set = function(_, v) sweep().hideTick = v; apply() end,
+		}
+	end
+
+	return {
+		type = "group", inline = true, order = order, name = name,
+		hidden = unitKey ~= "player",
+		args = args,
+	}
+end
+
+local TICK_DESCRIPTION = L["A thin line sweeping across the bar towards the next energy or mana regeneration tick. The interval is measured from the game as it runs rather than assumed to be two seconds, so it stays correct if the cadence is ever different from what is expected."]
+
+local FSR_DESCRIPTION = L["Spending mana suppresses Spirit-based regeneration for five seconds, and every fresh expenditure restarts it. The line sweeps for exactly that window. Regeneration resumes on the first tick AFTER the window closes, so it can be up to one tick later than the line suggests - the power tick indicator above covers that remainder. Only shown while this bar is showing mana."]
+
+--------------------------------------------------------------------------------
 -- Power bar
 --------------------------------------------------------------------------------
 
@@ -364,6 +473,11 @@ local function powerGroup(def)
 			get = function() return power().bgAlpha end,
 			set = function(_, v) power().bgAlpha = v; apply() end,
 		},
+
+		tick = sweepGroup(unitKey, power, apply, "tick", 40,
+			L["Power tick indicator"], TICK_DESCRIPTION),
+		fsr = sweepGroup(unitKey, power, apply, "fsr", 50,
+			L["Five second rule indicator"], FSR_DESCRIPTION),
 	}
 
 	local order = 30
@@ -474,6 +588,11 @@ local function manaGroup(def)
 					ticks, corrections)
 			end,
 		},
+
+		tick = sweepGroup(unitKey, mana, apply, "tick", 30,
+			L["Power tick indicator"], TICK_DESCRIPTION),
+		fsr = sweepGroup(unitKey, mana, apply, "fsr", 40,
+			L["Five second rule indicator"], FSR_DESCRIPTION),
 	}
 
 	return { type = "group", order = 4, name = L["Shapeshift mana"], args = args }

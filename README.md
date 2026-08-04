@@ -62,7 +62,7 @@ stand-in data so you can lay everything out while standing in a city.
 | `/duf tags` | Print the tag vocabulary |
 | `/duf blizzard hide` \| `none` | Hide or restore Blizzard's unit frames |
 | `/duf safemode` | Bars only, no text, no auras — survives `/reload` |
-| `/duf profile` | Memory, CPU, and whether each of the three tickers is actually idle |
+| `/duf profile` | Memory, CPU, and whether each of the four tickers is actually idle |
 | `/duf compat` | What this client supports, as probed |
 | `/duf errors` | Anything that has tripped the circuit breaker this session |
 | `/duf reset <unit>` | Reset one unit to defaults |
@@ -229,8 +229,9 @@ increasing stream of Lua errors.
 
 ```
 Core/       Compat (the containment file), Defaults, Migrate, CombatQueue, Errors, Core
-Systems/    Colors, Tags, ColorRules, Anchoring
-Elements/   HealthBar, PowerBar, ShapeshiftMana, Portrait, Text, Auras, Highlight
+Systems/    Colors, Tags, ColorRules, Anchoring, BarSweep
+Elements/   HealthBar, PowerBar, ShapeshiftMana, ComboPoints, Portrait, Text, Auras,
+            Indicators, Highlight
 Units/      Registry, Factory, PartyGroup, DerivedPoller
 Config/     Options, Options_Layout, Options_Text, Options_Auras, DragMode, TestMode
 Libs/       Ace3, LibSharedMedia — embedded, version-pinned, never modified in place

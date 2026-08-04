@@ -26,6 +26,32 @@ local element = {
 }
 
 --------------------------------------------------------------------------------
+-- Sweep lines (Plans 2 and 10)
+--
+-- Player only, on the boundary both plans argue (§FR-8.5): another unit's tick
+-- cadence and mana expenditure are not observable.
+--------------------------------------------------------------------------------
+
+local function syncSweeps(frame, el, cfg, powerType, atMax)
+	if frame.unitKey ~= "player" then return end
+
+	local BarSweep = ns.BarSweep
+	BarSweep:Attach(frame, el.bar, "tick", cfg and cfg.tick, powerType, atMax)
+
+	-- The five second rule is about mana, so on the power bar the line is
+	-- attached only while the DISPLAYED power is mana — a general rule, not a
+	-- class check, same reasoning as §4.2. A caster gets it here; a druid in cat
+	-- form gets it on the shapeshift mana bar and not on the energy bar; a rogue
+	-- never sees it.
+	--
+	-- This lives in Update rather than Layout so UNIT_DISPLAYPOWER is honoured:
+	-- a form change has to attach or detach it without a full config reload.
+	local isMana = powerType == Compat.MANA
+	BarSweep:Attach(frame, el.bar, "fsr", isMana and cfg and cfg.fsr or nil,
+		powerType, atMax)
+end
+
+--------------------------------------------------------------------------------
 
 function element.IsEnabled(frame, cfg)
 	return cfg and cfg.enabled ~= false
@@ -65,6 +91,13 @@ function element.Update(frame, el, cfg)
 	local maximum = UnitPowerMax(unit, powerType) or 0
 	local current = UnitPower(unit, powerType) or 0
 
+	-- Sweep detection, before anything can early-return below. An increase is a
+	-- regen tick; a decrease on a mana bar is a spend. The comparison happens in
+	-- BarSweep, which is also fed by the shapeshift mana bar.
+	if frame.unitKey == "player" then
+		ns.BarSweep:NotePlayerPower(powerType, current)
+	end
+
 	if maximum <= 0 then
 		-- A unit with no power at all (most NPCs, a druid in a form with an
 		-- empty pool). Showing an empty bar is a user choice.
@@ -87,11 +120,14 @@ function element.Update(frame, el, cfg)
 
 	local br, bg, bb, ba = Colors:Background(r, g, b, cfg.bgMultiplier, cfg.bgAlpha)
 	el.bg:SetVertexColor(br, bg, bb, ba)
+
+	syncSweeps(frame, el, cfg, powerType, maximum > 0 and current >= maximum)
 end
 
 --- See the note in Elements/HealthBar.lua: Disable is the only thing called
 -- for an element that is no longer wanted.
 function element.Disable(frame, el)
+	ns.BarSweep:Detach(el.bar)
 	el.bar:Hide()
 end
 

@@ -593,5 +593,20 @@ function ns:ProfileReport()
 	Errors:Print(string.format(L["Aura duration ticker: %s"],
 		ns.elements.auras.IsTicking() and L["running"] or L["stopped"]))
 
+	-- The fourth ticker (Plans 2 and 10), reported for the same reason as the
+	-- other three and with more reason than any of them: it is the one that
+	-- deviates from §5.7's closed list, so "is it idle when it should be idle"
+	-- has to be answerable. The observed interval is printed because it is
+	-- derived rather than hardcoded, and a derived value nobody can see is a
+	-- derived value nobody can check.
+	Errors:Print(string.format(L["Bar sweep ticker: %s (%d line(s))"],
+		ns.BarSweep:IsRunning() and L["running"] or L["stopped"],
+		ns.BarSweep:ActiveCount()))
+	Errors:Print(string.format(L["  power tick interval: %.2fs (%s)"],
+		ns.BarSweep:TickInterval(),
+		ns.BarSweep:TickObserved() and L["observed"] or L["assumed"]))
+	Errors:Print(string.format(L["  five second rule: %s"],
+		ns.BarSweep:IsFiveSecondRuleRunning() and L["running"] or L["idle"]))
+
 	Errors:Print(string.format(L["Queued layout changes: %d"], ns.CombatQueue:PendingCount()))
 end

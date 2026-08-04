@@ -74,6 +74,14 @@ local API_PATHS = {
 	"Enum.PowerType",
 	"GetComboPoints",
 	"MAX_COMBO_POINTS",
+	-- Plan 10. The five second rule ships with a mana-decrease trigger, which
+	-- needs no spell data. The obvious second trigger is UNIT_SPELLCAST_SUCCEEDED
+	-- restricted to spells that cost mana, and that needs a cost lookup whose
+	-- availability here is unverified. Which of these exists decides whether that
+	-- trigger is buildable at all, so it is answered by observation rather than
+	-- by assumption.
+	"GetSpellPowerCost",
+	"C_Spell.GetSpellPowerCost",
 	"GetCreatureDifficultyColor",
 	"GetQuestDifficultyColor",
 	"PowerBarColor",
@@ -111,7 +119,7 @@ local EVENTS = {
 	"UNIT_AURA", "UNIT_TARGET", "UNIT_PET", "UNIT_HAPPINESS",
 	"UNIT_PORTRAIT_UPDATE", "UNIT_MODEL_CHANGED", "UNIT_CLASSIFICATION_CHANGED",
 	"UNIT_NAME_UPDATE", "UNIT_LEVEL", "UNIT_CONNECTION", "UNIT_FACTION", "UNIT_FLAGS",
-	"UNIT_COMBO_POINTS",
+	"UNIT_COMBO_POINTS", "UNIT_SPELLCAST_SUCCEEDED",
 	"PLAYER_TARGET_CHANGED", "PLAYER_FOCUS_CHANGED", "PLAYER_FLAGS_CHANGED",
 	"UPDATE_SHAPESHIFT_FORM", "GROUP_ROSTER_UPDATE", "PARTY_LEADER_CHANGED",
 	"RAID_TARGET_UPDATE", "PLAYER_REGEN_ENABLED", "PLAYER_REGEN_DISABLED",

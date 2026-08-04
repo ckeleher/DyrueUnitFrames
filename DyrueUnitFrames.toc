@@ -22,6 +22,7 @@ Systems\Colors.lua
 Systems\Tags.lua
 Systems\ColorRules.lua
 Systems\Anchoring.lua
+Systems\BarSweep.lua
 
 Elements\HealthBar.lua
 Elements\PowerBar.lua
