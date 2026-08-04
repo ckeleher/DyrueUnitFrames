@@ -315,11 +315,32 @@ local function sweepGroup(unitKey, getBar, apply, key, order, name, description)
 			set = function(_, v) sweep().width = v; apply() end,
 		},
 		color = Options.Color(L["Color"], 5, sweep, "color", apply),
+		alpha = {
+			type = "range", order = 6, name = L["Opacity"],
+			min = 0, max = 1, step = 0.01,
+			get = function() return sweep().alpha end,
+			set = function(_, v) sweep().alpha = v; apply() end,
+		},
 	}
+
+	if key == "tick" then
+		args.atMax = {
+			type = "select", order = 7, name = L["At maximum power"],
+			desc = L["At full power the tick is still landing, it just has nothing to add. A healer watching for the next mana tick usually wants the countdown anyway; a line sweeping a permanently full energy bar is usually just noise. This is which of those you are."],
+			values = {
+				always = L["Keep showing it"],
+				mana = L["Keep it on mana, hide it on energy"],
+				energy = L["Keep it on energy, hide it on mana"],
+				never = L["Hide it"],
+			},
+			get = function() return sweep().atMax end,
+			set = function(_, v) sweep().atMax = v; apply() end,
+		}
+	end
 
 	if key == "fsr" then
 		args.fade = {
-			type = "range", order = 6, name = L["Fade out"],
+			type = "range", order = 7, name = L["Fade out"],
 			desc = L["Seconds spent fading at the far edge once the five seconds are up, instead of vanishing outright."],
 			min = 0, max = 2, step = 0.05,
 			get = function() return sweep().fade end,

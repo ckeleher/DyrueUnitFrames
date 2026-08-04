@@ -144,6 +144,7 @@ Compat.hasSecretValues = (_G.issecretvalue ~= nil) or (_G.canaccessvalue ~= nil)
 --------------------------------------------------------------------------------
 
 Compat.MANA = (_G.Enum and _G.Enum.PowerType and _G.Enum.PowerType.Mana) or 0
+Compat.ENERGY = (_G.Enum and _G.Enum.PowerType and _G.Enum.PowerType.Energy) or 3
 
 local powerTypeNames = {
 	[0] = "MANA",

@@ -3011,6 +3011,19 @@ local function testBarSweep()
 	equal("sweep/five second duration is a constant", BarSweep.FSR_DURATION, 5)
 	equal("sweep/no user control over the five seconds", powerCfg.fsr.duration, nil)
 
+	-- Opacity is its own setting, not the color's alpha channel. The swatch
+	-- ships fully opaque so that touching the color picker -- which has no alpha
+	-- channel and therefore writes a = 1 -- cannot silently change the opacity.
+	equal("sweep/tick ships at 0.9 opacity", powerCfg.tick.alpha, 0.9)
+	equal("sweep/rule ships at 0.9 opacity", powerCfg.fsr.alpha, 0.9)
+	equal("sweep/tick color swatch is fully opaque", powerCfg.tick.color.a, 1)
+	equal("sweep/rule color swatch is fully opaque", powerCfg.fsr.color.a, 1)
+
+	-- At maximum power: the tick's business, not the rule's.
+	equal("sweep/at-max behavior defaults to always showing",
+		powerCfg.tick.atMax, "always")
+	equal("sweep/no at-max setting on the rule", powerCfg.fsr.atMax, nil)
+
 	----------------------------------------------------------------------------
 	-- Options, and the player-only boundary (SPEC §FR-8.5)
 	----------------------------------------------------------------------------
@@ -3028,9 +3041,17 @@ local function testBarSweep()
 	equal("sweep/options offered on the shapeshift mana bar",
 		units.player.args.mana.args.fsr.hidden, false)
 
-	-- The fade belongs to the rule alone; the tick line holds full opacity.
+	-- Controls that belong to one indicator and not the other.
 	equal("sweep/no fade control on the tick line", powerOpts.tick.args.fade, nil)
 	check("sweep/fade control on the five second rule", powerOpts.fsr.args.fade ~= nil)
+	equal("sweep/no at-max control on the five second rule",
+		powerOpts.fsr.args.atMax, nil)
+	check("sweep/at-max control on the tick line", powerOpts.tick.args.atMax ~= nil)
+
+	-- Opacity is offered on both.
+	check("sweep/opacity slider on the tick line", powerOpts.tick.args.alpha ~= nil)
+	check("sweep/opacity slider on the five second rule",
+		powerOpts.fsr.args.alpha ~= nil)
 
 	----------------------------------------------------------------------------
 	-- The trigger, made swappable
@@ -3163,6 +3184,41 @@ local function testBarSweep()
 		fsr.Alpha(st, 9005.15, fsrCfg), 1)
 
 	----------------------------------------------------------------------------
+	-- At maximum power
+	--
+	-- `record` carries the power type of the bar the line is on, because the
+	-- same tick line is attached to the power bar and the shapeshift mana bar at
+	-- once and "at max" means a different thing on each.
+	----------------------------------------------------------------------------
+
+	local fullMana = { atMax = true, powerType = Compat.MANA }
+	local fullEnergy = { atMax = true, powerType = Compat.ENERGY }
+	local notFull = { atMax = false, powerType = Compat.ENERGY }
+
+	check("sweep/always keeps the line on a full bar",
+		tick.IsActive(st, 0, { atMax = "always" }, fullMana))
+	check("sweep/never drops it on a full bar",
+		not tick.IsActive(st, 0, { atMax = "never" }, fullMana))
+	check("sweep/mana keeps it on a full mana bar",
+		tick.IsActive(st, 0, { atMax = "mana" }, fullMana))
+	check("sweep/mana drops it on a full energy bar",
+		not tick.IsActive(st, 0, { atMax = "mana" }, fullEnergy))
+	check("sweep/energy keeps it on a full energy bar",
+		tick.IsActive(st, 0, { atMax = "energy" }, fullEnergy))
+	check("sweep/energy drops it on a full mana bar",
+		not tick.IsActive(st, 0, { atMax = "energy" }, fullMana))
+
+	-- Below maximum the setting has no say at all: every mode shows the line.
+	check("sweep/below max every mode shows the line",
+		tick.IsActive(st, 0, { atMax = "never" }, notFull)
+		and tick.IsActive(st, 0, { atMax = "mana" }, notFull)
+		and tick.IsActive(st, 0, { atMax = "energy" }, notFull))
+	check("sweep/an unknown at-max mode shows it rather than erroring",
+		tick.IsActive(st, 0, { atMax = "nonsense" }, fullMana))
+	check("sweep/a missing at-max mode shows it rather than erroring",
+		tick.IsActive(st, 0, {}, fullMana))
+
+	----------------------------------------------------------------------------
 	-- Attachment: "only applies to mana bars"
 	----------------------------------------------------------------------------
 
@@ -3251,6 +3307,67 @@ local function testBarSweep()
 	equal("sweep/the rule reaches the left edge as it expires", lineX(fsrLine), 0)
 
 	----------------------------------------------------------------------------
+	-- Opacity
+	----------------------------------------------------------------------------
+
+	powerOpts.tick.args.alpha.set(nil, 0.5)
+	powerBar:SetSize(200, 10)
+	BarSweep:NoteTick(12500)
+	BarSweep:Render(12500)
+	near("sweep/opacity reaches the line", tickLine:GetAlpha(), 0.5)
+
+	-- The user's opacity and the rule's fade are independent and multiply. If
+	-- one replaced the other, a faded line would jump back to full opacity or a
+	-- dimmed line would never fade.
+	powerOpts.fsr.args.alpha.set(nil, 0.8)
+	BarSweep:NoteManaSpent(12600)
+	powerBar:SetSize(200, 10)
+	BarSweep:Render(12605.15)
+	near("sweep/opacity multiplies with the fade rather than replacing it",
+		fsrLine:GetAlpha(), 0.8 * 0.5)
+
+	powerOpts.tick.args.alpha.set(nil, 0.9)
+	powerOpts.fsr.args.alpha.set(nil, 0.9)
+
+	----------------------------------------------------------------------------
+	-- At maximum power, end to end
+	--
+	-- Isolated to the power bar's tick line: the rule and the mana bar are off,
+	-- so the driver's state can only be about the setting under test.
+	----------------------------------------------------------------------------
+
+	powerOpts.fsr.args.enabled.set(nil, false)
+	units.player.args.mana.args.tick.args.enabled.set(nil, false)
+	units.player.args.mana.args.fsr.args.enabled.set(nil, false)
+	stub.units.player.powerType = 0
+	stub.units.player.powerToken = "MANA"
+	stub.units.player.power = stub.units.player.powerMax
+
+	powerOpts.tick.args.atMax.set(nil, "never")
+	BarSweep:Reset()
+	player:FullUpdate()
+	check("sweep/a full bar with 'never' idles the driver outright",
+		not BarSweep:IsRunning())
+
+	powerOpts.tick.args.atMax.set(nil, "mana")
+	player:FullUpdate()
+	check("sweep/'mana' keeps a full mana bar sweeping", BarSweep:IsRunning())
+
+	powerOpts.tick.args.atMax.set(nil, "energy")
+	player:FullUpdate()
+	check("sweep/'energy' drops that same full mana bar", not BarSweep:IsRunning())
+
+	-- Below maximum the setting has no say, whatever it is set to.
+	stub.units.player.power = 60
+	player:FullUpdate()
+	check("sweep/below max the at-max setting has no say", BarSweep:IsRunning())
+
+	powerOpts.tick.args.atMax.set(nil, "always")
+	units.player.args.mana.args.tick.args.enabled.set(nil, true)
+	units.player.args.mana.args.fsr.args.enabled.set(nil, true)
+	powerOpts.fsr.args.enabled.set(nil, true)
+
+	----------------------------------------------------------------------------
 	-- The ticker, and the claim that pays for it
 	----------------------------------------------------------------------------
 
@@ -3296,6 +3413,7 @@ local function testBarSweep()
 	BarSweep:Reset()
 	stub.units.player.powerType = 1
 	stub.units.player.powerToken = "RAGE"
+	stub.units.player.power = 60
 	stub.time = 1000
 	player:FullUpdate()
 end

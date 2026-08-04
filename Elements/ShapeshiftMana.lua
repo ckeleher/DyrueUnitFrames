@@ -220,9 +220,12 @@ function element.Update(frame, el, cfg, event)
 			ns.BarSweep:NoteManaSpent()
 		end
 
-		-- Both indicators, on the bar that is a mana bar by definition.
-		ns.BarSweep:Attach(frame, el.bar, "tick", cfg.tick)
-		ns.BarSweep:Attach(frame, el.bar, "fsr", cfg.fsr)
+		-- Both indicators, on the bar that is a mana bar by definition — so the
+		-- power type passed here is always MANA, whatever the power bar above is
+		-- currently showing.
+		local atMax = maximum > 0 and current >= maximum
+		ns.BarSweep:Attach(frame, el.bar, "tick", cfg.tick, Compat.MANA, atMax)
+		ns.BarSweep:Attach(frame, el.bar, "fsr", cfg.fsr, Compat.MANA, atMax)
 	end
 end
 

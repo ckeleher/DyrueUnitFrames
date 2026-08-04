@@ -137,8 +137,28 @@ local PROVIDERS = {
 	tick = {
 		label = L["Power tick"],
 
-		-- Always, while its bar is visible. The tick never stops happening.
-		IsActive = function() return true end,
+		-- While its bar is visible, the tick never stops happening — so the only
+		-- question is what to do once the bar is already full, where the tick is
+		-- still landing but has nothing to add. That is a judgement call rather
+		-- than a fact, so it is the user's:
+		--
+		--   always   keep sweeping
+		--   mana     keep it at full mana, drop it at full energy
+		--   energy   keep it at full energy, drop it at full mana
+		--   never    drop it whenever the bar is full
+		--
+		-- `record` carries the power type this particular bar shows, because the
+		-- same line is attached to the power bar and the shapeshift mana bar at
+		-- once and "at max" means a different thing on each.
+		IsActive = function(st, now, cfg, record)
+			if not record or not record.atMax then return true end
+
+			local mode = (cfg and cfg.atMax) or "always"
+			if mode == "never" then return false end
+			if mode == "mana" then return record.powerType == Compat.MANA end
+			if mode == "energy" then return record.powerType == Compat.ENERGY end
+			return true
+		end,
 
 		Fraction = function(st, now)
 			local origin, interval = st.origin, st.interval
@@ -302,10 +322,13 @@ function BarSweep:Render(now)
 			local cfg = record.cfg
 
 			if record.active and provider and cfg and visible
-				and provider.IsActive(state, now, cfg) then
+				and provider.IsActive(state, now, cfg, record) then
 				anyActive = true
 				place(record, position(provider.Fraction(state, now, cfg), cfg))
-				record.line:SetAlpha(provider.Alpha(state, now, cfg))
+				-- Two independent things multiply here: the user's opacity, which
+				-- is constant, and the provider's own alpha, which is 1 except
+				-- during the five second rule's fade.
+				record.line:SetAlpha(provider.Alpha(state, now, cfg) * (cfg.alpha or 1))
 				record.line:Show()
 			else
 				record.line:Hide()
@@ -329,7 +352,12 @@ end
 --- Put `providerName`'s line on `bar`, or take it off if the config says no.
 -- Passing a nil or disabled `cfg` detaches, so callers can express a gate as a
 -- single call rather than an if/else at every site.
-function BarSweep:Attach(frame, bar, providerName, cfg)
+--
+-- `powerType` and `atMax` describe what THIS bar is showing, which the tick
+-- provider needs and which differs between the power bar and the shapeshift
+-- mana bar. They are passed positionally rather than in a table because this is
+-- called on every power event and a per-call allocation is not wanted there.
+function BarSweep:Attach(frame, bar, providerName, cfg, powerType, atMax)
 	if not bar or not PROVIDERS[providerName] then return end
 
 	if not cfg or not cfg.enabled then
@@ -357,6 +385,8 @@ function BarSweep:Attach(frame, bar, providerName, cfg)
 	record.frame = frame
 	record.cfg = cfg
 	record.active = true
+	record.powerType = powerType
+	record.atMax = atMax and true or false
 
 	-- The tick sweep needs somewhere to start before any tick has been observed.
 	-- Seeding here rather than at load means an indicator turned on mid-session
@@ -369,7 +399,10 @@ function BarSweep:Attach(frame, bar, providerName, cfg)
 		state.trigger = cfg.trigger
 	end
 
-	record.line:SetColorTexture(Colors:Unpack(cfg.color))
+	-- Fully opaque here; opacity is applied through SetAlpha in Render, where it
+	-- can be combined with the five second rule's fade.
+	local r, g, b = Colors:Unpack(cfg.color)
+	record.line:SetColorTexture(r, g, b, 1)
 
 	self:Refresh()
 end

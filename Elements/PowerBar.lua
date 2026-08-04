@@ -32,11 +32,11 @@ local element = {
 -- cadence and mana expenditure are not observable.
 --------------------------------------------------------------------------------
 
-local function syncSweeps(frame, el, cfg)
+local function syncSweeps(frame, el, cfg, powerType, atMax)
 	if frame.unitKey ~= "player" then return end
 
 	local BarSweep = ns.BarSweep
-	BarSweep:Attach(frame, el.bar, "tick", cfg and cfg.tick)
+	BarSweep:Attach(frame, el.bar, "tick", cfg and cfg.tick, powerType, atMax)
 
 	-- The five second rule is about mana, so on the power bar the line is
 	-- attached only while the DISPLAYED power is mana — a general rule, not a
@@ -46,8 +46,9 @@ local function syncSweeps(frame, el, cfg)
 	--
 	-- This lives in Update rather than Layout so UNIT_DISPLAYPOWER is honoured:
 	-- a form change has to attach or detach it without a full config reload.
-	local isMana = Compat.GetPowerType(frame.unit) == Compat.MANA
-	BarSweep:Attach(frame, el.bar, "fsr", isMana and cfg and cfg.fsr or nil)
+	local isMana = powerType == Compat.MANA
+	BarSweep:Attach(frame, el.bar, "fsr", isMana and cfg and cfg.fsr or nil,
+		powerType, atMax)
 end
 
 --------------------------------------------------------------------------------
@@ -120,7 +121,7 @@ function element.Update(frame, el, cfg)
 	local br, bg, bb, ba = Colors:Background(r, g, b, cfg.bgMultiplier, cfg.bgAlpha)
 	el.bg:SetVertexColor(br, bg, bb, ba)
 
-	syncSweeps(frame, el, cfg)
+	syncSweeps(frame, el, cfg, powerType, maximum > 0 and current >= maximum)
 end
 
 --- See the note in Elements/HealthBar.lua: Disable is the only thing called

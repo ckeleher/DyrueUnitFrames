@@ -216,3 +216,22 @@ tick line answers with a constant 1.
 **`/duf profile` reports the derived interval and whether it has been observed
 or is still the seeded 2.0.** A derived value nobody can see is a derived value
 nobody can check.
+
+### Added after seeing it in game
+
+Two settings the plan did not anticipate, requested once the indicator was
+actually on screen:
+
+**Opacity is its own slider**, not the color's alpha channel. The color picker
+is built without an alpha channel, so storing opacity in `color.a` meant that
+touching the swatch wrote `a = 1` and silently reset it. The shipped colors are
+now fully opaque and `alpha` carries the opacity, multiplied at render time with
+the five second rule's fade — the two are independent and both have to apply.
+
+**`atMax` decides what happens once the bar is already full**, where the tick is
+still landing but has nothing to add: `always`, `mana`, `energy`, or `never`,
+where the middle two mean "keep it only on that kind of bar". It reads from the
+attachment record rather than from global state, because the same tick line is
+on the power bar and the shapeshift mana bar at once and "at max" means a
+different thing on each. A pleasant side effect: with `never` on a full bar, the
+provider goes inactive and the driver idles outright.
