@@ -25,8 +25,8 @@ local type, pairs, ipairs, next = type, pairs, ipairs, next
 -- Schemas 1-11 are folded into a single declarative step in Core/Migrate.lua;
 -- see the header there for why, and for the rule about when collapsing is safe.
 -- 12 was the first version after that collapse; 13 raises the target's buff row
--- off the combo bar added in Plan 9.
-Defaults.SCHEMA_VERSION = 13
+-- off the combo bar added in Plan 9; 14 quiets the aura overlays (Plan 13).
+Defaults.SCHEMA_VERSION = 14
 
 --------------------------------------------------------------------------------
 -- Table helpers
@@ -157,15 +157,25 @@ local function auraGroup(cfg)
 		countOwnPet = true,
 		desaturateOthers = false,
 		showCooldown = true,
+		-- Both numeric overlays ship OFF (Plan 13). Stacks used to ship on at
+		-- 11px, which on a 20px icon is over half the height of the art and made
+		-- a full debuff grid unreadable. The information is genuinely useful, so
+		-- this is a default rather than a removal: turn it back on and the 8px
+		-- size below is legible instead of dominant.
 		showDurationText = false,
 		durationFont = DEFAULT_FONT,
-		durationSize = 10,
+		durationSize = 8,
 		durationOutline = "OUTLINE",
-		showStacks = true,
-		stackCorner = "BOTTOMRIGHT",
+		durationAnchor = "CENTER",     -- nine points, or ABOVE | BELOW
+		durationX = 0,
+		durationY = 0,
+		showStacks = false,
+		stackCorner = "BOTTOMRIGHT",   -- same nine points, plus ABOVE | BELOW
 		stackFont = DEFAULT_FONT,
-		stackSize = 11,
+		stackSize = 8,
 		stackOutline = "OUTLINE",
+		stackX = 0,
+		stackY = 0,
 		onlyOwn = false,
 		useWhitelist = false,
 		whitelist = {},

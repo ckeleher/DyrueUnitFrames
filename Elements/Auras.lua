@@ -463,6 +463,52 @@ local function layoutGroup(frame, el, group, cfg, name)
 end
 
 --------------------------------------------------------------------------------
+-- Text placement
+--
+-- Both numeric overlays -- the duration timer and the stack count -- are placed
+-- by one rule, because they compete for the same 20 pixels and configuring them
+-- differently would be arbitrary.
+--
+-- The old code placed them by two hardcoded rules, and one of them was wrong:
+-- the stack count used a fixed (-1, 1) inset, which points *inward* only when
+-- the anchor happens to be BOTTOMRIGHT. Choosing TOPLEFT from the corner
+-- dropdown pushed the text left and up, clear off the icon. The signed table
+-- below is that bug's fix -- a positive inset moves toward the middle from any
+-- of the nine points.
+--------------------------------------------------------------------------------
+
+local TEXT_INSET = {
+	TOPLEFT     = {  1, -1 }, TOP    = { 0, -1 }, TOPRIGHT    = { -1, -1 },
+	LEFT        = {  1,  0 }, CENTER = { 0,  0 }, RIGHT       = { -1,  0 },
+	BOTTOMLEFT  = {  1,  1 }, BOTTOM = { 0,  1 }, BOTTOMRIGHT = { -1,  1 },
+}
+
+--- Position one aura overlay on its button.
+--
+-- `anchor` is one of the nine points, or ABOVE / BELOW for the two placements
+-- that sit outside the icon and leave the art alone. BELOW is what the duration
+-- text did before it was configurable, so a profile that liked it keeps it.
+--
+-- dx/dy are plain screen-space nudges on top of the 1px inset, deliberately not
+-- mirrored per anchor: a slider that moves text right moves it right everywhere.
+local function placeAuraText(fontString, button, anchor, dx, dy)
+	dx, dy = dx or 0, dy or 0
+	fontString:ClearAllPoints()
+
+	if anchor == "ABOVE" then
+		fontString:SetPoint("BOTTOM", button, "TOP", dx, dy + 1)
+		return
+	elseif anchor == "BELOW" then
+		fontString:SetPoint("TOP", button, "BOTTOM", dx, dy - 1)
+		return
+	end
+
+	local point = TEXT_INSET[anchor] and anchor or "BOTTOMRIGHT"
+	local inset = TEXT_INSET[point]
+	fontString:SetPoint(point, button, point, inset[1] + dx, inset[2] + dy)
+end
+
+--------------------------------------------------------------------------------
 -- Display
 --------------------------------------------------------------------------------
 
@@ -513,8 +559,7 @@ local function applyButton(frame, group, cfg, button, entry, cell, filter)
 	button.expirationTime = known and entry.expirationTime or nil
 	if cfg.showDurationText and known then
 		ns:SetFont(button.duration, cfg.durationFont, cfg.durationSize, cfg.durationOutline, true)
-		button.duration:ClearAllPoints()
-		button.duration:SetPoint("TOP", button, "BOTTOM", 0, -1)
+		placeAuraText(button.duration, button, cfg.durationAnchor, cfg.durationX, cfg.durationY)
 		button.duration:Show()
 		trackDuration(button, true)
 	else
@@ -525,8 +570,7 @@ local function applyButton(frame, group, cfg, button, entry, cell, filter)
 
 	if cfg.showStacks and (entry.count or 0) > 1 then
 		ns:SetFont(button.count, cfg.stackFont, cfg.stackSize, cfg.stackOutline, true)
-		button.count:ClearAllPoints()
-		button.count:SetPoint(cfg.stackCorner or "BOTTOMRIGHT", button, cfg.stackCorner or "BOTTOMRIGHT", -1, 1)
+		placeAuraText(button.count, button, cfg.stackCorner, cfg.stackX, cfg.stackY)
 		button.count:SetText(entry.count)
 		button.count:Show()
 	else
