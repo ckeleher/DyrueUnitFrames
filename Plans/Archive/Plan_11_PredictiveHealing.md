@@ -1,8 +1,46 @@
 # Plan 11 — Predictive Healing
 
-**Status:** Not started
+**Status:** Implemented on `Plan-11-predictive-healing`, merged in PR #13.
 **Created:** 3 August 2026
 **Branch:** `Plan-11-predictive-healing`
+
+The status line read *Not started* right up to the merge — it was never updated
+after the branch was written, and the branch then sat unmerged and unpushed on
+one machine for four days. Recorded rather than quietly corrected, because "the
+plan says not started" was the only signal available and it was wrong.
+
+**Deviations from the plan as written:**
+
+* **`Core/Locale.lua` needed no changes**, despite being in the Files table.
+  enUS is the identity mapping — the keys *are* the strings and `__index`
+  returns the key — so new `L["..."]` call sites work with no table entry. The
+  same habit that put it in Plan 13's Files table.
+* **`Config/TestMode.lua` was changed but is not in the Files table.** The
+  Design section describes the synthetic prediction it carries; the table just
+  missed it.
+* **The order-11 reasoning in *Where the code lives* is wrong.** It claims the
+  health fill "is already correct when the prediction measures against it"
+  because of the ordering. It is not: `RegisterEvents` builds each event's
+  handler list by iterating `activeElements`, which is unordered, so on a
+  `UNIT_HEALTH` the prediction may well run before the health bar. The
+  implementation is safe for a different reason, recorded in the element's
+  header — the fill position is computed from `UnitHealth` directly rather than
+  read off the bar. Order 11 is grouping, not a dependency.
+* **"No fourth ticker" is off by one.** `Systems/BarSweep.lua` is already the
+  fourth (Plans 2 and 10, recorded in `COMPAT_FINDINGS.md`), so what this plan
+  declined to add was a fifth. The argument holds either way; only the count
+  was wrong.
+* **The schema-version assertion needed re-pinning.** The suite pins
+  `SCHEMA_VERSION` to prove this plan adds no bump of its own, as an absolute
+  number. It was written against 13 and main reached 15 underneath it, so the
+  rebase before merge failed on it. Re-pinned to 15 after checking this
+  branch's `Core/Defaults.lua` matched main's exactly. It will go stale again
+  the same way.
+
+**Still outstanding:** absorb shields are Plan 12 and were never in scope here.
+The `healcomm` provider is still a single-entry `PROVIDERS` table, so group
+heal prediction remains unbuilt, and no live raid has exercised the combat-log
+listener under load.
 
 ---
 
