@@ -64,6 +64,29 @@ local function buildGroup(def, groupKey, order, label, isDebuff)
 	-- A group anchored to itself would be a loop; remove the self entry.
 	anchorValues[groupKey] = nil
 
+	-- Where a numeric overlay sits on its icon. The nine points, plus the two
+	-- placements that sit outside it -- the only ones that leave the art alone,
+	-- and BELOW is where the duration text lived before it was configurable.
+	--
+	-- PointValues() builds a fresh table per call, so extending it here is local
+	-- to this group and not a mutation of anything shared.
+	local textAnchorValues = ns.Anchoring:PointValues()
+	textAnchorValues.ABOVE = L["Above the icon"]
+	textAnchorValues.BELOW = L["Below the icon"]
+
+	-- Deliberately not Options.Range's "offset" preset: that is sized for moving
+	-- a frame around the screen (softMax 2000), and this nudges a number across
+	-- a 20px icon.
+	local function textOffset(name, order, key, shown)
+		return {
+			type = "range", order = order, name = name,
+			min = -20, max = 20, step = 1,
+			hidden = function() return not group()[shown] end,
+			get = function() return group()[key] end,
+			set = function(_, v) group()[key] = v; apply() end,
+		}
+	end
+
 	local args = {
 		notice = Options.CombatNotice(0),
 		breaker = Options.BreakerNotice(unitKey, "auras", 0.5),
@@ -212,25 +235,36 @@ local function buildGroup(def, groupKey, order, label, isDebuff)
 		},
 		durationSize = {
 			type = "range", order = 45, name = L["Duration size"],
+			desc = L["Icons are 20px by default. Much above 8 and the number covers the art it is sitting on."],
 			hidden = function() return not group().showDurationText end,
 			min = 4, max = 32, step = 1,
 			get = function() return group().durationSize end,
 			set = function(_, v) group().durationSize = v; apply() end,
 		},
+		durationAnchor = {
+			type = "select", order = 46, name = L["Duration anchor"],
+			hidden = function() return not group().showDurationText end,
+			values = textAnchorValues,
+			get = function() return group().durationAnchor end,
+			set = function(_, v) group().durationAnchor = v; apply() end,
+		},
+		durationX = textOffset(L["Duration X offset"], 47, "durationX", "showDurationText"),
+		durationY = textOffset(L["Duration Y offset"], 48, "durationY", "showDurationText"),
+
 		showStacks = {
-			type = "toggle", order = 46, name = L["Stack count"],
+			type = "toggle", order = 49, name = L["Stack count"],
 			get = function() return group().showStacks end,
 			set = function(_, v) group().showStacks = v; apply() end,
 		},
 		stackCorner = {
-			type = "select", order = 47, name = L["Stack corner"],
+			type = "select", order = 50, name = L["Stack anchor"],
 			hidden = function() return not group().showStacks end,
-			values = ns.Anchoring:PointValues(),
+			values = textAnchorValues,
 			get = function() return group().stackCorner end,
 			set = function(_, v) group().stackCorner = v; apply() end,
 		},
 		stackFont = {
-			type = "select", order = 48, name = L["Stack font"],
+			type = "select", order = 51, name = L["Stack font"],
 			dialogControl = "LSM30_Font",
 			hidden = function() return not group().showStacks end,
 			values = function() return LSM:HashTable("font") end,
@@ -238,16 +272,19 @@ local function buildGroup(def, groupKey, order, label, isDebuff)
 			set = function(_, v) group().stackFont = v; apply() end,
 		},
 		stackSize = {
-			type = "range", order = 49, name = L["Stack size"],
+			type = "range", order = 52, name = L["Stack size"],
+			desc = L["Icons are 20px by default. Much above 8 and the number covers the art it is sitting on."],
 			hidden = function() return not group().showStacks end,
 			min = 4, max = 32, step = 1,
 			get = function() return group().stackSize end,
 			set = function(_, v) group().stackSize = v; apply() end,
 		},
+		stackX = textOffset(L["Stack X offset"], 53, "stackX", "showStacks"),
+		stackY = textOffset(L["Stack Y offset"], 54, "stackY", "showStacks"),
 
-		sortHeader = { type = "header", order = 50, name = L["Sorting and filtering"] },
+		sortHeader = { type = "header", order = 60, name = L["Sorting and filtering"] },
 		sort = {
-			type = "select", order = 51, name = L["Sort by"],
+			type = "select", order = 61, name = L["Sort by"],
 			values = {
 				own_time = L["Yours first, then time remaining"],
 				time = L["Time remaining"],
@@ -258,55 +295,55 @@ local function buildGroup(def, groupKey, order, label, isDebuff)
 			set = function(_, v) group().sort = v; apply() end,
 		},
 		onlyOwn = {
-			type = "toggle", order = 52, name = L["Only show your own"],
+			type = "toggle", order = 62, name = L["Only show your own"],
 			get = function() return group().onlyOwn end,
 			set = function(_, v) group().onlyOwn = v; apply() end,
 		},
 		hidePermanent = {
-			type = "toggle", order = 53, name = L["Hide permanent auras"],
+			type = "toggle", order = 63, name = L["Hide permanent auras"],
 			get = function() return group().hidePermanent end,
 			set = function(_, v) group().hidePermanent = v; apply() end,
 		},
 		minDuration = {
-			type = "range", order = 54, name = L["Minimum duration (seconds)"],
+			type = "range", order = 64, name = L["Minimum duration (seconds)"],
 			desc = L["0 shows everything. Permanent auras are unaffected by this."],
 			min = 0, max = 600, softMax = 60, step = 1,
 			get = function() return group().minDuration end,
 			set = function(_, v) group().minDuration = v; apply() end,
 		},
 		useWhitelist = {
-			type = "toggle", order = 55, name = L["Only show listed spells"],
+			type = "toggle", order = 65, name = L["Only show listed spells"],
 			get = function() return group().useWhitelist end,
 			set = function(_, v) group().useWhitelist = v; apply() end,
 		},
 		whitelist = {
-			type = "input", order = 56, multiline = 6, width = "full",
+			type = "input", order = 66, multiline = 6, width = "full",
 			name = L["Whitelist (one spell name or ID per line)"],
 			hidden = function() return not group().useWhitelist end,
 			get = listGet(whitelist),
 			set = listSet(whitelist, apply),
 		},
 		useBlacklist = {
-			type = "toggle", order = 57, name = L["Hide listed spells"],
+			type = "toggle", order = 67, name = L["Hide listed spells"],
 			get = function() return group().useBlacklist end,
 			set = function(_, v) group().useBlacklist = v; apply() end,
 		},
 		blacklist = {
-			type = "input", order = 58, multiline = 6, width = "full",
+			type = "input", order = 68, multiline = 6, width = "full",
 			name = L["Blacklist (one spell name or ID per line)"],
 			hidden = function() return not group().useBlacklist end,
 			get = listGet(blacklist),
 			set = listSet(blacklist, apply),
 		},
 
-		tooltipHeader = { type = "header", order = 60, name = L["Tooltips"] },
+		tooltipHeader = { type = "header", order = 70, name = L["Tooltips"] },
 		tooltips = {
-			type = "toggle", order = 61, name = L["Show tooltips on hover"],
+			type = "toggle", order = 71, name = L["Show tooltips on hover"],
 			get = function() return group().tooltips end,
 			set = function(_, v) group().tooltips = v; apply() end,
 		},
 		tooltipsInCombat = {
-			type = "toggle", order = 62, name = L["Also in combat"],
+			type = "toggle", order = 72, name = L["Also in combat"],
 			disabled = function() return not group().tooltips end,
 			get = function() return group().tooltipsInCombat end,
 			set = function(_, v) group().tooltipsInCombat = v; apply() end,
@@ -315,7 +352,7 @@ local function buildGroup(def, groupKey, order, label, isDebuff)
 
 	if not isDebuff and unitKey == "player" then
 		args.cancelNote = {
-			type = "description", order = 63,
+			type = "description", order = 73,
 			name = L["|cffffcc00Right-click cancels your own buffs on this frame.|r Canceling is a protected action, so it goes through a secure attribute that can only be updated outside combat. Out of combat it is exact; during a fight the mapping can be one aura stale."],
 		}
 	end
