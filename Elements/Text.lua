@@ -114,7 +114,7 @@ end
 --------------------------------------------------------------------------------
 
 -- Matches the 4px inset the shipped texts sit at, so a fitted text stops the
--- same distance from its neighbour as it does from the edge of the bar.
+-- same distance from its neighbor as it does from the edge of the bar.
 local FIT_PADDING = 4
 
 -- ASCII on purpose. Fonts come from LibSharedMedia and are whatever the user
@@ -230,7 +230,7 @@ local function fitBudget(el, cfg, index, widths)
 
 	local at = anchorX(text, basis)
 
-	-- The widget's own edges are the outer limit. A neighbour only ever brings
+	-- The widget's own edges are the outer limit. A neighbor only ever brings
 	-- the boundary closer, so a text with nothing opposite it is still stopped
 	-- at the end of the bar instead of running off it.
 	local left, right = 0, basis
@@ -292,7 +292,7 @@ end
 --- Resolve every text's width limit and shorten what does not fit.
 --
 -- Two passes on purpose. All the natural widths are collected BEFORE anything
--- is shortened, so a `fit` text measures what its neighbour really renders and
+-- is shortened, so a `fit` text measures what its neighbor really renders and
 -- not what an earlier iteration already cut it down to. Otherwise the answer
 -- would depend on the order the texts happen to sit in the list, which is the
 -- ordering dependency this element has never had.
