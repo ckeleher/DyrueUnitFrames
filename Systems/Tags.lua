@@ -67,23 +67,41 @@ function Tags:Percent(current, maximum)
 	return format("%." .. decimals .. "f", pct)
 end
 
---- UTF-8 aware truncation for [name:short:N].
-function Tags:Truncate(text, maxChars)
-	if not text or not maxChars or maxChars <= 0 then return text end
-	local chars, i, n = 0, 1, len(text)
+--- The byte offset of the LAST byte of each UTF-8 character in `text`.
+--
+-- One walk, shared by the two things that need to cut a string without cutting
+-- through the middle of a character: [name:short:N], which counts characters,
+-- and Elements/Text's pixel truncation, which binary-searches them.
+function Tags:CharOffsets(text)
+	local offsets = {}
+	if type(text) ~= "string" then return offsets end
+
+	local i, n = 1, len(text)
 	while i <= n do
 		local b = byte(text, i)
 		local size = 1
 		if b >= 240 then size = 4
 		elseif b >= 224 then size = 3
 		elseif b >= 192 then size = 2 end
-		if chars >= maxChars then
-			return sub(text, 1, i - 1)
-		end
-		chars = chars + 1
+
+		local last = i + size - 1
+		-- A truncated multi-byte sequence at the end of the string would
+		-- otherwise index past it.
+		if last > n then last = n end
+
+		offsets[#offsets + 1] = last
 		i = i + size
 	end
-	return text
+
+	return offsets
+end
+
+--- UTF-8 aware truncation for [name:short:N].
+function Tags:Truncate(text, maxChars)
+	if not text or not maxChars or maxChars <= 0 then return text end
+	local offsets = self:CharOffsets(text)
+	if #offsets <= maxChars then return text end
+	return sub(text, 1, offsets[maxChars])
 end
 
 --------------------------------------------------------------------------------

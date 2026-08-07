@@ -295,9 +295,65 @@ local function quietAuraOverlays(profile)
 	return profile
 end
 
+--- 14 -> 15. Plan 6: a long name ran straight under the health numbers,
+-- because a text element had no width limit unless somebody typed a pixel
+-- figure into one. The shipped name texts now sit on `fit`, which measures the
+-- gap to whatever is rendered at the other end of the same bar.
+--
+-- Unlike most new keys this cannot be left to EnsureProfile. `texts` is a
+-- user-owned LIST, and Core/Defaults.lua's `ensure` deliberately does not
+-- descend into lists -- that is what makes a deleted text stay deleted. So a
+-- new key inside a text element reaches an existing profile only from here,
+-- and every text has to be written, not just the names.
+--
+-- Three cases:
+--   * a pixel width is already set, which is a deliberate choice nobody
+--     arrives at by accident: it keeps working, now spelled `pixels`;
+--   * an untouched shipped name text: `fit`, which is the actual change;
+--   * everything else: `none`, which is exactly what it did before.
+--
+-- "Untouched" is the format AND the anchor together, the same rule steps 12 and
+-- 13 used. A name text somebody has re-anchored or re-worded is a layout they
+-- chose, and silently clipping it is the sort of surprise this whole file
+-- exists to avoid.
+local SHIPPED_NAME_FORMATS = {
+	["[name]"] = true,
+	["[name:short:10]"] = true,       -- party pets, which ship pre-shortened
+}
+
+local function textWidthModes(profile)
+	local units = profile.units
+	if type(units) ~= "table" then return profile end
+
+	for _, u in pairs(units) do
+		local texts = type(u) == "table" and u.texts
+		if type(texts) == "table" then
+			for i = 1, #texts do
+				local t = texts[i]
+				if type(t) == "table" then
+					if t.maxWidthPercent == nil then t.maxWidthPercent = 55 end
+
+					if t.maxWidthMode == nil then
+						if (t.maxWidth or 0) > 0 then
+							t.maxWidthMode = "pixels"
+						elseif SHIPPED_NAME_FORMATS[t.format] and t.anchorTo == "health" then
+							t.maxWidthMode = "fit"
+						else
+							t.maxWidthMode = "none"
+						end
+					end
+				end
+			end
+		end
+	end
+
+	return profile
+end
+
 local steps = {
 	[12] = raiseTargetBuffs,
 	[13] = quietAuraOverlays,
+	[14] = textWidthModes,
 }
 
 Migrate.steps = steps

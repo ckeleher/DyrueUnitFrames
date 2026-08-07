@@ -59,6 +59,8 @@ Phase 0 is for.
 | `GetPetHappiness` | Present (Classic/TBC only) | | | `[happiness]` tag |
 | `ClickCastFrames` | Only with Clique installed | | | Clique interop |
 | `GetAddOnMemoryUsage` vs `C_AddOns.*` | Both handled | | | `/duf profile` |
+| `FontString:GetStringWidth` returns the **unconstrained** width | Yes — the width the string would render at, whatever `SetWidth` says | | | `Elements/Text.lua` width modes (Plan 6). If it instead returned the clamped width, a fitted name would measure as already fitting and would never be shortened. Checkable in one line: `/run local f=UIParent:CreateFontString(nil,"OVERLAY","GameFontNormal") f:SetWidth(20) f:SetText("aaaaaaaaaaaaaaaaaaaa") print(f:GetStringWidth())` — expect well over 20 |
+| `GetStringWidth` works on a **hidden** font string | Yes | | | Same. Text elements are measured during an update that may run while the frame is not shown |
 
 ### VERIFIED — `UNIT_COMBO_POINTS` does not exist on TBC Anniversary
 
