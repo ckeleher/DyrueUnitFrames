@@ -3932,6 +3932,63 @@ local function testBarSweep()
 end
 
 --------------------------------------------------------------------------------
+-- Highlight: the one frame where the target outline says nothing
+--
+-- "Outline when this unit is your target" describes a state the target frame is
+-- never out of, so what it actually draws there is a permanent border -- which
+-- is Layout > Border, with a color and a size of its own. Neither offered nor
+-- drawn on that frame; unchanged everywhere else, which is the half of this
+-- that is easy to break.
+--------------------------------------------------------------------------------
+
+local function testHighlight()
+	local units = ns.Options.table.args.units.args
+	local targetArgs = units.target.args.highlight.args
+
+	check("highlight/target outline not offered on the target frame",
+		targetArgs.targetEnabled == nil and targetArgs.targetColor == nil)
+	check("highlight/the rest of the group survives there",
+		targetArgs.mouseoverEnabled ~= nil and targetArgs.mouseoverColor ~= nil
+			and targetArgs.thickness ~= nil)
+	check("highlight/still offered where it means something",
+		units.focus.args.highlight.args.targetEnabled ~= nil
+			and units.party1.args.highlight.args.targetEnabled ~= nil)
+
+	-- Every profile written before this carries targetEnabled = true on the
+	-- target frame, and a migration step to clear a key nothing reads would be
+	-- schema churn. The value is ignored instead, so it has to STAY ignored.
+	ns:UnitConfig("target").highlight.targetEnabled = true
+	ns:BumpSerial()
+	ns:RefreshUnit("target")
+
+	local el = ns.frames.target.elements.highlight
+	check("highlight/element still built for the mouseover outline", el ~= nil)
+	if el then
+		check("highlight/no target outline on the target frame",
+			not el.target.edges[1]:IsShown())
+	end
+
+	-- A frame that merely HAPPENS to be your target is the case being kept:
+	-- same unit table behind both tokens, so the stub's UnitIsUnit says yes.
+	stub.setUnit("focus", stub.units.target)
+	ns.frames.focus:FullUpdate()
+	local focusEl = ns.frames.focus.elements.highlight
+	check("highlight/a frame that happens to be your target is outlined",
+		focusEl ~= nil and focusEl.target.edges[1]:IsShown())
+
+	stub.setUnit("focus", nil)
+	ns.frames.focus:FullUpdate()
+	if focusEl then
+		check("highlight/and drops it once that stops being true",
+			not focusEl.target.edges[1]:IsShown())
+	end
+
+	ns.Defaults:ResetUnit(ns:Profile(), "target")
+	ns:BumpSerial()
+	ns:RefreshUnit("target")
+end
+
+--------------------------------------------------------------------------------
 -- 26. No stray globals
 --
 -- A leaked global in an addon is how two addons quietly break each other.
@@ -4016,6 +4073,7 @@ local suites = {
 	{ "portrait", testPortrait },
 	{ "combo-points", testComboPoints },
 	{ "bar-sweep", testBarSweep },
+	{ "highlight", testHighlight },
 	{ "global-leaks", testNoGlobalLeaks },
 }
 
