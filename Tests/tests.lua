@@ -3932,24 +3932,31 @@ local function testBarSweep()
 end
 
 --------------------------------------------------------------------------------
--- Highlight: the one frame where the target outline says nothing
+-- Highlight: the two frames where the target outline says nothing
 --
--- "Outline when this unit is your target" describes a state the target frame is
--- never out of, so what it actually draws there is a permanent border -- which
--- is Layout > Border, with a color and a size of its own. Neither offered nor
--- drawn on that frame; unchanged everywhere else, which is the half of this
--- that is easy to break.
+-- "Outline when this unit is your target" states nothing on either end of the
+-- pair. The target frame is never out of that state, so what it draws there is
+-- a permanent border -- which is Layout > Border, with a color and a size of
+-- its own. The player frame can never be in it, because the addon does not
+-- point at you when you target yourself. Offered on neither, drawn on neither,
+-- unchanged everywhere else -- and that last part is the half that is easy to
+-- break.
 --------------------------------------------------------------------------------
 
 local function testHighlight()
 	local units = ns.Options.table.args.units.args
 	local targetArgs = units.target.args.highlight.args
+	local playerArgs = units.player.args.highlight.args
 
 	check("highlight/target outline not offered on the target frame",
 		targetArgs.targetEnabled == nil and targetArgs.targetColor == nil)
+	check("highlight/nor on the player frame",
+		playerArgs.targetEnabled == nil and playerArgs.targetColor == nil)
 	check("highlight/the rest of the group survives there",
 		targetArgs.mouseoverEnabled ~= nil and targetArgs.mouseoverColor ~= nil
 			and targetArgs.thickness ~= nil)
+	check("highlight/and on the player frame too",
+		playerArgs.mouseoverEnabled ~= nil and playerArgs.thickness ~= nil)
 	check("highlight/still offered where it means something",
 		units.focus.args.highlight.args.targetEnabled ~= nil
 			and units.party1.args.highlight.args.targetEnabled ~= nil)
@@ -3983,9 +3990,29 @@ local function testHighlight()
 			not focusEl.target.edges[1]:IsShown())
 	end
 
+	-- The player frame, the other way round: target yourself and it still must
+	-- not light up. This one was already true -- Update has always refused to
+	-- mark you -- so the assertion is here to keep the setting's removal and
+	-- the drawing honest together rather than because the behavior is new.
+	local realTarget = stub.units.target
+	ns:UnitConfig("player").highlight.targetEnabled = true
+	ns:BumpSerial()
+	ns:RefreshUnit("player")
+	stub.setUnit("target", stub.units.player)
+	ns.frames.player:FullUpdate()
+
+	local playerEl = ns.frames.player.elements.highlight
+	check("highlight/no target outline on the player frame",
+		playerEl ~= nil and not playerEl.target.edges[1]:IsShown())
+
+	stub.setUnit("target", realTarget)
+	ns.frames.player:FullUpdate()
+
 	ns.Defaults:ResetUnit(ns:Profile(), "target")
+	ns.Defaults:ResetUnit(ns:Profile(), "player")
 	ns:BumpSerial()
 	ns:RefreshUnit("target")
+	ns:RefreshUnit("player")
 end
 
 --------------------------------------------------------------------------------

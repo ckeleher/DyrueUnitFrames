@@ -828,11 +828,13 @@ local function highlightGroup(def)
 		},
 	}
 
-	-- The target frame is your target by definition, so both target-outline
-	-- settings describe a border that is simply always on -- Layout > Border,
-	-- with a color and a size of its own. Elements/Highlight.lua ignores them
-	-- there; not offering them is the other half of the same statement.
-	if unitKey == "target" then
+	-- Two frames where the target outline states nothing, for opposite reasons.
+	-- The target frame always is your target, so both settings describe a
+	-- border that is simply always on -- Layout > Border, with a color and a
+	-- size of its own. The player frame never is: the addon does not point at
+	-- you when you target yourself. Elements/Highlight.lua ignores them on
+	-- both; not offering them is the other half of the same statement.
+	if unitKey == "target" or unitKey == "player" then
 		args.targetEnabled = nil
 		args.targetColor = nil
 	end
