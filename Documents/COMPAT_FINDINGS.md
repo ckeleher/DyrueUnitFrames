@@ -67,6 +67,8 @@ Phase 0 is for.
 | `UNIT_HEAL_PREDICTION` | **Absent** | | | Would be the push event for the above |
 | `CombatLogGetCurrentEventInfo` | Present | | | `Compat.GetCombatLogEvent`. Every amount Plan 11 predicts is learned through it |
 | `UnitCastingInfo` / `UnitChannelInfo` | Present, milliseconds | | | `Compat.GetCastEndTime`. Only ever called for `"player"` |
+| `Texture:SetGradient` takes color **objects** | Present — 10.0 signature | | | Plan 16's overflow cap band, through `Compat.SetGradient`. Needs `CreateColor` too, which is assumed present wherever this is |
+| `Texture:SetGradientAlpha` (eight loose numbers) | **Absent** — replaced in 10.0 | | | The pre-10.0 form. Tried second and expected to fail; if it turns out to be the live one on either client, the wrapper already handles it and only this row changes |
 
 ### VERIFIED — `GetStringWidth` ignores `SetWidth`
 

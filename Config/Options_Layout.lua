@@ -178,7 +178,10 @@ local function healPredictionArgs(unitKey, apply)
 		return c and c.healPrediction
 	end
 
+	local function cap() return pred().cap end
+
 	local function disabled() return not pred().enabled end
+	local function capDisabled() return disabled() or not pred().overflow end
 
 	return {
 		breaker = Options.BreakerNotice(unitKey, "healPrediction", 0.5),
@@ -226,6 +229,39 @@ local function healPredictionArgs(unitKey, apply)
 			disabled = function() return disabled() or not pred().overflow end,
 			get = function() return pred().overflowAmount end,
 			set = function(_, v) pred().overflowAmount = v; apply() end,
+		},
+
+		-- Plan 16. Every control here needs overflow on as well as prediction
+		-- on, since there is no cap to mark without a limit to reach.
+		capHeader = {
+			type = "header", order = 9, name = L["Overflow cap"],
+			hidden = function() return disabled() end,
+		},
+		capEnabled = {
+			type = "toggle", order = 10, name = L["Mark the capped edge"],
+			desc = L["When more healing is coming than the overflow is allowed to show, fade a band in at the far edge to say so. Only ever drawn while overflow is on."],
+			disabled = capDisabled,
+			get = function() return cap().enabled end,
+			set = function(_, v) cap().enabled = v; apply() end,
+		},
+		capColor = Options.Color(L["Cap color"], 11, cap, "color", apply, {
+			disabled = function() return capDisabled() or not cap().enabled end,
+		}),
+		capWidth = {
+			type = "range", order = 12, name = L["Cap width"],
+			desc = L["How far back from the edge the band fades. Clamped automatically so it never reaches past the prediction onto the health bar itself."],
+			min = 1, max = 40, softMax = 20, step = 1,
+			disabled = function() return capDisabled() or not cap().enabled end,
+			get = function() return cap().width end,
+			set = function(_, v) cap().width = v; apply() end,
+		},
+		capAlpha = {
+			type = "range", order = 13, name = L["Cap opacity"],
+			desc = L["Opacity at the outer edge, fading to nothing inward."],
+			min = 0.1, max = 1, step = 0.01,
+			disabled = function() return capDisabled() or not cap().enabled end,
+			get = function() return cap().alpha end,
+			set = function(_, v) cap().alpha = v; apply() end,
 		},
 	}
 end
