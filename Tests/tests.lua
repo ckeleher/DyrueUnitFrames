@@ -59,17 +59,19 @@ local function setupWorld()
 		auras = {
 			HELPFUL = {
 				{ name = "Blessing", icon = 1, applications = 0, duration = 300,
-				  expirationTime = 1200, sourceUnit = "player", spellId = 1001, isHelpful = true },
+				  expirationTime = 1200, sourceUnit = "player", spellId = 1001,
+				  auraInstanceID = 101, isHelpful = true },
 				{ name = "Fortitude", icon = 2, applications = 0, duration = 0,
-				  expirationTime = 0, sourceUnit = "party1", spellId = 1002, isHelpful = true },
+				  expirationTime = 0, sourceUnit = "party1", spellId = 1002,
+				  auraInstanceID = 102, isHelpful = true },
 			},
 			HARMFUL = {
 				{ name = "Sunder Armor", icon = 3, applications = 5, duration = 30,
 				  expirationTime = 1030, sourceUnit = "player", spellId = 2001,
-				  dispelName = nil, isHarmful = true },
+				  auraInstanceID = 201, dispelName = nil, isHarmful = true },
 				{ name = "Curse of Agony", icon = 4, applications = 0, duration = nil,
 				  expirationTime = nil, sourceUnit = "party2", spellId = 2002,
-				  dispelName = "Curse", isHarmful = true },
+				  auraInstanceID = 202, dispelName = "Curse", isHarmful = true },
 			},
 		},
 	})
@@ -1715,6 +1717,202 @@ local function testAuraTextPlacement()
 	debuffs.showStacks = false
 	debuffs.stackCorner = "BOTTOMRIGHT"
 	refresh()
+end
+
+--------------------------------------------------------------------------------
+-- 19c. Aura order stability (Plan 14)
+--
+-- The sorters tie-broke on the client's slot index, which permutes as auras
+-- come and go. On a target that WAS the whole order rather than a tie-break:
+-- FR-5.8 means everything you did not cast reports expiration 0, so every one
+-- of them ties on expiry and falls through to the index.
+--
+-- The fixture array used to be perfectly stable, so no test could see it.
+-- stub.permuteAuras is what makes these assertions possible at all.
+--------------------------------------------------------------------------------
+
+local function testAuraOrderStability()
+	local target = ns.frames.target
+	local cfg = ns:UnitConfig("target").auras.debuffs
+	local group = target.elements.auras.debuffs
+
+	local originalAuras = stub.units.target.auras.HARMFUL
+	local savedSort, savedMax = cfg.sort, cfg.maxShown
+
+	local function refresh()
+		ns:BumpSerial()
+		ns:RefreshUnit("target")
+	end
+
+	-- Four auras nobody owns and nothing knows a duration for: the exact case
+	-- that used to churn, since all four tie on expiry.
+	local function untimed(name, icon, spellId, instanceID)
+		return { name = name, icon = icon, applications = 0, duration = 0,
+			expirationTime = 0, sourceUnit = "party2", spellId = spellId,
+			auraInstanceID = instanceID, isHarmful = true }
+	end
+
+	local function setAuras(list)
+		stub.units.target.auras.HARMFUL = list
+		refresh()
+	end
+
+	-- What is actually in the cells. Buttons are placed into cell i from
+	-- list[i], so the icon textures read left to right are the rendered order --
+	-- not a restatement of the list the sorter just produced.
+	local function onScreen()
+		local icons = {}
+		for i = 1, #group.list do
+			local button = group.buttons[i]
+			if button and button:IsShown() then
+				icons[#icons + 1] = tostring(button.icon:GetTexture())
+			end
+		end
+		return table.concat(icons, ",")
+	end
+
+	cfg.sort = "own_time"
+	setAuras({
+		untimed("Alpha", 11, 3001, 301),
+		untimed("Bravo", 12, 3002, 302),
+		untimed("Charlie", 13, 3003, 303),
+		untimed("Delta", 14, 3004, 304),
+	})
+
+	local applied = onScreen()
+	equal("auraorder/application order to start", applied, "11,12,13,14")
+
+	--------------------------------------------------------------------------
+	-- The bug: the client reshuffles its own list, nothing else changes
+	--------------------------------------------------------------------------
+
+	stub.permuteAuras("target", "HARMFUL", { 4, 2, 1, 3 })
+	refresh()
+	equal("auraorder/order survives a slot permutation", onScreen(), applied)
+
+	stub.permuteAuras("target", "HARMFUL", { 2, 3, 4, 1 })
+	refresh()
+	equal("auraorder/and a second, different one", onScreen(), applied)
+
+	--------------------------------------------------------------------------
+	-- An aura falling off shifts the rest up; it does not reshuffle them
+	--------------------------------------------------------------------------
+
+	setAuras({
+		untimed("Alpha", 11, 3001, 301),
+		untimed("Bravo", 12, 3002, 302),
+		untimed("Charlie", 13, 3003, 303),
+		untimed("Delta", 14, 3004, 304),
+	})
+	stub.removeAura("target", "HARMFUL", 2)
+	refresh()
+	equal("auraorder/losing one closes the gap without churn", onScreen(), "11,13,14")
+
+	--------------------------------------------------------------------------
+	-- Over the cap and back under it
+	--
+	-- The reported symptom was that the churn started when the grid filled and
+	-- did not stop when it emptied again -- because the client's slot order
+	-- stays permuted once it has been.
+	--------------------------------------------------------------------------
+
+	cfg.maxShown = 2
+	setAuras({
+		untimed("Alpha", 11, 3001, 301),
+		untimed("Bravo", 12, 3002, 302),
+		untimed("Charlie", 13, 3003, 303),
+		untimed("Delta", 14, 3004, 304),
+	})
+	equal("auraorder/over the cap, the first two show", onScreen(), "11,12")
+
+	stub.permuteAuras("target", "HARMFUL", { 3, 4, 1, 2 })
+	refresh()
+	equal("auraorder/still the first two after a permutation", onScreen(), "11,12")
+
+	-- Drop below the cap, with the slot order left permuted.
+	stub.removeAura("target", "HARMFUL", 1)
+	stub.removeAura("target", "HARMFUL", 1)
+	cfg.maxShown = savedMax
+	refresh()
+	equal("auraorder/order holds after dropping back under the cap",
+		onScreen(), "11,12")
+
+	--------------------------------------------------------------------------
+	-- No instance IDs: the legacy UnitAura path has none, so spellId carries it
+	--------------------------------------------------------------------------
+
+	setAuras({
+		untimed("Alpha", 11, 3001, nil),
+		untimed("Bravo", 12, 3002, nil),
+		untimed("Charlie", 13, 3003, nil),
+	})
+	local legacyOrder = onScreen()
+	equal("auraorder/spellId orders when there is no instance ID",
+		legacyOrder, "11,12,13")
+	stub.permuteAuras("target", "HARMFUL", { 3, 1, 2 })
+	refresh()
+	equal("auraorder/and is stable across a permutation", onScreen(), legacyOrder)
+
+	--------------------------------------------------------------------------
+	-- Timed auras still sort by time; only the ties changed
+	--------------------------------------------------------------------------
+
+	setAuras({
+		{ name = "Mine Late", icon = 21, applications = 0, duration = 60,
+		  expirationTime = 9000, sourceUnit = "player", spellId = 4001,
+		  auraInstanceID = 401, isHarmful = true },
+		{ name = "Mine Soon", icon = 22, applications = 0, duration = 60,
+		  expirationTime = 5000, sourceUnit = "player", spellId = 4002,
+		  auraInstanceID = 402, isHarmful = true },
+		untimed("Theirs A", 23, 4003, 403),
+		untimed("Theirs B", 24, 4004, 404),
+	})
+	equal("auraorder/yours first by expiry, then theirs in application order",
+		onScreen(), "22,21,23,24")
+
+	stub.permuteAuras("target", "HARMFUL", { 4, 3, 2, 1 })
+	refresh()
+	equal("auraorder/mixed order is stable too", onScreen(), "22,21,23,24")
+
+	--------------------------------------------------------------------------
+	-- Duplicate names are a real tie for the name sorter, and must not churn
+	--------------------------------------------------------------------------
+
+	cfg.sort = "name"
+	setAuras({
+		untimed("Same", 31, 5001, 501),
+		untimed("Same", 32, 5002, 502),
+		untimed("Same", 33, 5003, 503),
+	})
+	local byName = onScreen()
+	equal("auraorder/tied names fall back to application order", byName, "31,32,33")
+	stub.permuteAuras("target", "HARMFUL", { 2, 3, 1 })
+	refresh()
+	equal("auraorder/tied names stay put across a permutation", onScreen(), byName)
+
+	--------------------------------------------------------------------------
+	-- "Game order" means the client's order, and is expected to move
+	--------------------------------------------------------------------------
+
+	cfg.sort = "index"
+	setAuras({
+		untimed("Alpha", 11, 3001, 301),
+		untimed("Bravo", 12, 3002, 302),
+		untimed("Charlie", 13, 3003, 303),
+	})
+	equal("auraorder/game order starts as the client reports it", onScreen(), "11,12,13")
+	stub.permuteAuras("target", "HARMFUL", { 3, 1, 2 })
+	refresh()
+	equal("auraorder/game order deliberately follows the client", onScreen(), "13,11,12")
+
+	--------------------------------------------------------------------------
+	-- Restore the world for the suites that come after
+	--------------------------------------------------------------------------
+
+	cfg.sort, cfg.maxShown = savedSort, savedMax
+	stub.units.target.auras.HARMFUL = originalAuras
+	refresh()
+	equal("auraorder/fixture restored", #group.list, 2)
 end
 
 --------------------------------------------------------------------------------
@@ -3802,6 +4000,7 @@ local suites = {
 	{ "text-coloring", testTextColoring },
 	{ "aura-filtering", testAuraFiltering },
 	{ "aura-text-placement", testAuraTextPlacement },
+	{ "aura-order-stability", testAuraOrderStability },
 	{ "derived-identity", testDerivedIdentity },
 	{ "tools-and-modes", testToolsAndModes },
 	{ "slash-commands", testSlashCommands },

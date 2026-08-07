@@ -27,6 +27,35 @@ function stub.setUnit(token, data)
 	stub.units[token] = data
 end
 
+--- Reorder a unit's aura list in place, without changing which auras are up.
+--
+-- The client's aura container is slot-based: removing an aura frees its slot
+-- and a later one lands in it, so the index order permutes while every aura
+-- involved stays exactly where it was applied. This fixture array used to be
+-- perfectly stable, which is precisely why no test could catch an addon that
+-- sorted on the index (Plan 14).
+--
+-- `order` holds source indices: { 3, 1, 2 } makes the old third aura the new
+-- first.
+function stub.permuteAuras(token, filter, order)
+	local d = stub.units[token]
+	local list = d and d.auras and d.auras[filter]
+	if not list then return end
+
+	local moved = {}
+	for new, old in ipairs(order) do moved[new] = list[old] end
+	for i = #list, 1, -1 do list[i] = nil end
+	for i = 1, #moved do list[i] = moved[i] end
+end
+
+--- Drop one aura; the survivors close up, as they do on the client.
+function stub.removeAura(token, filter, index)
+	local d = stub.units[token]
+	local list = d and d.auras and d.auras[filter]
+	if not list then return end
+	table.remove(list, index)
+end
+
 function stub.reset()
 	stub.units = {}
 	stub.inCombat = false

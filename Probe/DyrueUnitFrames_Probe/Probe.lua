@@ -13,6 +13,7 @@
 --   /dufprobe derived    target-of-target / focus event trace (task 0.3)
 --   /dufprobe health     enemy health scaling on the current target (task 0.4)
 --   /dufprobe portrait   2D and 3D portrait feasibility (task 0.8)
+--   /dufprobe auraorder  60-second aura index stability trace (Plan 14)
 --   /dufprobe dump       re-print the last survey
 
 local ADDON = ...
@@ -457,6 +458,144 @@ local function portraitProbe()
 end
 
 --------------------------------------------------------------------------------
+-- Plan 14 - aura index stability
+--
+-- The addon used to tie-break its aura sort on the index passed to
+-- GetAuraDataByIndex, on the assumption that an aura keeps its index for as
+-- long as it is applied. If the client's aura container reuses freed slots
+-- instead of re-packing, that assumption is false and the displayed order
+-- churns for reasons nothing in the addon can see.
+--
+-- Four questions, in the order they matter:
+--   1. does a still-applied aura ever change index?
+--   2. is auraInstanceID actually populated on this build?
+--   3. is it monotonic, i.e. is ordering by it the same as application order?
+--   4. does sourceUnit ever change under a fixed aura? (the rival explanation:
+--      `own` flipping would move an aura between sort blocks AND resize it)
+--------------------------------------------------------------------------------
+
+local auraTracer = CreateFrame("Frame")
+
+local function startAuraOrderTrace(seconds)
+	seconds = seconds or 60
+
+	local findings = {
+		indexChanges = 0, instanceIDs = 0, missingInstanceIDs = 0,
+		sourceChanges = 0, outOfOrder = 0, samples = 0, examples = {},
+	}
+	-- Keyed by a stable identity, holding the last index and source seen.
+	local seen = {}
+	local started = GetTime()
+
+	DyrueUnitFramesProbeDB.auraOrder = findings
+
+	local function note(text)
+		if #findings.examples < 12 then
+			findings.examples[#findings.examples + 1] = text
+			out(text)
+		end
+	end
+
+	local function sample()
+		if not UnitExists("target") then return end
+		findings.samples = findings.samples + 1
+
+		for _, filter in ipairs({ "HARMFUL", "HELPFUL" }) do
+			local previousID = nil
+
+			for index = 1, 40 do
+				local data = C_UnitAuras
+					and C_UnitAuras.GetAuraDataByIndex("target", index, filter)
+				if not data or not data.name then break end
+
+				local id = data.auraInstanceID
+				if id then
+					findings.instanceIDs = findings.instanceIDs + 1
+					-- Q3: within one sweep, are IDs ascending? They are issued
+					-- per application, so ascending means index order and
+					-- application order still agree at this instant.
+					if previousID and id < previousID then
+						findings.outOfOrder = findings.outOfOrder + 1
+					end
+					previousID = id
+				else
+					findings.missingInstanceIDs = findings.missingInstanceIDs + 1
+				end
+
+				-- Identity has to come from something that is NOT the index.
+				local key = filter .. ":" .. tostring(id or (tostring(data.spellId)
+					.. ":" .. tostring(data.sourceUnit)))
+				local before = seen[key]
+
+				if before then
+					if before.index ~= index then
+						findings.indexChanges = findings.indexChanges + 1
+						note(string.format("%.1fs %s moved slot %d -> %d",
+							GetTime() - started, tostring(data.name), before.index, index))
+					end
+					if before.source ~= data.sourceUnit then
+						findings.sourceChanges = findings.sourceChanges + 1
+						note(string.format("%.1fs %s source %s -> %s",
+							GetTime() - started, tostring(data.name),
+							tostring(before.source), tostring(data.sourceUnit)))
+					end
+					before.index, before.source = index, data.sourceUnit
+				else
+					seen[key] = { index = index, source = data.sourceUnit,
+						name = data.name }
+				end
+			end
+		end
+	end
+
+	header("Aura order trace (Plan 14)")
+	if not (C_UnitAuras and C_UnitAuras.GetAuraDataByIndex) then
+		out("|cffff5555No C_UnitAuras on this client.|r The legacy UnitAura path")
+		out("has no auraInstanceID, so the addon orders by spellId there.")
+		return
+	end
+
+	out("Tracing target aura slots for " .. seconds .. "s.")
+	out("Target something with a lot of debuffs on it and let them come and go.")
+	out("A dungeon pull with a group on it is the case that broke.")
+
+	auraTracer:RegisterEvent("UNIT_AURA")
+	auraTracer:SetScript("OnEvent", function(_, _, unit)
+		if unit == "target" then sample() end
+	end)
+	sample()
+
+	C_Timer.After(seconds, function()
+		auraTracer:UnregisterAllEvents()
+		auraTracer:SetScript("OnEvent", nil)
+
+		header("Aura order trace finished")
+		out("Samples:", findings.samples)
+		out("Auras that changed slot while still applied:", findings.indexChanges)
+		out("auraInstanceID present:", findings.instanceIDs,
+			" absent:", findings.missingInstanceIDs)
+		out("Sweeps where instance IDs were not ascending:", findings.outOfOrder)
+		out("sourceUnit changes under a fixed aura:", findings.sourceChanges)
+
+		if findings.indexChanges > 0 then
+			out("|cff40ff40Confirms Plan 14 candidate 1:|r the index is not stable.")
+		elseif findings.samples > 5 then
+			out("|cffffcc00No index churn seen.|r Either the container re-packs or")
+			out("the trace did not run long enough. Do not conclude from a quiet pull.")
+		end
+
+		if findings.missingInstanceIDs > 0 then
+			out("|cffff5555auraInstanceID is missing on this build|r - the sort")
+			out("falls back to spellId, which ties between two casts of one spell.")
+		end
+		if findings.sourceChanges > 0 then
+			out("|cffffcc00sourceUnit also flapped|r - candidate 2 is live as well,")
+			out("and needs its own fix: `own` flipping moves an aura AND resizes it.")
+		end
+	end)
+end
+
+--------------------------------------------------------------------------------
 -- Slash command
 --------------------------------------------------------------------------------
 
@@ -472,6 +611,8 @@ SlashCmdList.DUFPROBE = function(input)
 		healthProbe()
 	elseif cmd == "portrait" then
 		portraitProbe()
+	elseif cmd == "auraorder" then
+		startAuraOrderTrace(60)
 	elseif cmd == "portraitoff" then
 		if portraitFrame then portraitFrame:Hide() end
 		if portraitFrame and portraitFrame.model then portraitFrame.model:Hide() end
@@ -481,7 +622,7 @@ SlashCmdList.DUFPROBE = function(input)
 		out("Survey from", record.timestamp, "toc", record.tocVersion)
 	else
 		survey()
-		out("Also run: |cffffcc00/dufprobe mana|r, |cffffcc00derived|r, |cffffcc00health|r, |cffffcc00portrait|r")
+		out("Also run: |cffffcc00/dufprobe mana|r, |cffffcc00derived|r, |cffffcc00health|r, |cffffcc00portrait|r, |cffffcc00auraorder|r")
 	end
 end
 
