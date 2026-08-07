@@ -267,6 +267,55 @@ function Compat.GetCombatLogEvent()
 end
 
 --------------------------------------------------------------------------------
+-- Texture gradients (Plan 16)
+--
+-- Nothing else in this addon sets a gradient, and the method that does it was
+-- renamed: SetGradientAlpha took eight loose numbers, and 10.0 replaced it with
+-- SetGradient taking two color OBJECTS. These clients run the shared modern
+-- code so the new form is expected -- but "expected" is exactly what this file
+-- exists to stop the rest of the addon relying on, so both are probed and no
+-- caller outside this block names either method.
+--
+-- When neither exists the wrapper reports failure rather than erroring, and
+-- Elements/HealPrediction draws a solid band instead. A gradient is how the cap
+-- indicator LOOKS; marking the clipped edge at all is what it is FOR, and the
+-- second of those should not depend on the first.
+--------------------------------------------------------------------------------
+
+local probeTexture = probeFrame:CreateTexture(nil, "BACKGROUND")
+
+Compat.hasSetGradient = (type(probeTexture.SetGradient) == "function")
+Compat.hasSetGradientAlpha = (type(probeTexture.SetGradientAlpha) == "function")
+
+--- Apply a two-stop gradient in whichever form this client accepts.
+-- @param orientation string "HORIZONTAL" | "VERTICAL"
+-- @return boolean false when the client has neither method, so the caller can
+--         draw something simpler rather than nothing at all.
+function Compat.SetGradient(texture, orientation, r1, g1, b1, a1, r2, g2, b2, a2)
+	if not texture then return false end
+
+	if Compat.hasSetGradient then
+		-- The 10.0 signature wants ColorMixin objects, and CreateColor is the
+		-- documented way to build one. If it is somehow absent, fall through to
+		-- the older form rather than calling nil.
+		local create = _G.CreateColor
+		if create then
+			local ok = pcall(texture.SetGradient, texture, orientation,
+				create(r1, g1, b1, a1), create(r2, g2, b2, a2))
+			if ok then return true end
+		end
+	end
+
+	if Compat.hasSetGradientAlpha then
+		local ok = pcall(texture.SetGradientAlpha, texture, orientation,
+			r1, g1, b1, a1, r2, g2, b2, a2)
+		if ok then return true end
+	end
+
+	return false
+end
+
+--------------------------------------------------------------------------------
 -- Colors
 --------------------------------------------------------------------------------
 
@@ -706,6 +755,11 @@ function Compat.Describe()
 		hasHealAbsorbs = Compat.hasHealAbsorbs,
 		hasUnitHealPrediction = Compat.HasEvent("UNIT_HEAL_PREDICTION"),
 		hasCombatLogInfo = (_G.CombatLogGetCurrentEventInfo ~= nil),
+		-- Plan 16. Which of the two decides whether the overflow cap indicator
+		-- fades or draws as a solid band, and it is the only difference the
+		-- user would see, so it is worth being able to ask.
+		hasSetGradient = Compat.hasSetGradient,
+		hasSetGradientAlpha = Compat.hasSetGradientAlpha,
 		hasUnitAura = Compat.HasEvent("UNIT_AURA"),
 		hasPlayerFocusChanged = Compat.HasEvent("PLAYER_FOCUS_CHANGED"),
 		hasUnitTarget = Compat.HasEvent("UNIT_TARGET"),

@@ -94,10 +94,49 @@ local function ensureTextures(frame, el)
 	el.bar = bar
 	el.direct = bar:CreateTexture(nil, "ARTWORK", nil, 2)
 	el.hot = bar:CreateTexture(nil, "ARTWORK", nil, 2)
+	-- Plan 16. Sublevel 3 so the cap band reads ON the segments it is marking
+	-- the end of, still below the OVERLAY the sweep lines and text engine use.
+	el.cap = bar:CreateTexture(nil, "ARTWORK", nil, 3)
 	el.direct:Hide()
 	el.hot:Hide()
+	el.cap:Hide()
 
 	return true
+end
+
+--- Color the cap band and point its gradient outward (Plan 16).
+--
+-- Applied in Layout rather than per-update: the colors are config, and the
+-- direction follows inverseFill, so neither can change between health events.
+--
+-- The strong stop belongs on the OUTER edge -- the right of a normal bar, the
+-- left of an inverted one. SetGradient's two stops are in screen order, so
+-- inverting swaps them rather than negating anything.
+local function applyCapAppearance(el, cfg, inverse)
+	local cap = cfg.cap
+	if not el.cap or not cap then return end
+
+	local r, g, b = Colors:Unpack(cap.color)
+	local a = cap.alpha or 0.9
+
+	-- White base. A gradient multiplies against the texture under it, so any
+	-- other base color would tint the configured one a second time.
+	el.cap:SetColorTexture(1, 1, 1, 1)
+
+	local ok
+	if inverse then
+		ok = Compat.SetGradient(el.cap, "HORIZONTAL", r, g, b, a, r, g, b, 0)
+	else
+		ok = Compat.SetGradient(el.cap, "HORIZONTAL", r, g, b, 0, r, g, b, a)
+	end
+
+	-- Neither gradient method on this client. A solid band at half strength
+	-- still says "clipped here"; it just says it less prettily, which is the
+	-- right half of the feature to lose. /duf compat reports which path is live.
+	el.gradient = ok and true or false
+	if not ok then
+		el.cap:SetColorTexture(r, g, b, a * 0.5)
+	end
 end
 
 function element.Build(frame)
@@ -131,12 +170,15 @@ function element.Layout(frame, el, cfg)
 	el.hot:SetTexture(texture)
 	el.hot:SetVertexColor(hr, hg, hb, alpha)
 
+	applyCapAppearance(el, cfg, healthCfg and healthCfg.inverseFill and true or false)
+
 	element.Clear(el)
 end
 
 function element.Clear(el)
 	if el.direct then el.direct:Hide() end
 	if el.hot then el.hot:Hide() end
+	if el.cap then el.cap:Hide() end
 end
 
 --- Place one segment and return where the next one starts.
@@ -169,6 +211,52 @@ local function segment(texture, bar, height, cursor, width, limit, inverse)
 	return cursor + width
 end
 
+--- The cap band, drawn only when the prediction was clipped at the limit.
+--
+-- `predictedEnd` is where the prediction WOULD have reached, which is exactly
+-- what segment() returns -- it advances by the full width rather than the drawn
+-- one. So "was this capped" is a comparison against a number the geometry has
+-- already produced, not a second measurement.
+--
+-- It grows INWARD from the limit, opposite to the segments. That is what makes
+-- it free of the overhang problem in this file's header: the cap can never
+-- extend the prediction's reach into a neighboring frame, because it starts at
+-- the far edge and works back.
+local function placeCap(el, cfg, bar, height, fill, predictedEnd, limit, inverse)
+	if not el.cap then return end
+
+	local cap = cfg.cap
+	if not cap or not cap.enabled then return el.cap:Hide() end
+
+	-- With overflow off the limit is the bar's own end, where a full-health
+	-- target clips every prediction by definition -- the band would be lit
+	-- permanently on every topped-up unit, which is the noise someone turns
+	-- overflow off to avoid. Deliberately excluded; see Plan 16.
+	if not cfg.overflow then return el.cap:Hide() end
+
+	-- Strictly greater: a heal that lands exactly on the limit fitted, and
+	-- reporting it as clipped would be a lie about the one thing this says.
+	if predictedEnd <= limit then return el.cap:Hide() end
+
+	-- Never reach back past the prediction onto the health fill, where it would
+	-- read as an artifact of the health bar rather than as an edge marker.
+	local width = cap.width or 8
+	local room = limit - fill
+	if width > room then width = room end
+	if width < MIN_SEGMENT then return el.cap:Hide() end
+
+	local x0 = limit - width
+
+	el.cap:ClearAllPoints()
+	if inverse then
+		el.cap:SetPoint("TOPRIGHT", bar, "TOPRIGHT", -x0, 0)
+	else
+		el.cap:SetPoint("TOPLEFT", bar, "TOPLEFT", x0, 0)
+	end
+	el.cap:SetSize(width, height)
+	el.cap:Show()
+end
+
 --- The geometry, in health points converted to bar pixels.
 function element.Place(frame, el, cfg, current, maximum, direct, hot)
 	local bar = el.bar
@@ -191,11 +279,13 @@ function element.Place(frame, el, cfg, current, maximum, direct, hot)
 	local healthCfg = frame.cfg and frame.cfg.health
 	local inverse = healthCfg and healthCfg.inverseFill and true or false
 
-	local cursor = current * scale
-	if cursor < 0 then cursor = 0 end
+	local fill = current * scale
+	if fill < 0 then fill = 0 end
 
-	cursor = segment(el.direct, bar, height, cursor, direct * scale, limit, inverse)
-	segment(el.hot, bar, height, cursor, hot * scale, limit, inverse)
+	local cursor = segment(el.direct, bar, height, fill, direct * scale, limit, inverse)
+	cursor = segment(el.hot, bar, height, cursor, hot * scale, limit, inverse)
+
+	placeCap(el, cfg, bar, height, fill, cursor, limit, inverse)
 end
 
 function element.Update(frame, el, cfg)

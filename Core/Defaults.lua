@@ -289,6 +289,29 @@ local function unit(overrides)
 			alpha = 0.55,
 			overflow = true,
 			overflowAmount = 0.10,
+			-- Plan 16. Marks the far edge when the prediction was clipped at the
+			-- overflow limit, i.e. when there is more heal coming than the bar is
+			-- allowed to show.
+			--
+			-- Only ever drawn while `overflow` is on. With overflow off the limit
+			-- is the bar's own end, so every prediction on a full-health target is
+			-- clipped by definition and the indicator would be permanently lit on
+			-- every topped-up unit -- which is the noise someone turns overflow off
+			-- to avoid. Deliberate; see Plan 16's interpretation section.
+			cap = {
+				enabled = true,
+				-- White rather than a third hue. It has to read over the direct
+				-- green and the HoT blue both, and "clipped here" is a different
+				-- kind of statement from "this much healing" -- a color that
+				-- joined the other two would invite reading it as a third
+				-- category.
+				color = color(1, 1, 1),
+				width = 8,
+				-- Near-opaque at the outer edge. This is the one mark on the bar
+				-- that means "you are not seeing all of it", so it is the wrong
+				-- thing to make subtle.
+				alpha = 0.9,
+			},
 		},
 
 		power = {

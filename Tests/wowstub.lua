@@ -241,6 +241,31 @@ function methods:GetVertexColor()
 	return c[1], c[2], c[3], c[4]
 end
 function methods:SetColorTexture(r, g, b, a) self.__color = { r, g, b, a } end
+
+-- Plan 16. The 10.0 signature: two ColorMixin-ish objects rather than eight
+-- loose numbers. Recorded flattened so an assertion can read the stops without
+-- caring which form the caller used.
+--
+-- The pre-10.0 SetGradientAlpha is deliberately NOT defined here. A stub that
+-- offers both models a client that exists nowhere, and the lesson already
+-- recorded in COMPAT_FINDINGS from the UNIT_COMBO_POINTS miss is that a stub
+-- more capable than the real client turns the suite into a rubber stamp.
+-- Tests that want the old path, or neither path, install or remove the methods
+-- themselves -- see testHealPrediction.
+function methods:SetGradient(orientation, minColor, maxColor)
+	local function unpackColor(c)
+		if not c then return nil end
+		if c.GetRGBA then return c:GetRGBA() end
+		return c.r, c.g, c.b, c.a
+	end
+	local r1, g1, b1, a1 = unpackColor(minColor)
+	local r2, g2, b2, a2 = unpackColor(maxColor)
+	self.__gradient = {
+		orientation = orientation,
+		r1 = r1, g1 = g1, b1 = b1, a1 = a1,
+		r2 = r2, g2 = g2, b2 = b2, a2 = a2,
+	}
+end
 function methods:SetTextColor(r, g, b, a) self.__textColor = { r, g, b, a } end
 function methods:GetTextColor()
 	local c = self.__textColor or {}
@@ -337,6 +362,17 @@ end
 _G.C_EventUtils = {
 	IsEventValid = function(event) return stub.validEvents[event] == true end,
 }
+
+--- ColorMixin's constructor, as much of it as Compat.SetGradient uses.
+-- Present because the 10.0 gradient signature takes color objects, and a stub
+-- without this would send every gradient call down the fallback path and quietly
+-- leave the real one untested.
+function _G.CreateColor(r, g, b, a)
+	return {
+		r = r, g = g, b = b, a = a,
+		GetRGBA = function(self) return self.r, self.g, self.b, self.a end,
+	}
+end
 
 --- Fire an event at every frame registered for it, honouring unit filters.
 function stub.fire(event, ...)

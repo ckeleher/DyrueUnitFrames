@@ -4466,6 +4466,115 @@ local function testHealPrediction()
 	healthCfg.inverseFill = false
 
 	----------------------------------------------------------------------------
+	-- Overflow cap (Plan 16)
+	--
+	-- Bar is 200 wide and overflow is 10%, so the limit sits at 220 and the
+	-- scale is 200/5000 = 0.04 px per health point throughout.
+	----------------------------------------------------------------------------
+
+	equal("cap/ships enabled", cfg.cap.enabled, true)
+	equal("cap/ships 8px wide", cfg.cap.width, 8)
+	equal("cap/ships near-opaque", cfg.cap.alpha, 0.9)
+
+	-- Fits inside the allowance: 100 + 50 = 150, well short of 220.
+	def.Place(player, el, cfg, 2500, 5000, 1250, 0)
+	equal("cap/nothing to mark when the prediction fits", el.cap:IsShown(), false)
+
+	-- Direct alone overruns: 200 + 80 = 280 against a limit of 220.
+	def.Place(player, el, cfg, 5000, 5000, 2000, 0)
+	equal("cap/marks the edge when the direct segment is clipped", el.cap:IsShown(), true)
+	equal("cap/at the configured width", el.cap:GetWidth(), 8)
+	local capPoint, _, _, capX = el.cap:GetPoint(1)
+	near("cap/ending on the limit rather than the bar's edge", capX + el.cap:GetWidth(), 220)
+	equal("cap/anchored from the left on a normal bar", capPoint, "TOPLEFT")
+
+	-- The case a naive reading of the drawn widths gets wrong: the direct
+	-- segment fits exactly (100 + 100 = 200), and only the HoT after it pushes
+	-- past 220. segment() advancing by the FULL width is what makes this work.
+	def.Place(player, el, cfg, 2500, 5000, 2500, 1000)
+	equal("cap/marks the edge when only the HoT overruns", el.cap:IsShown(), true)
+
+	-- Landing exactly on the limit fitted, and must not be reported as clipped.
+	-- 0.5 rather than the default 0.10 so the limit is exactly 300 in binary and
+	-- this pins `>` versus `>=` instead of pinning a rounding accident.
+	cfg.overflowAmount = 0.5
+	def.Place(player, el, cfg, 2500, 5000, 5000, 0)
+	equal("cap/a heal that lands exactly on the limit is not capped",
+		el.cap:IsShown(), false)
+	cfg.overflowAmount = 0.10
+
+	-- The clamp. A 2% allowance leaves 4px of band for an 8px cap, and the
+	-- unclamped version would reach back over the health fill and read as a
+	-- health bar artifact rather than as an edge marker.
+	cfg.overflowAmount = 0.02
+	def.Place(player, el, cfg, 5000, 5000, 2000, 0)
+	equal("cap/clamps to the room the overflow band actually has",
+		el.cap:GetWidth(), 4)
+	local _, _, _, clampX = el.cap:GetPoint(1)
+	equal("cap/and so starts exactly where the health fill ends", clampX, 200)
+	cfg.overflowAmount = 0.10
+
+	-- Overflow off clips at the bar's own end, so every prediction on a
+	-- full-health target is capped by definition. Excluded deliberately -- the
+	-- band would otherwise be lit permanently on every topped-up unit.
+	cfg.overflow = false
+	def.Place(player, el, cfg, 5000, 5000, 2000, 0)
+	equal("cap/never drawn while overflow is off", el.cap:IsShown(), false)
+	cfg.overflow = true
+
+	cfg.cap.enabled = false
+	def.Place(player, el, cfg, 5000, 5000, 2000, 0)
+	equal("cap/nor when it is switched off", el.cap:IsShown(), false)
+	cfg.cap.enabled = true
+
+	-- Mirrored, same as the segments.
+	healthCfg.inverseFill = true
+	def.Layout(player, el, cfg)
+	def.Place(player, el, cfg, 5000, 5000, 2000, 0)
+	local icapPoint, _, _, icapX = el.cap:GetPoint(1)
+	equal("cap/inverse fill anchors from the right", icapPoint, "TOPRIGHT")
+	near("cap/inverse fill mirrors the offset", icapX, -212)
+
+	-- The strong stop follows the outer edge, which inverting moves to the left.
+	local igrad = el.cap.__gradient
+	equal("cap/inverse fill puts the strong stop first", igrad.a1, cfg.cap.alpha)
+	equal("cap/and the transparent stop second", igrad.a2, 0)
+
+	healthCfg.inverseFill = false
+	def.Layout(player, el, cfg)
+
+	local grad = el.cap.__gradient
+	equal("cap/gradient runs along the bar", grad.orientation, "HORIZONTAL")
+	equal("cap/fades in from nothing", grad.a1, 0)
+	equal("cap/to the configured opacity at the edge", grad.a2, cfg.cap.alpha)
+	equal("cap/in the configured color", grad.r2, cfg.cap.color.r)
+	equal("cap/gradient path is the live one here", el.gradient, true)
+
+	-- The fallback, exercised the way pass 3 exercises the legacy aura path: by
+	-- taking the capability away. An untested fallback is one that does not work,
+	-- and this one is the whole reason Compat.SetGradient returns a boolean.
+	local savedGradient = ns.Compat.hasSetGradient
+	local savedGradientAlpha = ns.Compat.hasSetGradientAlpha
+	ns.Compat.hasSetGradient = false
+	ns.Compat.hasSetGradientAlpha = false
+
+	def.Layout(player, el, cfg)
+	equal("cap/reports no gradient when the client has neither method",
+		el.gradient, false)
+	local solid = el.cap.__color
+	equal("cap/falls back to a solid band in the configured color",
+		solid[1], cfg.cap.color.r)
+	near("cap/at half the configured opacity", solid[4], cfg.cap.alpha * 0.5)
+
+	def.Place(player, el, cfg, 5000, 5000, 2000, 0)
+	equal("cap/and still marks the clipped edge without a gradient",
+		el.cap:IsShown(), true)
+
+	ns.Compat.hasSetGradient = savedGradient
+	ns.Compat.hasSetGradientAlpha = savedGradientAlpha
+	def.Layout(player, el, cfg)
+
+	----------------------------------------------------------------------------
 	-- Gating
 	----------------------------------------------------------------------------
 
