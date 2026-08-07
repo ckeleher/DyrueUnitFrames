@@ -1,8 +1,34 @@
 # Plan 13 — Aura Text: Off By Default, Sized And Anchored
 
-**Status:** Not started.
+**Status:** Implemented on `Plan-13-aura-text-placement`, merged in PR #9.
 **Created:** 4 August 2026
 **Branch:** `Plan-13-aura-text-placement`
+
+**Deviations from the plan as written:**
+
+* **`Documents/SPEC.md` was not touched**, despite being in the Files table. It
+  has a single commit in its history and `Tests/anglicize.py` excludes it by name
+  as an authored requirement document whose rewording would put the record out of
+  step with what was asked. The FR-5.5 / FR-5.6 divergence was recorded in the
+  *Deviations from SPEC.md* table in `Documents/COMPAT_FINDINGS.md` instead,
+  which is where `Skills/NewWork.md` says it belongs.
+* **`Core/Locale.lua` needed no changes.** enUS is the identity mapping — the
+  keys *are* the strings and `__index` returns the key — so new `L["..."]` call
+  sites work with no table entry. The plan listed the file out of habit.
+* **The options renumber went one decade further.** The plan said to move the
+  sorting header to 60, which is where the tooltip header already sat. Actual:
+  timers 40-54, sorting 60-68, tooltips 70-73.
+* **The diagnosis step was never run in game.** Which overlay produced the
+  numbers in the screenshot is still formally unconfirmed. It did not block,
+  because both text layers got the same treatment, but the *default* change only
+  quiets stacks — if it turns out the numbers were duration text switched on
+  deliberately, the migration leaves that toggle alone by design and it needs one
+  manual flip. See *Which numbers are these?* below for the deduction.
+
+**Open follow-up:** the recommendation in *The concern, stated once* stands — now
+that the size is 8px and the anchor is configurable, `showStacks` back **on** is
+likely both readable and more useful than off. That is a default change and a
+migration step to delete, not new code.
 
 ---
 
