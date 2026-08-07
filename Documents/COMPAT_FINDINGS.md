@@ -59,8 +59,40 @@ Phase 0 is for.
 | `GetPetHappiness` | Present (Classic/TBC only) | | | `[happiness]` tag |
 | `ClickCastFrames` | Only with Clique installed | | | Clique interop |
 | `GetAddOnMemoryUsage` vs `C_AddOns.*` | Both handled | | | `/duf profile` |
-| `FontString:GetStringWidth` returns the **unconstrained** width | Yes — the width the string would render at, whatever `SetWidth` says | | | `Elements/Text.lua` width modes (Plan 6). If it instead returned the clamped width, a fitted name would measure as already fitting and would never be shortened. Checkable in one line: `/run local f=UIParent:CreateFontString(nil,"OVERLAY","GameFontNormal") f:SetWidth(20) f:SetText("aaaaaaaaaaaaaaaaaaaa") print(f:GetStringWidth())` — expect well over 20 |
-| `GetStringWidth` works on a **hidden** font string | Yes | | | Same. Text elements are measured during an update that may run while the frame is not shown |
+| `FontString:GetStringWidth` returns the **unconstrained** width | **Yes — verified 7 August 2026** | | | `Elements/Text.lua` width modes (Plan 6). See the verified finding below |
+| `GetStringWidth` works on a **hidden** font string | Yes | | | Same. Text elements are measured during an update that may run while the frame is not shown. NOT verified — the check below used a font string on a shown parent |
+
+### VERIFIED — `GetStringWidth` ignores `SetWidth`
+
+**Observed 7 August 2026.** The premise of Plan 6's `fit` mode, and the one
+assumption in it that a headless run cannot check.
+
+```
+/run local f=UIParent:CreateFontString(nil,"OVERLAY","GameFontNormal") f:SetWidth(20) f:SetText("aaaaaaaaaaaaaaaaaaaa") print(f:GetStringWidth())
+133.688
+```
+
+Twenty characters in a font string clamped to 20px measure 133.688. So
+`GetStringWidth` reports what the string **would** render at, not what it is
+allowed to occupy — which is what makes "measure the neighbor, then take the
+gap" possible at all. Had it returned 20, every fitted name would have measured
+as already fitting and none would ever have been shortened: a silent no-op, with
+the overlap still there and nothing in the logs.
+
+Two details worth keeping:
+
+- **The value is fractional**, and at other UI scales it will be more so.
+  Nothing in `Elements/Text.lua` rounds it; budgets and comparisons are all
+  floats, and the truncation search is over character boundaries rather than
+  pixel counts, so sub-pixel widths never accumulate into an off-by-one.
+- **133.688 / 20 ≈ 6.7px per character** at `GameFontNormal`. The stub in
+  `Tests/wowstub.lua` models 6px at size 12, so the headless figures are the
+  right order and the tests are not passing on a fantasy.
+
+Still unverified: whether this works on a **hidden** font string. Text elements
+are measured during updates that can run while a frame is not shown, so if it
+returns 0 there, a name would come back unbounded until the frame is next
+visible. Nothing has been seen to suggest it does.
 
 ### VERIFIED — `UNIT_COMBO_POINTS` does not exist on TBC Anniversary
 
