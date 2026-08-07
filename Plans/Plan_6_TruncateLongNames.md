@@ -1,7 +1,10 @@
 # Plan 6 — Truncate Long Names
 
 **Status:** Implemented on `Plan-6-truncate-long-names`. Headless suite green
-(801 assertions, 37 of them new); **not yet seen in a client.**
+(801 assertions, 37 of them new). **Confirmed in a client, 7 August 2026** —
+truncation correct on the frames, and `GetStringWidth` verified to ignore
+`SetWidth` (see `Documents/COMPAT_FINDINGS.md`), which is the one assumption a
+headless run could not check.
 **Created:** 2 August 2026
 **Branch:** `Plan-6-truncate-long-names`
 (The header used to read `first`, which was where the plan was *written* — see
