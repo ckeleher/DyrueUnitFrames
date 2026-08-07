@@ -1395,6 +1395,194 @@ local function testTextColoring()
 end
 
 --------------------------------------------------------------------------------
+-- 18b. Text width and truncation (Plan 6)
+--
+-- The stub charges every character half the font's point size, so at size 12
+-- one character is 6px. Every figure below is worked from that: it is a model,
+-- but it is a model of the one thing the real client will not tell a headless
+-- run -- how wide a string comes out.
+--------------------------------------------------------------------------------
+
+local function testTextWidth()
+	local Defaults = ns.Defaults
+
+	Defaults:ResetUnit(ns:Profile(), "player")
+	ns:BumpSerial()
+	ns:RefreshUnit("player")
+
+	local player = ns.frames.player
+	local cfg = ns:UnitConfig("player")
+	local nameCfg, healthCfg = cfg.texts[1], cfg.texts[2]
+	local nameString = player.elements.text.strings[1]
+
+	local shipped = Defaults:BuildProfile()
+	equal("width/player name ships on fit", shipped.units.player.texts[1].maxWidthMode, "fit")
+	equal("width/target name ships on fit", shipped.units.target.texts[2].maxWidthMode, "fit")
+	equal("width/derived name ships on fit",
+		shipped.units.targettarget.texts[1].maxWidthMode, "fit")
+	equal("width/party pet name ships on fit",
+		shipped.units.partypet1.texts[1].maxWidthMode, "fit")
+	equal("width/the health readout does not", shipped.units.player.texts[2].maxWidthMode, "none")
+	equal("width/nor the power one", shipped.units.player.texts[3].maxWidthMode, "none")
+	equal("width/a new text element is unlimited", Defaults.Text({}).maxWidthMode, "none")
+
+	--------------------------------------------------------------------------
+	-- fit: the gap to what the opposing text is ACTUALLY rendering
+	--------------------------------------------------------------------------
+
+	equal("width/health bar is the frame's width", player.elements.health.bar:GetWidth(), 220)
+	equal("width/health text renders absolute values", healthCfg.format,
+		"[hp:cur:short] / [hp:max:short]")
+
+	-- "4.2k / 5.0k" is 11 characters = 66px, right-anchored at x = -4, so it
+	-- occupies [150, 216]. The name starts at x = 4 and stops 4px short of it.
+	equal("width/fit measures the gap to the numbers", nameString:GetWidth(), 142)
+	equal("width/a short name is left whole", nameString:GetText(), "Dyrue")
+
+	-- The case that started this: a name with no room for it.
+	stub.units.player.name = string.rep("a", 40)
+	stub.fire("UNIT_NAME_UPDATE", "player")
+
+	-- 142px is 23.6 characters; three of them go to the ellipsis.
+	equal("width/a long name is cut short", nameString:GetText(), string.rep("a", 20) .. "...")
+	check("width/and what is left fits the gap", nameString:GetStringWidth() <= 142)
+
+	-- The value moving is what a percentage cannot follow: 999 renders narrower
+	-- than 4.2k, so the name gets the difference back.
+	stub.units.player.health = 999
+	stub.fire("UNIT_HEALTH", "player")
+	equal("width/fit follows the numbers shrinking", nameString:GetWidth(), 148)
+	equal("width/and re-cuts the name to match", nameString:GetText(),
+		string.rep("a", 21) .. "...")
+
+	-- But a value moving INSIDE the same rendered width costs nothing: 888 is
+	-- as wide as 999, so the budget is unchanged and the search is not redone.
+	-- This is the property the whole element is shaped around, and a regression
+	-- in it is invisible in the output and shows up only as frame time.
+	local writes = nameString.__writes
+	stub.units.player.health = 888
+	stub.fire("UNIT_HEALTH", "player")
+	equal("width/an equally wide number costs the name nothing",
+		nameString.__writes, writes)
+	equal("width/and leaves it exactly as it was", nameString:GetText(),
+		string.rep("a", 21) .. "...")
+
+	stub.units.player.health = 999
+	stub.fire("UNIT_HEALTH", "player")
+
+	-- And it follows the frame being resized.
+	cfg.width = 300
+	ns:BumpSerial()
+	ns:RefreshUnit("player")
+	equal("width/fit follows a resize", nameString:GetWidth(), 228)
+
+	-- Nothing opposite it: stopped at the end of the bar rather than run off it.
+	healthCfg.enabled = false
+	cfg.width = 220
+	ns:BumpSerial()
+	ns:RefreshUnit("player")
+	equal("width/with no opposing text, the bar's edge", nameString:GetWidth(), 212)
+	healthCfg.enabled = true
+
+	--------------------------------------------------------------------------
+	-- The other three modes
+	--------------------------------------------------------------------------
+
+	nameCfg.maxWidthMode = "none"
+	ns:BumpSerial()
+	ns:RefreshUnit("player")
+	equal("width/none is unbounded", nameString:GetWidth(), 0)
+	equal("width/and never truncates", nameString:GetText(), string.rep("a", 40))
+
+	nameCfg.maxWidthMode = "pixels"
+	nameCfg.maxWidth = 90
+	ns:BumpSerial()
+	ns:RefreshUnit("player")
+	equal("width/pixels is exactly what was asked for", nameString:GetWidth(), 90)
+	equal("width/pixels truncates too", nameString:GetText(), string.rep("a", 12) .. "...")
+
+	nameCfg.maxWidthMode = "percent"
+	nameCfg.maxWidthPercent = 50
+	ns:BumpSerial()
+	ns:RefreshUnit("player")
+	equal("width/percent of the anchor widget", nameString:GetWidth(), 110)
+
+	cfg.width = 300
+	ns:BumpSerial()
+	ns:RefreshUnit("player")
+	equal("width/percent recomputes on a resize", nameString:GetWidth(), 150)
+	cfg.width = 220
+
+	--------------------------------------------------------------------------
+	-- Trimming lands on character boundaries, not byte boundaries
+	--------------------------------------------------------------------------
+
+	local umlaut = "\195\132"                 -- U+00C4, two bytes
+	stub.units.player.name = string.rep(umlaut, 30)
+	nameCfg.maxWidthMode = "pixels"
+	nameCfg.maxWidth = 60
+	ns:BumpSerial()
+	ns:RefreshUnit("player")
+	equal("width/multi-byte names are cut between characters",
+		nameString:GetText(), string.rep(umlaut, 7) .. "...")
+
+	--------------------------------------------------------------------------
+	-- A hand-typed color escape is left to the client's own clipping, because
+	-- trimming between the |cff and its |r recolors the rest of the line.
+	--------------------------------------------------------------------------
+
+	stub.units.player.name = "Dyrue"
+	nameCfg.format = "|cffff0000[name] the Restorer|r"
+	ns:BumpSerial()
+	ns:RefreshUnit("player")
+	equal("width/an escaped format is still bounded", nameString:GetWidth(), 60)
+	equal("width/but is not trimmed", nameString:GetText(), "|cffff0000Dyrue the Restorer|r")
+
+	--------------------------------------------------------------------------
+	-- Migration
+	--------------------------------------------------------------------------
+
+	local migrated = {
+		schemaVersion = 14,
+		units = {
+			player = {
+				texts = {
+					{ format = "[name]", anchorTo = "health", maxWidth = 0 },
+					{ format = "[hp:perc]%", anchorTo = "health", maxWidth = 0 },
+					{ format = "[name]", anchorTo = "health", maxWidth = 120 },
+					{ format = "[name] the [class]", anchorTo = "health", maxWidth = 0 },
+					{ format = "[name]", anchorTo = "frame", maxWidth = 0 },
+				},
+			},
+		},
+	}
+	check("width/migration runs", (ns.Migrate:Run(migrated, {})))
+
+	local texts = migrated.units.player.texts
+	equal("width/migration puts an untouched name on fit", texts[1].maxWidthMode, "fit")
+	equal("width/leaves a health readout alone", texts[2].maxWidthMode, "none")
+	equal("width/keeps a pixel width, as pixels", texts[3].maxWidthMode, "pixels")
+	equal("width/and does not change the figure", texts[3].maxWidth, 120)
+	equal("width/an edited format is left alone", texts[4].maxWidthMode, "none")
+	equal("width/so is a re-anchored one", texts[5].maxWidthMode, "none")
+	equal("width/the percent basis is filled in", texts[1].maxWidthPercent, 55)
+
+	-- Text elements are a user-owned list, so EnsureProfile does NOT descend
+	-- into them. Without the migration step above, the key would stay nil on
+	-- every existing profile forever -- which is the trap this asserts against.
+	local untouched = { texts = { { format = "[name]", anchorTo = "health" } } }
+	local wrapper = { units = { player = untouched } }
+	Defaults:EnsureProfile(wrapper)
+	check("width/EnsureProfile cannot reach inside a text list",
+		untouched.texts[1].maxWidthMode == nil)
+
+	stub.units.player.health = 4200
+	Defaults:ResetUnit(ns:Profile(), "player")
+	ns:BumpSerial()
+	ns:RefreshUnit("player")
+end
+
+--------------------------------------------------------------------------------
 -- 19. Aura filtering and sorting
 --------------------------------------------------------------------------------
 
@@ -4082,6 +4270,7 @@ local suites = {
 	{ "combat-deferral", testCombatDeferral },
 	{ "drag-mode", testDragMode },
 	{ "text-coloring", testTextColoring },
+	{ "text-width", testTextWidth },
 	{ "aura-filtering", testAuraFiltering },
 	{ "aura-text-placement", testAuraTextPlacement },
 	{ "aura-order-stability", testAuraOrderStability },

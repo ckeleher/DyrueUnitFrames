@@ -214,6 +214,7 @@ local function buildTextGroup(def, index, rebuildParent)
 	local function rules() local t = text(); return t and t.rules end
 
 	local function notGradient() return text().colorMode ~= "gradient" end
+	local function mode() return text().maxWidthMode or "none" end
 
 	local ruleArgs, ruleState = {}, {}
 	local rebuildRules
@@ -325,12 +326,38 @@ local function buildTextGroup(def, index, rebuildParent)
 				get = function() return text().justify end,
 				set = function(_, v) text().justify = v; apply() end,
 			},
+			maxWidthMode = {
+				type = "select", order = 26, name = L["Maximum width"],
+				desc = L["What stops a long value running under whatever is at the other end of the bar."],
+				values = {
+					none = L["Unlimited"],
+					pixels = L["Fixed"],
+					percent = L["Percent of the anchor"],
+					fit = L["Fit the gap"],
+				},
+				get = function() return mode() end,
+				set = function(_, v) text().maxWidthMode = v; apply(); Options:Notify() end,
+			},
 			maxWidth = {
-				type = "range", order = 26, name = L["Maximum width"],
+				type = "range", order = 27, name = L["Width"],
 				desc = L["0 means no truncation."],
+				hidden = function() return mode() ~= "pixels" end,
 				min = 0, max = 500, step = 1,
 				get = function() return text().maxWidth end,
 				set = function(_, v) text().maxWidth = v; apply() end,
+			},
+			maxWidthPercent = {
+				type = "range", order = 27, name = L["Width"],
+				desc = L["A share of the width of whatever this text is anchored to, so it keeps up when the frame is resized."],
+				hidden = function() return mode() ~= "percent" end,
+				min = 5, max = 100, step = 1,
+				get = function() return text().maxWidthPercent end,
+				set = function(_, v) text().maxWidthPercent = v; apply() end,
+			},
+			fitNote = {
+				type = "description", order = 27,
+				hidden = function() return mode() ~= "fit" end,
+				name = L["Measures the room between this text and the nearest thing rendered at the other end of the same bar, and follows it as both change. Anything cut short ends in '...'."],
 			},
 
 			colorHeader = { type = "header", order = 30, name = L["Color"] },

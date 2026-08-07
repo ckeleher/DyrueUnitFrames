@@ -25,8 +25,10 @@ local type, pairs, ipairs, next = type, pairs, ipairs, next
 -- Schemas 1-11 are folded into a single declarative step in Core/Migrate.lua;
 -- see the header there for why, and for the rule about when collapsing is safe.
 -- 12 was the first version after that collapse; 13 raises the target's buff row
--- off the combo bar added in Plan 9; 14 quiets the aura overlays (Plan 13).
-Defaults.SCHEMA_VERSION = 14
+-- off the combo bar added in Plan 9; 14 quiets the aura overlays (Plan 13);
+-- 15 gives every text element a width mode and puts the names on "fit"
+-- (Plan 6).
+Defaults.SCHEMA_VERSION = 15
 
 --------------------------------------------------------------------------------
 -- Table helpers
@@ -122,7 +124,13 @@ local function text(cfg)
 		outline = "OUTLINE",           -- NONE | OUTLINE | THICKOUTLINE | MONOCHROME
 		shadow = true,
 		justify = "LEFT",
-		maxWidth = 0,                  -- 0 = no truncation
+		-- How much room this text is allowed before it is cut short. `fit`
+		-- measures the gap to whatever is rendered at the other end of the same
+		-- widget and follows it; see the header of Elements/Text.lua for why
+		-- that is the mode the name texts ship on.
+		maxWidthMode = "none",         -- none | pixels | percent | fit
+		maxWidth = 0,                  -- pixels, when maxWidthMode is "pixels"
+		maxWidthPercent = 55,          -- of the anchor widget, when "percent"
 		colorMode = "static",          -- static | rules | class | reaction | difficulty | gradient
 		color = color(1, 1, 1),
 		rules = {},
@@ -453,7 +461,8 @@ Defaults.Unit = unit
 local function fullTexts(healthFormat)
 	return {
 		text({ name = L["Name"], format = "[name]", anchorTo = "health",
-			point = "LEFT", relativePoint = "LEFT", x = 4, justify = "LEFT" }),
+			point = "LEFT", relativePoint = "LEFT", x = 4, justify = "LEFT",
+			maxWidthMode = "fit" }),
 		text({ name = L["Health"], format = healthFormat, anchorTo = "health",
 			point = "RIGHT", relativePoint = "RIGHT", x = -4, justify = "RIGHT" }),
 		text({ name = L["Power"], format = "[pp:cur:short]", anchorTo = "power",
@@ -478,7 +487,8 @@ local function targetTexts()
 			point = "LEFT", relativePoint = "LEFT", x = 4, justify = "LEFT",
 			colorMode = "difficulty" }),
 		text({ name = L["Name"], format = "[name]", anchorTo = "health",
-			point = "LEFT", relativePoint = "LEFT", x = 32, justify = "LEFT" }),
+			point = "LEFT", relativePoint = "LEFT", x = 32, justify = "LEFT",
+			maxWidthMode = "fit" }),
 		text({ name = L["Health"], format = "[hp:cur:short] / [hp:max:short] [hp:perc]%",
 			anchorTo = "health", point = "RIGHT", relativePoint = "RIGHT", x = -4, justify = "RIGHT" }),
 		text({ name = L["Power"], format = "[pp:cur:short]", anchorTo = "power",
@@ -493,7 +503,8 @@ end
 local function derivedTexts()
 	return {
 		text({ name = L["Name"], format = "[name]", anchorTo = "health",
-			point = "LEFT", relativePoint = "LEFT", x = 4, justify = "LEFT", size = 11 }),
+			point = "LEFT", relativePoint = "LEFT", x = 4, justify = "LEFT", size = 11,
+			maxWidthMode = "fit" }),
 		text({ name = L["Health"], format = "[hp:perc]%", anchorTo = "health",
 			point = "RIGHT", relativePoint = "RIGHT", x = -4, justify = "RIGHT", size = 11 }),
 	}
@@ -585,7 +596,8 @@ local function buildUnits()
 			power = { enabled = false },
 			texts = {
 				text({ name = L["Name"], format = "[name:short:10]", anchorTo = "health",
-					point = "LEFT", relativePoint = "LEFT", x = 3, size = 10 }),
+					point = "LEFT", relativePoint = "LEFT", x = 3, size = 10,
+					maxWidthMode = "fit" }),
 			},
 		})
 	end

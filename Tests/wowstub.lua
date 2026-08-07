@@ -184,6 +184,11 @@ function methods:SetText(t)
 	if self.__type == "FontString" and not self.__font then
 		error("FontString:SetText(): Font not set", 2)
 	end
+	-- Counted so the suite can assert Elements/Text's caching claims instead of
+	-- taking them on trust. Skipping redundant SetText calls is the reason that
+	-- element is shaped the way it is; a regression there is invisible in the
+	-- rendered output and shows up only as frame time.
+	self.__writes = (self.__writes or 0) + 1
 	self.__text = t
 end
 function methods:GetText() return self.__text end
@@ -195,6 +200,34 @@ end
 function methods:GetFont()
 	if not self.__font then return nil end
 	return self.__font[1], self.__font[2], self.__font[3]
+end
+
+-- Text metrics. The real client measures glyphs; this models a fixed advance
+-- per character, because what is under test in Elements/Text is the geometry
+-- and the binary search over character boundaries, not font rendering.
+--
+-- UTF-8 aware on purpose: a byte count would make a multi-byte name look three
+-- times wider than it is and the truncation tests would pass for the wrong
+-- reason.
+local CHAR_ADVANCE = 0.5           -- of the font's point size
+
+function methods:GetStringWidth()
+	local text = self.__text
+	if type(text) ~= "string" or text == "" then return 0 end
+
+	local size = (self.__font and self.__font[2]) or 12
+	local chars, i, n = 0, 1, #text
+	while i <= n do
+		local b = text:byte(i)
+		local step = 1
+		if b >= 240 then step = 4
+		elseif b >= 224 then step = 3
+		elseif b >= 192 then step = 2 end
+		chars = chars + 1
+		i = i + step
+	end
+
+	return chars * size * CHAR_ADVANCE
 end
 
 function methods:SetStatusBarColor(r, g, b, a) self.__barColor = { r, g, b, a } end
