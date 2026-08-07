@@ -247,8 +247,57 @@ local function raiseTargetBuffs(profile)
 	return profile
 end
 
+--- 13 -> 14. Stack counts shipped ON at 11px. On a 20px icon an outlined
+-- two-digit number is most of the art, and a full 8x2 debuff grid came out
+-- unreadable (Plan 13). Both numeric overlays now ship off, at 8px, with a
+-- configurable anchor.
+--
+-- Same rule as raiseTargetBuffs: only the EXACT untouched default moves. For a
+-- boolean that is not enough on its own -- showStacks == true is equally what a
+-- deliberate choice looks like -- so "untouched" is the whole shipped tuple,
+-- toggle and size and corner together. Anyone who has already tuned any one of
+-- the three keeps all three.
+--
+-- Duration text is the other way round: it shipped OFF, so a profile carrying
+-- `true` set it deliberately and the toggle is left exactly where it is. Only
+-- its placement is pinned, because there was no setting to have chosen before
+-- now and the new CENTER default would otherwise silently move text that has
+-- been sitting below the icon since 1.0.
+local function quietAuraOverlays(profile)
+	local units = profile.units
+	if type(units) ~= "table" then return profile end
+
+	for _, u in pairs(units) do
+		local auras = type(u) == "table" and u.auras
+		if type(auras) == "table" then
+			for _, key in ipairs({ "buffs", "debuffs" }) do
+				local g = auras[key]
+				if type(g) == "table" then
+					if g.showStacks == true and g.stackSize == 11
+						and g.stackCorner == "BOTTOMRIGHT" then
+						g.showStacks = false
+						g.stackSize = 8
+					end
+
+					if g.durationSize == 10 then g.durationSize = 8 end
+
+					-- Runs before EnsureProfile, so nil here reliably means
+					-- "this profile predates the setting" rather than "the key
+					-- has been filled in with the new default already".
+					if g.showDurationText and g.durationAnchor == nil then
+						g.durationAnchor = "BELOW"
+					end
+				end
+			end
+		end
+	end
+
+	return profile
+end
+
 local steps = {
 	[12] = raiseTargetBuffs,
+	[13] = quietAuraOverlays,
 }
 
 Migrate.steps = steps

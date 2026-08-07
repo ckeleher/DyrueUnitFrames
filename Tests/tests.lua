@@ -829,7 +829,17 @@ local function testIntegration()
 		tostring(ownSize) .. " vs " .. tostring(otherSize))
 
 	local debuffs = target.elements.auras.debuffs
+
+	-- Stacks ship off since Plan 13, so this asks for them before asserting
+	-- they render. The default itself is covered in testAuraTextPlacement.
+	local debuffCfg = ns:UnitConfig("target").auras.debuffs
+	debuffCfg.showStacks = true
+	ns:BumpSerial()
+	ns:RefreshUnit("target")
 	equal("frames/stack count shown", debuffs.buttons[1].count:GetText(), 5)
+	debuffCfg.showStacks = false
+	ns:BumpSerial()
+	ns:RefreshUnit("target")
 	-- FR-5.8: an aura someone else applied has no duration in Classic, so it
 	-- must get no cooldown swipe rather than a fabricated one.
 	local other
@@ -1489,6 +1499,222 @@ local function testAuraFiltering()
 	buffs.perRow, buffs.rows = 8, 4
 	ns:BumpSerial()
 	ns:RefreshUnit("target")
+end
+
+--------------------------------------------------------------------------------
+-- 19b. Aura overlay placement (Plan 13)
+--
+-- The suite asserted what the two numeric overlays SAID and never where they
+-- sat, which is how an 11px stack count on a 20px icon shipped as a default and
+-- stayed there. These are the footprint assertions.
+--------------------------------------------------------------------------------
+
+local function testAuraTextPlacement()
+	local Defaults = ns.Defaults
+	local Migrate = ns.Migrate
+	local target = ns.frames.target
+	local buffs = ns:UnitConfig("target").auras.buffs
+	local debuffs = ns:UnitConfig("target").auras.debuffs
+
+	local function refresh()
+		ns:BumpSerial()
+		ns:RefreshUnit("target")
+	end
+
+	--------------------------------------------------------------------------
+	-- Defaults: both overlays ship off, at a size that fits a 20px icon
+	--------------------------------------------------------------------------
+
+	local shipped = Defaults.AuraGroup({})
+	equal("auratext/stacks ship off", shipped.showStacks, false)
+	equal("auratext/duration text ships off", shipped.showDurationText, false)
+	equal("auratext/stack size fits the icon", shipped.stackSize, 8)
+	equal("auratext/duration size fits the icon", shipped.durationSize, 8)
+	equal("auratext/duration anchors on the icon", shipped.durationAnchor, "CENTER")
+
+	buffs.showDurationText, buffs.showStacks = false, false
+	debuffs.showStacks = false
+	refresh()
+	check("auratext/nothing drawn when both are off",
+		not target.elements.auras.buffs.buttons[1].duration:IsShown()
+			and not target.elements.auras.debuffs.buttons[1].count:IsShown())
+
+	--------------------------------------------------------------------------
+	-- The nine points
+	--
+	-- The expected inset is derived from the point's NAME rather than copied
+	-- out of the element's table, so this checks the property -- a positive
+	-- inset moves toward the middle -- instead of restating the implementation.
+	--------------------------------------------------------------------------
+
+	buffs.showDurationText = true
+	buffs.durationX, buffs.durationY = 0, 0
+
+	local function durationPoint()
+		-- Own auras sort first, and the fixture's own buff carries a real
+		-- duration, so button 1 is always the one with timer text on it.
+		local fs = target.elements.auras.buffs.buttons[1].duration
+		local point, _, relativePoint, x, y = fs:GetPoint(1)
+		return point, relativePoint, x, y
+	end
+
+	local function inward(point)
+		local sx = point:find("LEFT") and 1 or (point:find("RIGHT") and -1 or 0)
+		local sy = point:find("TOP") and -1 or (point:find("BOTTOM") and 1 or 0)
+		return sx, sy
+	end
+
+	for _, anchor in ipairs({ "TOPLEFT", "TOP", "TOPRIGHT", "LEFT", "CENTER",
+		"RIGHT", "BOTTOMLEFT", "BOTTOM", "BOTTOMRIGHT" }) do
+		buffs.durationAnchor = anchor
+		refresh()
+		local point, relativePoint, x, y = durationPoint()
+		local sx, sy = inward(anchor)
+		check("auratext/" .. anchor .. " anchors to itself on the button",
+			point == anchor and relativePoint == anchor,
+			tostring(point) .. " -> " .. tostring(relativePoint))
+		check("auratext/" .. anchor .. " insets inward",
+			x == sx and y == sy,
+			string.format("(%s, %s) wanted (%d, %d)", tostring(x), tostring(y), sx, sy))
+	end
+
+	-- The regression the shared helper exists for: the old stack code used a
+	-- fixed (-1, 1) inset, which points inward only from BOTTOMRIGHT. At
+	-- TOPLEFT it pushed the text left and up, clear off the icon.
+	buffs.durationAnchor = "TOPLEFT"
+	refresh()
+	local _, _, tlx, tly = durationPoint()
+	check("auratext/TOPLEFT lands on the icon, not off it", tlx > 0 and tly < 0,
+		string.format("(%s, %s)", tostring(tlx), tostring(tly)))
+
+	--------------------------------------------------------------------------
+	-- Outside placements
+	--------------------------------------------------------------------------
+
+	buffs.durationAnchor = "BELOW"
+	refresh()
+	local point, relativePoint, _, belowY = durationPoint()
+	check("auratext/BELOW hangs under the icon",
+		point == "TOP" and relativePoint == "BOTTOM" and belowY < 0,
+		tostring(point) .. " -> " .. tostring(relativePoint) .. " y=" .. tostring(belowY))
+
+	buffs.durationAnchor = "ABOVE"
+	refresh()
+	local abovePoint, aboveRelative, _, aboveY = durationPoint()
+	check("auratext/ABOVE sits over the icon",
+		abovePoint == "BOTTOM" and aboveRelative == "TOP" and aboveY > 0,
+		tostring(abovePoint) .. " -> " .. tostring(aboveRelative) .. " y=" .. tostring(aboveY))
+
+	--------------------------------------------------------------------------
+	-- Offsets move the text the same way from every anchor
+	--------------------------------------------------------------------------
+
+	for _, anchor in ipairs({ "TOPLEFT", "BOTTOMRIGHT" }) do
+		buffs.durationAnchor = anchor
+		buffs.durationX, buffs.durationY = 0, 0
+		refresh()
+		local _, _, baseX, baseY = durationPoint()
+
+		buffs.durationX, buffs.durationY = 3, -2
+		refresh()
+		local _, _, movedX, movedY = durationPoint()
+
+		equal("auratext/" .. anchor .. " X offset moves right", movedX - baseX, 3)
+		equal("auratext/" .. anchor .. " Y offset moves down", movedY - baseY, -2)
+	end
+
+	buffs.durationX, buffs.durationY = 0, 0
+
+	--------------------------------------------------------------------------
+	-- A value that is not a placement must not throw or vanish
+	--------------------------------------------------------------------------
+
+	buffs.durationAnchor = "NONSENSE"
+	refresh()
+	local fallbackPoint = durationPoint()
+	equal("auratext/unknown anchor falls back to a corner", fallbackPoint, "BOTTOMRIGHT")
+
+	--------------------------------------------------------------------------
+	-- Stacks go through the same helper
+	--------------------------------------------------------------------------
+
+	debuffs.showStacks = true
+	debuffs.stackCorner = "TOPLEFT"
+	debuffs.stackX, debuffs.stackY = 0, 0
+	refresh()
+	local stackFs = target.elements.auras.debuffs.buttons[1].count
+	local stackPoint, _, stackRelative, stackX, stackY = stackFs:GetPoint(1)
+	check("auratext/stack count uses the same placement rule",
+		stackPoint == "TOPLEFT" and stackRelative == "TOPLEFT"
+			and stackX > 0 and stackY < 0,
+		string.format("%s -> %s (%s, %s)", tostring(stackPoint), tostring(stackRelative),
+			tostring(stackX), tostring(stackY)))
+
+	debuffs.stackCorner = "ABOVE"
+	refresh()
+	local outsidePoint, _, outsideRelative = stackFs:GetPoint(1)
+	check("auratext/stacks can sit outside the icon too",
+		outsidePoint == "BOTTOM" and outsideRelative == "TOP")
+
+	--------------------------------------------------------------------------
+	-- Migration 13 -> 14
+	--------------------------------------------------------------------------
+
+	local function profileAt13(mutate)
+		local group = {
+			showStacks = true, stackSize = 11, stackCorner = "BOTTOMRIGHT",
+			showDurationText = false, durationSize = 10,
+		}
+		if mutate then mutate(group) end
+		return { schemaVersion = 13, units = { target = { auras = { buffs = group } } } }
+	end
+
+	local untouched = profileAt13()
+	Migrate:Run(untouched, {})
+	local migrated = untouched.units.target.auras.buffs
+	equal("auratext/migration quiets untouched stacks", migrated.showStacks, false)
+	equal("auratext/migration resizes untouched stacks", migrated.stackSize, 8)
+	equal("auratext/migration resizes untouched timers", migrated.durationSize, 8)
+
+	local resized = profileAt13(function(g) g.stackSize = 16 end)
+	Migrate:Run(resized, {})
+	local keptSize = resized.units.target.auras.buffs
+	equal("auratext/a chosen stack size keeps stacks on", keptSize.showStacks, true)
+	equal("auratext/and keeps the size", keptSize.stackSize, 16)
+
+	local moved = profileAt13(function(g) g.stackCorner = "TOPLEFT" end)
+	Migrate:Run(moved, {})
+	equal("auratext/a moved stack count is left alone",
+		moved.units.target.auras.buffs.showStacks, true)
+
+	-- Duration text shipped OFF, so `true` can only be deliberate. The toggle
+	-- stays; only its placement is pinned to where it has always rendered.
+	local timersOn = profileAt13(function(g) g.showDurationText = true end)
+	Migrate:Run(timersOn, {})
+	local keptTimers = timersOn.units.target.auras.buffs
+	equal("auratext/deliberate duration text survives", keptTimers.showDurationText, true)
+	equal("auratext/and stays where it was rendering", keptTimers.durationAnchor, "BELOW")
+
+	-- Idempotent, and safe on a profile with no aura subtree at all.
+	local twice = profileAt13()
+	Migrate:Run(twice, {})
+	twice.schemaVersion = 13
+	Migrate:Run(twice, {})
+	equal("auratext/migration is idempotent",
+		twice.units.target.auras.buffs.stackSize, 8)
+
+	local bare = { schemaVersion = 13, units = { target = {} } }
+	check("auratext/a profile with no auras migrates cleanly", (Migrate:Run(bare, {})))
+
+	--------------------------------------------------------------------------
+	-- Leave the live profile as it ships, so later suites see the defaults
+	--------------------------------------------------------------------------
+
+	buffs.showDurationText, buffs.showStacks = false, false
+	buffs.durationAnchor = "CENTER"
+	debuffs.showStacks = false
+	debuffs.stackCorner = "BOTTOMRIGHT"
+	refresh()
 end
 
 --------------------------------------------------------------------------------
@@ -3575,6 +3801,7 @@ local suites = {
 	{ "drag-mode", testDragMode },
 	{ "text-coloring", testTextColoring },
 	{ "aura-filtering", testAuraFiltering },
+	{ "aura-text-placement", testAuraTextPlacement },
 	{ "derived-identity", testDerivedIdentity },
 	{ "tools-and-modes", testToolsAndModes },
 	{ "slash-commands", testSlashCommands },
