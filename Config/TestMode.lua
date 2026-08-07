@@ -91,13 +91,31 @@ local function substitute(frame)
 	return "player"
 end
 
+--- The stand-in data for one frame.
+--
+-- Identity was the only fiction until Plan 11 added a second, and the second
+-- one is why this now returns a table for the player frame instead of nil: a
+-- heal prediction has nothing real to read while standing in a city, so the
+-- colors and the overflow could otherwise only be configured mid-fight. Every
+-- reader of `frame.test` guards on the specific key it wants, so a table
+-- carrying only the heal values is safe on a frame that needs no identity.
+--
+-- The two fractions are small on purpose. They are measured against real,
+-- unfaked health, so at full health the direct segment lands inside the default
+-- 10% overflow and the HoT segment just past it -- meaning both colors are
+-- visible whether or not the character being configured has taken damage.
 local function fakeIdentity(def, index)
-	if def.key == "player" then return nil end
-	return {
-		name = def.label,
-		classFile = SAMPLE_CLASSES[((index - 1) % #SAMPLE_CLASSES) + 1],
-		level = 60 - ((index * 3) % 12),
+	local test = {
+		incomingHeal = 0.08,
+		incomingHot = 0.06,
 	}
+
+	if def.key == "player" then return test end
+
+	test.name = def.label
+	test.classFile = SAMPLE_CLASSES[((index - 1) % #SAMPLE_CLASSES) + 1]
+	test.level = 60 - ((index * 3) % 12)
+	return test
 end
 
 --------------------------------------------------------------------------------

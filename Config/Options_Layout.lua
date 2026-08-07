@@ -160,6 +160,77 @@ local function layoutGroup(def)
 end
 
 --------------------------------------------------------------------------------
+-- Incoming heals (Plan 11, Systems/HealPrediction.lua)
+--
+-- Lives inside the Health tab even though it is stored as its own element key,
+-- because it is a property of the health bar as far as anyone using it is
+-- concerned.
+--
+-- The description text says out loud that a spell predicts nothing until it has
+-- been cast once. That is a real limitation of deriving the numbers instead of
+-- shipping a rank database, and a limitation the user discovers on their own is
+-- indistinguishable from a bug.
+--------------------------------------------------------------------------------
+
+local function healPredictionArgs(unitKey, apply)
+	local function pred()
+		local c = ns:UnitConfig(unitKey)
+		return c and c.healPrediction
+	end
+
+	local function disabled() return not pred().enabled end
+
+	return {
+		breaker = Options.BreakerNotice(unitKey, "healPrediction", 0.5),
+		note = {
+			type = "description", order = 1,
+			name = L["Shows healing that is on its way, as a segment after the current health. These clients have no incoming-heal API, so the amounts are learned from your own casts: a spell predicts nothing until you have cast it once, and only your own heals are visible at all."],
+		},
+		enabled = {
+			type = "toggle", order = 2, name = L["Enable"],
+			get = function() return pred().enabled end,
+			set = function(_, v) pred().enabled = v; apply() end,
+		},
+		separateColors = {
+			type = "toggle", order = 3, name = L["Separate color for HoTs"],
+			desc = L["Direct casts and heal-over-time effects answer different questions, so they ship as two colors. Turn this off to draw both in the direct color."],
+			disabled = disabled,
+			get = function() return pred().separateColors end,
+			set = function(_, v) pred().separateColors = v; apply() end,
+		},
+		directColor = Options.Color(L["Incoming heal"], 4, pred, "directColor", apply, {
+			disabled = disabled,
+		}),
+		hotColor = Options.Color(L["Incoming HoT"], 5, pred, "hotColor", apply, {
+			disabled = function() return disabled() or not pred().separateColors end,
+		}),
+		alpha = {
+			type = "range", order = 6, name = L["Opacity"],
+			desc = L["Translucent by default so the bar's own color reads through the segment."],
+			min = 0.1, max = 1, step = 0.01,
+			disabled = disabled,
+			get = function() return pred().alpha end,
+			set = function(_, v) pred().alpha = v; apply() end,
+		},
+		overflow = {
+			type = "toggle", order = 7, name = L["Allow overflow"],
+			desc = L["Lets a heal that would overheal spill past the end of the bar, so you can see how much of it is wasted. The overhang draws outside the frame and can reach a frame next to it."],
+			disabled = disabled,
+			get = function() return pred().overflow end,
+			set = function(_, v) pred().overflow = v; apply() end,
+		},
+		overflowAmount = {
+			type = "range", order = 8, name = L["Overflow amount"],
+			desc = L["How far past the end of the bar the prediction may reach, as a fraction of the bar's width."],
+			min = 0, max = 1, softMax = 0.5, step = 0.01, isPercent = true,
+			disabled = function() return disabled() or not pred().overflow end,
+			get = function() return pred().overflowAmount end,
+			set = function(_, v) pred().overflowAmount = v; apply() end,
+		},
+	}
+end
+
+--------------------------------------------------------------------------------
 -- Health bar (SPEC §4.4)
 --------------------------------------------------------------------------------
 
@@ -272,6 +343,15 @@ local function healthGroup(def)
 			desc = L["The bar depletes from the opposite side."],
 			get = function() return health().inverseFill end,
 			set = function(_, v) health().inverseFill = v; apply() end,
+		},
+
+		-- Stored at the top level of the unit config, not under `health` -- it
+		-- is its own element. Edited here because that is where anyone looking
+		-- for it would look.
+		prediction = {
+			type = "group", order = 40, inline = true,
+			name = L["Incoming heals"],
+			args = healPredictionArgs(unitKey, apply),
 		},
 	}
 

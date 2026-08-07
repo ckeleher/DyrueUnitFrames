@@ -203,6 +203,70 @@ function Compat.GetComboPoints(unit)
 end
 
 --------------------------------------------------------------------------------
+-- Heal prediction (Plan 11)
+--
+-- UnitGetIncomingHeals arrived in Cataclysm and UnitGetTotalAbsorbs in
+-- Warlords, so neither is expected on 1.15.9 or 2.5.6 and Systems/HealPrediction
+-- derives its own numbers instead of reading them.
+--
+-- They are probed anyway rather than assumed absent, for two reasons. The
+-- shared-code clients have backported things before -- FEATURE-PROBE, NEVER
+-- VERSION-CHECK is the rule this whole file exists to enforce -- and if either
+-- one ever turns up, /duf compat is where it surfaces and the PROVIDERS table
+-- in the system is the seam an API-backed provider slots into.
+--
+-- Note what is NOT claimed here: even where a Classic client has exposed
+-- incoming heals, it covered direct casts only. HoTs and channels have never
+-- been in it, so the derived path stays the primary one either way.
+--------------------------------------------------------------------------------
+
+Compat.hasIncomingHeals = (_G.UnitGetIncomingHeals ~= nil)
+Compat.hasTotalAbsorbs = (_G.UnitGetTotalAbsorbs ~= nil)
+Compat.hasHealAbsorbs = (_G.UnitGetTotalHealAbsorbs ~= nil)
+
+--- Incoming heals from the game's own API.
+-- @return number|nil  nil when this client has no such API at all, which is
+--         different from 0 and is what the caller branches on.
+function Compat.GetIncomingHeals(unit, healer)
+	local fn = _G.UnitGetIncomingHeals
+	if not fn or not unit then return nil end
+	local ok, amount = pcall(fn, unit, healer)
+	if not ok then return nil end
+	return amount or 0
+end
+
+--- Absolute time this unit's current cast or channel ends, or nil.
+-- The game reports these in milliseconds on GetTime's epoch.
+function Compat.GetCastEndTime(unit)
+	local casting = _G.UnitCastingInfo
+	if casting then
+		local ok, name, _, _, _, endTime = pcall(casting, unit)
+		if ok and name and endTime then return endTime / 1000, false end
+	end
+	local channel = _G.UnitChannelInfo
+	if channel then
+		local ok, name, _, _, _, endTime = pcall(channel, unit)
+		if ok and name and endTime then return endTime / 1000, true end
+	end
+	return nil
+end
+
+--- The current combat-log line.
+--
+-- A thin passthrough on purpose. The FUNCTION is version-sensitive -- it
+-- replaced the old argument-list form and could be renamed again -- so its name
+-- belongs here under the §5.5 rule. The ARGUMENT LAYOUT is per-subevent and
+-- deliberately stays with the reader in Systems/HealPrediction, because
+-- unpacking it into a normalised table here would mean an allocation on the
+-- noisiest event in the game, thousands of times a minute, for lines that are
+-- almost always discarded on the first comparison.
+function Compat.GetCombatLogEvent()
+	local fn = _G.CombatLogGetCurrentEventInfo
+	if not fn then return nil end
+	return fn()
+end
+
+--------------------------------------------------------------------------------
 -- Colors
 --------------------------------------------------------------------------------
 
@@ -634,6 +698,14 @@ function Compat.Describe()
 		-- first thing worth knowing if it ever stops updating again.
 		hasUnitComboPoints = Compat.HasEvent("UNIT_COMBO_POINTS"),
 		hasUnitHealthFrequent = Compat.HasEvent("UNIT_HEALTH_FREQUENT"),
+		-- Plan 11. Expected false on both clients; reported so the assumption
+		-- the heal prediction module is built on is checkable rather than
+		-- merely asserted, and so Plan 12 has its answer before it starts.
+		hasIncomingHeals = Compat.hasIncomingHeals,
+		hasTotalAbsorbs = Compat.hasTotalAbsorbs,
+		hasHealAbsorbs = Compat.hasHealAbsorbs,
+		hasUnitHealPrediction = Compat.HasEvent("UNIT_HEAL_PREDICTION"),
+		hasCombatLogInfo = (_G.CombatLogGetCurrentEventInfo ~= nil),
 		hasUnitAura = Compat.HasEvent("UNIT_AURA"),
 		hasPlayerFocusChanged = Compat.HasEvent("PLAYER_FOCUS_CHANGED"),
 		hasUnitTarget = Compat.HasEvent("UNIT_TARGET"),

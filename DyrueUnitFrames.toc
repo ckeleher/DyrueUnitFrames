@@ -23,8 +23,10 @@ Systems\Tags.lua
 Systems\ColorRules.lua
 Systems\Anchoring.lua
 Systems\BarSweep.lua
+Systems\HealPrediction.lua
 
 Elements\HealthBar.lua
+Elements\HealPrediction.lua
 Elements\PowerBar.lua
 Elements\ShapeshiftMana.lua
 Elements\ComboPoints.lua
