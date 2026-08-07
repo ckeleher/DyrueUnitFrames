@@ -3932,6 +3932,90 @@ local function testBarSweep()
 end
 
 --------------------------------------------------------------------------------
+-- Highlight: the two frames where the target outline says nothing
+--
+-- "Outline when this unit is your target" states nothing on either end of the
+-- pair. The target frame is never out of that state, so what it draws there is
+-- a permanent border -- which is Layout > Border, with a color and a size of
+-- its own. The player frame can never be in it, because the addon does not
+-- point at you when you target yourself. Offered on neither, drawn on neither,
+-- unchanged everywhere else -- and that last part is the half that is easy to
+-- break.
+--------------------------------------------------------------------------------
+
+local function testHighlight()
+	local units = ns.Options.table.args.units.args
+	local targetArgs = units.target.args.highlight.args
+	local playerArgs = units.player.args.highlight.args
+
+	check("highlight/target outline not offered on the target frame",
+		targetArgs.targetEnabled == nil and targetArgs.targetColor == nil)
+	check("highlight/nor on the player frame",
+		playerArgs.targetEnabled == nil and playerArgs.targetColor == nil)
+	check("highlight/the rest of the group survives there",
+		targetArgs.mouseoverEnabled ~= nil and targetArgs.mouseoverColor ~= nil
+			and targetArgs.thickness ~= nil)
+	check("highlight/and on the player frame too",
+		playerArgs.mouseoverEnabled ~= nil and playerArgs.thickness ~= nil)
+	check("highlight/still offered where it means something",
+		units.focus.args.highlight.args.targetEnabled ~= nil
+			and units.party1.args.highlight.args.targetEnabled ~= nil)
+
+	-- Every profile written before this carries targetEnabled = true on the
+	-- target frame, and a migration step to clear a key nothing reads would be
+	-- schema churn. The value is ignored instead, so it has to STAY ignored.
+	ns:UnitConfig("target").highlight.targetEnabled = true
+	ns:BumpSerial()
+	ns:RefreshUnit("target")
+
+	local el = ns.frames.target.elements.highlight
+	check("highlight/element still built for the mouseover outline", el ~= nil)
+	if el then
+		check("highlight/no target outline on the target frame",
+			not el.target.edges[1]:IsShown())
+	end
+
+	-- A frame that merely HAPPENS to be your target is the case being kept:
+	-- same unit table behind both tokens, so the stub's UnitIsUnit says yes.
+	stub.setUnit("focus", stub.units.target)
+	ns.frames.focus:FullUpdate()
+	local focusEl = ns.frames.focus.elements.highlight
+	check("highlight/a frame that happens to be your target is outlined",
+		focusEl ~= nil and focusEl.target.edges[1]:IsShown())
+
+	stub.setUnit("focus", nil)
+	ns.frames.focus:FullUpdate()
+	if focusEl then
+		check("highlight/and drops it once that stops being true",
+			not focusEl.target.edges[1]:IsShown())
+	end
+
+	-- The player frame, the other way round: target yourself and it still must
+	-- not light up. This one was already true -- Update has always refused to
+	-- mark you -- so the assertion is here to keep the setting's removal and
+	-- the drawing honest together rather than because the behavior is new.
+	local realTarget = stub.units.target
+	ns:UnitConfig("player").highlight.targetEnabled = true
+	ns:BumpSerial()
+	ns:RefreshUnit("player")
+	stub.setUnit("target", stub.units.player)
+	ns.frames.player:FullUpdate()
+
+	local playerEl = ns.frames.player.elements.highlight
+	check("highlight/no target outline on the player frame",
+		playerEl ~= nil and not playerEl.target.edges[1]:IsShown())
+
+	stub.setUnit("target", realTarget)
+	ns.frames.player:FullUpdate()
+
+	ns.Defaults:ResetUnit(ns:Profile(), "target")
+	ns.Defaults:ResetUnit(ns:Profile(), "player")
+	ns:BumpSerial()
+	ns:RefreshUnit("target")
+	ns:RefreshUnit("player")
+end
+
+--------------------------------------------------------------------------------
 -- 26. No stray globals
 --
 -- A leaked global in an addon is how two addons quietly break each other.
@@ -4016,6 +4100,7 @@ local suites = {
 	{ "portrait", testPortrait },
 	{ "combo-points", testComboPoints },
 	{ "bar-sweep", testBarSweep },
+	{ "highlight", testHighlight },
 	{ "global-leaks", testNoGlobalLeaks },
 }
 

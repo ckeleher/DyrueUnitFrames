@@ -805,31 +805,41 @@ local function highlightGroup(def)
 	local function highlight() local c = ns:UnitConfig(unitKey); return c and c.highlight end
 	local apply = Options.ApplyUnit(unitKey)
 
-	return {
-		type = "group", order = 6, name = L["Highlight"],
-		args = {
-			targetEnabled = {
-				type = "toggle", order = 1, name = L["Outline when this unit is your target"],
-				get = function() return highlight().targetEnabled end,
-				set = function(_, v) highlight().targetEnabled = v; apply() end,
-			},
-			targetColor = Options.Color(L["Target outline color"], 2, highlight, "targetColor", apply,
-				{ hasAlpha = true }),
-			mouseoverEnabled = {
-				type = "toggle", order = 3, name = L["Outline on mouseover"],
-				get = function() return highlight().mouseoverEnabled end,
-				set = function(_, v) highlight().mouseoverEnabled = v; apply() end,
-			},
-			mouseoverColor = Options.Color(L["Mouseover outline color"], 4, highlight, "mouseoverColor", apply,
-				{ hasAlpha = true }),
-			thickness = {
-				type = "range", order = 5, name = L["Thickness"],
-				min = 1, max = 8, step = 1,
-				get = function() return highlight().thickness end,
-				set = function(_, v) highlight().thickness = v; apply() end,
-			},
+	local args = {
+		targetEnabled = {
+			type = "toggle", order = 1, name = L["Outline when this unit is your target"],
+			get = function() return highlight().targetEnabled end,
+			set = function(_, v) highlight().targetEnabled = v; apply() end,
+		},
+		targetColor = Options.Color(L["Target outline color"], 2, highlight, "targetColor", apply,
+			{ hasAlpha = true }),
+		mouseoverEnabled = {
+			type = "toggle", order = 3, name = L["Outline on mouseover"],
+			get = function() return highlight().mouseoverEnabled end,
+			set = function(_, v) highlight().mouseoverEnabled = v; apply() end,
+		},
+		mouseoverColor = Options.Color(L["Mouseover outline color"], 4, highlight, "mouseoverColor", apply,
+			{ hasAlpha = true }),
+		thickness = {
+			type = "range", order = 5, name = L["Thickness"],
+			min = 1, max = 8, step = 1,
+			get = function() return highlight().thickness end,
+			set = function(_, v) highlight().thickness = v; apply() end,
 		},
 	}
+
+	-- Two frames where the target outline states nothing, for opposite reasons.
+	-- The target frame always is your target, so both settings describe a
+	-- border that is simply always on -- Layout > Border, with a color and a
+	-- size of its own. The player frame never is: the addon does not point at
+	-- you when you target yourself. Elements/Highlight.lua ignores them on
+	-- both; not offering them is the other half of the same statement.
+	if unitKey == "target" or unitKey == "player" then
+		args.targetEnabled = nil
+		args.targetColor = nil
+	end
+
+	return { type = "group", order = 6, name = L["Highlight"], args = args }
 end
 
 --------------------------------------------------------------------------------

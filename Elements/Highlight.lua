@@ -16,8 +16,25 @@ local element = {
 
 --------------------------------------------------------------------------------
 
+--- Does "outline this unit while it is your target" mean anything on this frame?
+--
+-- On two of them it does not, for opposite reasons. The target frame IS your
+-- target, so the outline is never absent and marks nothing -- a permanent
+-- border by another name, which is what Layout > Border already draws, with a
+-- color and a size of its own. The player frame is never marked at all: the
+-- clause below that stops the addon pointing at you when you target yourself
+-- holds on every frame, and on that one it holds always.
+--
+-- The setting is offered on neither (Config/Options_Layout.lua) and any value a
+-- profile still carries is ignored here, so the two cannot drift apart.
+local function targetOutlineApplies(frame)
+	if frame == nil then return false end
+	return frame.unitKey ~= "target" and frame.unitKey ~= "player"
+end
+
 function element.IsEnabled(frame, cfg)
-	return cfg and (cfg.targetEnabled or cfg.mouseoverEnabled)
+	if not cfg then return false end
+	return (cfg.targetEnabled and targetOutlineApplies(frame)) or cfg.mouseoverEnabled
 end
 
 local function buildOutline(parent, level)
@@ -85,7 +102,8 @@ end
 
 function element.Update(frame, el, cfg)
 	local unit = frame.unit
-	local isTarget = cfg.targetEnabled and unit and UnitExists(unit)
+	local isTarget = cfg.targetEnabled and targetOutlineApplies(frame)
+		and unit and UnitExists(unit)
 		and UnitIsUnit(unit, "target") and not UnitIsUnit(unit, "player")
 	showOutline(el.target, isTarget and true or false)
 
