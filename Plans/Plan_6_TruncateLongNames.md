@@ -1,8 +1,11 @@
 # Plan 6 — Truncate Long Names
 
-**Status:** Not started
+**Status:** Implemented on `Plan-6-truncate-long-names`. Headless suite green
+(801 assertions, 37 of them new); **not yet seen in a client.**
 **Created:** 2 August 2026
-**Branch:** `first`
+**Branch:** `Plan-6-truncate-long-names`
+(The header used to read `first`, which was where the plan was *written* — see
+`Skills/ArchivePlan.md` on why that field is not evidence of anything.)
 
 ---
 
@@ -10,6 +13,81 @@
 
 > Currently, if the target has a very long name, the text overlaps with the
 > numbers on the right. I want the text to truncate
+
+---
+
+## Outcome
+
+`maxWidthMode` on every text element, with the four modes below. The shipped
+name texts — player, target, target of target, pet, focus, focus target, party
+1–4 and the party pets — ship on `fit`. Anything cut short ends in `...`.
+
+Schema 15, migration step `[14]`.
+
+## Deviations from the plan as written
+
+Three, and the first is the substantial one.
+
+**1. `fit` measures rendered width, and is the default. `percent` is not.**
+
+The plan proposed `percent` at 55 as the shipped default, with `fit` as a
+second-phase nicety. Worked through against the real numbers, neither of those
+fixes the frame in the request:
+
+* The target's name is anchored at `x = 32`, to clear the level text. Its
+  health text is `[hp:cur:short] / [hp:max:short] [hp:perc]%`, which renders
+  about 105px wide against the right edge of a 220px bar. 55% of 220 puts the
+  name's right edge at 153; the numbers start at about 111. Still overlapping,
+  by roughly 40px.
+* `fit` **as specified** — `basis - |our x| - |their x| - padding` — gives
+  `220 - 32 - 4 - 4 = 180` on that same frame, which is worse than the
+  percentage. The plan's own caveat ("it cannot know how wide the other text
+  will render") is not a rough edge here; it is the whole problem, because the
+  opposing text is anchored at the far edge and renders inward.
+
+So `fit` measures the neighbor's **actual** rendered width with
+`GetStringWidth`, which gives 75px — the correct answer — and follows it as the
+value changes, the frame is resized, or the format is edited. `percent` is
+still built, and is the right choice for anyone who wants a limit that does not
+move; it is simply not what the names ship on.
+
+**2. Truncation appends an ellipsis rather than relying on clipping.**
+
+The plan recommended shipping with bare clipping and treating an ellipsis as a
+follow-up, on the grounds that measuring per update is expensive on a path that
+caches to avoid exactly that. Measuring turned out to be required anyway for
+`fit`, so the marginal cost of the ellipsis is a binary search over character
+boundaries — about five probes — on the rare update where the string or its
+budget actually changes.
+
+The caching is what keeps this off the hot path, and the suite asserts it by
+counting `SetText` calls: health ticking from `4.2k` to `4.1k` renders at the
+same width, so the name's budget is unchanged and it is not touched at all.
+
+`...` rather than `…`: fonts come from LibSharedMedia and are whatever the user
+installed, and a missing glyph renders as a box on the exact string whose job
+is to say "there is more here".
+
+**3. The migration is wider than the plan describes, and had to be.**
+
+The plan says "Schema 9, step `[8]`"; the live schema was already 14, so this
+is 15 and step `[14]`.
+
+More importantly, the plan describes touching only the untouched name texts.
+That is not sufficient. `texts` is a user-owned **list**, and `Core/Defaults`'s
+`ensure` deliberately does not descend into lists — which is what makes a
+deleted text stay deleted. So a new key inside a text element reaches an
+existing profile *only* from the migration, and every text has to be written,
+not just the names. There is a test asserting that `EnsureProfile` cannot reach
+inside a text list, so the next person to add a key here finds out from a red
+suite rather than from a user.
+
+A text that already carries a pixel width keeps it, now spelled `pixels`, which
+preserves today's behavior exactly for anyone who had set one.
+
+`maxWidth` also kept its meaning rather than being reinterpreted per mode; the
+percentage lives in a separate `maxWidthPercent`. Overloading one key would
+have made switching modes silently reinterpret 120px as 120%.
 
 ---
 
