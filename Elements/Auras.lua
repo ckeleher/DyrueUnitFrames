@@ -173,22 +173,58 @@ local function expiryKey(entry)
 	return entry.expirationTime
 end
 
+--- A key that stays with an aura for as long as it is applied (Plan 14).
+--
+-- `entry.index` is NOT that. It is the client's slot number, and the slot
+-- container reuses freed slots rather than re-packing, so an aura's index
+-- changes when some *other* aura falls off. Using it as the tie-break meant the
+-- visible order churned -- and on a target it was the whole order, not a
+-- tie-break: FR-5.8 means every aura you did not apply reports expiration 0, so
+-- expiryKey returns INFINITE for all of them and they all tie.
+--
+-- auraInstanceID is issued per application and is not reused while the aura
+-- lives. The legacy UnitAura path has none (Compat.GetAura sets it nil), so
+-- spellId carries the order there: stable per spell, ambiguous only between two
+-- casts of the same spell from different sources -- where `index` is still the
+-- last word, below.
+local function orderKey(entry)
+	return entry.auraInstanceID or entry.spellId or 0
+end
+
+-- Every comparator ends on `index` because it is the only key guaranteed unique
+-- within a scan. An order function that reports two entries as equal in both
+-- directions is fine; one that is inconsistent makes table.sort raise "invalid
+-- order function for sorting" outright. A unique final key makes that
+-- unreachable by construction.
 local sorters = {
 	own_time = function(a, b)
 		if a.own ~= b.own then return a.own end
 		local ea, eb = expiryKey(a), expiryKey(b)
 		if ea ~= eb then return ea < eb end
+		local ka, kb = orderKey(a), orderKey(b)
+		if ka ~= kb then return ka < kb end
 		return a.index < b.index
 	end,
 	time = function(a, b)
 		local ea, eb = expiryKey(a), expiryKey(b)
 		if ea ~= eb then return ea < eb end
+		local ka, kb = orderKey(a), orderKey(b)
+		if ka ~= kb then return ka < kb end
 		return a.index < b.index
 	end,
 	name = function(a, b)
-		if a.name ~= b.name then return (a.name or "") < (b.name or "") end
+		-- Coalesce once. Comparing a.name ~= b.name and then (a.name or "") <
+		-- (b.name or "") disagreed with itself for nil vs "": the first test
+		-- said they differ, the second said neither sorts first.
+		local na, nb = a.name or "", b.name or ""
+		if na ~= nb then return na < nb end
+		local ka, kb = orderKey(a), orderKey(b)
+		if ka ~= kb then return ka < kb end
 		return a.index < b.index
 	end,
+	-- Deliberately unchanged: this mode means "however the client reports them",
+	-- which is exactly the unstable order the others now avoid. It is the escape
+	-- hatch, and the option text says so.
 	index = function(a, b) return a.index < b.index end,
 }
 
@@ -370,7 +406,12 @@ local function scan(frame, group, cfg, filter)
 			if (not duration or duration == 0) and lib and aura.spellId then
 				local ok, libDuration, libExpiration =
 					pcall(lib.GetAuraDurationByUnit, lib, unit, aura.spellId, nil, aura.name)
-				if ok and libDuration and libDuration > 0 then
+				-- The expiration is required, not optional. A duration with no
+				-- expiration still sorts as INFINITE, so the aura would land
+				-- back among the unordered ones while looking timed to
+				-- everything else that reads `duration`.
+				if ok and libDuration and libDuration > 0
+					and libExpiration and libExpiration > 0 then
 					duration, expirationTime, estimated = libDuration, libExpiration, true
 				end
 			end
@@ -392,6 +433,10 @@ local function scan(frame, group, cfg, filter)
 			entry.estimated = estimated
 			entry.own = own
 			entry.spellId = aura.spellId
+			-- Assigned unconditionally, nil included: the entry tables are
+			-- pooled, and a stale instance ID left behind by a previous scan
+			-- would order this aura as if it were the one that vacated the slot.
+			entry.auraInstanceID = aura.auraInstanceID
 
 			list[count] = entry
 		end

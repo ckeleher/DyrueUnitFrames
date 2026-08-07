@@ -285,11 +285,12 @@ local function buildGroup(def, groupKey, order, label, isDebuff)
 		sortHeader = { type = "header", order = 60, name = L["Sorting and filtering"] },
 		sort = {
 			type = "select", order = 61, name = L["Sort by"],
+			desc = L["Auras with no known duration -- anything you did not cast -- hold the order they were applied in. Game order is the exception: the client reshuffles its own list as auras come and go."],
 			values = {
 				own_time = L["Yours first, then time remaining"],
 				time = L["Time remaining"],
 				name = L["Name"],
-				index = L["Game order"],
+				index = L["Game order (reshuffles)"],
 			},
 			get = function() return group().sort end,
 			set = function(_, v) group().sort = v; apply() end,
