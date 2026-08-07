@@ -1,9 +1,45 @@
 # Plan 16 — Overflow Cap Indicator
 
-**Status:** Not started
+**Status:** Implemented on `Plan-16-overflow-cap-indicator`, merged in PR #14.
 **Created:** 7 August 2026
 **Branch:** `Plan-16-overflow-cap-indicator`
-**Depends on:** Plan 11 (`Plan-11-predictive-healing`), which is **not yet merged**
+**Depended on:** Plan 11, merged in PR #13 shortly before this.
+
+**The sequencing recommendation below was overruled, and it cost something.**
+*Dependency, stated first* argues for merging Plan 11 before starting this.
+The user chose to stack instead, which is a reasonable call — but PR #13 was
+**squash**-merged, so Plan 11's commit never became an ancestor of `main`.
+That left this branch's PR still based on the pre-merge branch, showing 1776
+lines across both features, and it took a `rebase --onto` plus a force-push to
+recover a clean 354-line diff. Recorded because the next stacked pair will hit
+exactly the same thing: **squash-merging the base of a stack always orphans the
+branch above it.** Either merge the base first, or expect to rebase the stack
+onto the squash commit afterwards.
+
+**Deviations from the plan as written:**
+
+* **`Core/Locale.lua` needed no changes**, despite being in the Files table.
+  enUS is the identity mapping, so new `L["..."]` call sites work with no table
+  entry. The third plan in a row to list it out of habit — Plans 11 and 13 did
+  the same, and the note is apparently not sticking.
+* **`Tests/wowstub.lua` needed `CreateColor`**, which the Files table did not
+  anticipate. The 10.0 gradient signature takes color objects, so without the
+  constructor every call would have fallen through to the fallback path and the
+  real one would have gone untested while the suite stayed green. The most
+  useful thing found while building this.
+* **The stub implements `SetGradient` only, not both methods**, where the Files
+  table said "`SetGradient` / `SetGradientAlpha` on the texture stub". Offering
+  both models a client that exists nowhere; the fallback is exercised by
+  removing the capability instead.
+* **An options header was added** alongside the four planned controls, so the
+  cap block reads as a group rather than as four loose rows after the overflow
+  slider.
+
+**Still outstanding:** the gradient rows added to `COMPAT_FINDINGS.md` are
+assumptions, not measurements. Nobody has confirmed which method these clients
+actually have — `/duf compat` reports `hasSetGradient` and
+`hasSetGradientAlpha`, and if the band renders as a flat block rather than a
+fade, that is the fallback and the rows need filling in.
 
 ---
 

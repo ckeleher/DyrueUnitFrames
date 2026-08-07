@@ -1,6 +1,12 @@
 # Plan 14 — Auras Do Not Hold A Consistent Order
 
-**Status:** Implemented on `Plan-14-aura-order` — **but UNVERIFIED.**
+**Status:** Implemented on `Plan-14-aura-order`, merged in PR #10 — **but
+UNVERIFIED.** Archived on 7 August 2026, late: the merge landed on 5 August and
+the plan sat in `Plans/` for two days afterwards, claiming to be open work.
+Archived despite the caveat below, per `Skills/ArchivePlan.md` — the branch is
+in, and a plan is not held out of the archive for being incomplete. **The
+unresolved diagnosis below is still unresolved**; moving the file changes
+nothing about that.
 **Created:** 4 August 2026
 **Branch:** `Plan-14-aura-order`
 
