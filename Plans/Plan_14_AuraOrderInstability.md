@@ -1,8 +1,49 @@
 # Plan 14 — Auras Do Not Hold A Consistent Order
 
-**Status:** Not started. **Diagnose before implementing.**
+**Status:** Implemented on `Plan-14-aura-order` — **but UNVERIFIED.**
 **Created:** 4 August 2026
 **Branch:** `Plan-14-aura-order`
+
+---
+
+## ⚠ Shipped without the diagnosis
+
+This plan opens by saying "do not write the fix before the probe has run". The
+fix was written and the probe was not run — a deliberate call on 6 August 2026,
+because the client was not available and the alternative was leaving a known bug
+in place indefinitely.
+
+`/dufprobe auraorder` **was built** and ships with the change. It has never
+executed against a real client. Nothing below this line was confirmed against
+1.15.9 or 2.5.6; candidate 1 is still a hypothesis that fits the evidence, not a
+finding.
+
+**Why shipping anyway was defensible:** the fix is a strict improvement under
+every candidate. Sorting on a key that is stable by construction is better than
+sorting on one the client is free to permute, whether or not that permutation is
+what the user saw. It cannot make the reported symptom worse.
+
+**What is genuinely unresolved, in the order it will bite:**
+
+| If | Symptom | What it means |
+|---|---|---|
+| **Candidate 2 is also live** — `sourceUnit` flaps, so `own` flips | Auras still move, *and* change size as they do (own render at 1.4×) | A second, unfixed bug. Different fix: coalesce a missing `sourceUnit` against the aura's last known source. The size change is the tell that distinguishes it from candidate 1 |
+| **`auraInstanceID` is not populated on these builds** | Two casts of the same spell from different sources still swap; everything else holds | The sort silently falls back to `spellId`. Degraded, not broken, and invisible until it happens |
+| **`auraInstanceID` is not monotonic** | Order stops changing, but is not application order | "Consistent" achieved, "oldest first" not. Would need an explicit application-order mode |
+| **Candidate 1 was simply wrong** | Nothing changes; auras still jump | Re-open from the candidate list. The fix stays regardless — it removes a real hazard either way |
+
+**To close this out**, in rough order of cost:
+
+1. **Watch a full debuff grid on a dungeon pull.** This is the actual acceptance
+   test and it costs nothing. If icons hold still, the user-visible bug is fixed
+   and the rest is bookkeeping.
+2. **Run `/dufprobe auraorder`** for 60s on the same pull. It answers all four
+   questions above by observation.
+3. **Record the result in `Documents/COMPAT_FINDINGS.md`** with the date and
+   build, per this plan's Files table. That entry was deliberately *not* written
+   in advance — findings are observations, and there were none.
+
+Until step 1 happens, treat the bug as *probably* fixed and nothing stronger.
 
 ---
 
