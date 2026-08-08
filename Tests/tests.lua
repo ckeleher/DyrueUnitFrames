@@ -3780,6 +3780,50 @@ local function testBarSweep()
 		not BarSweep:TickObserved() and not BarSweep:IsFiveSecondRuleRunning(7001))
 
 	----------------------------------------------------------------------------
+	-- Rage is not a regen tick (Plan 17)
+	--
+	-- Rage decays out of combat instead of regenerating, so neither half of the
+	-- increase/decrease split above applies to it. An increase is a gain from a
+	-- swing or an ability, and it must not reach the regen cadence.
+	----------------------------------------------------------------------------
+
+	BarSweep:Reset()
+	BarSweep:NotePlayerPower(Compat.RAGE, 20, 7500)
+	-- 2.6s apart: inside the accepted 1.5-3.0s band, which is exactly why this
+	-- was being swallowed as a plausible regen sample.
+	BarSweep:NotePlayerPower(Compat.RAGE, 45, 7502.6)
+	check("sweep/a rage gain is not a regen tick", not BarSweep:TickObserved())
+	equal("sweep/a rage gain leaves the regen cadence alone",
+		BarSweep:TickInterval(), 2.0)
+	equal("sweep/a rage gain does not reset the tick phase", st.origin, nil)
+
+	BarSweep:NotePlayerPower(Compat.RAGE, 30, 7505)
+	check("sweep/spending rage does not start the five second rule",
+		not BarSweep:IsFiveSecondRuleRunning(7505))
+
+	-- The bug this fixes, and the reason it was never confined to warriors. A
+	-- druid in bear form has rage on the power bar and mana on the shapeshift
+	-- mana bar, and both lines read one shared cadence -- so rage gains at the
+	-- bear's swing timer were driving the MANA tick line.
+	BarSweep:Reset()
+	BarSweep:NotePlayerPower(Compat.MANA, 1000, 7600)
+	for i = 1, 25 do BarSweep:NotePlayerPower(Compat.MANA, 1000 + i * 40, 7600 + i * 2.5) end
+	local casterCadence = BarSweep:TickInterval()
+	local casterOrigin = st.origin
+	near("sweep/the mana cadence is learned in caster form", casterCadence, 2.5, 0.02)
+
+	-- Shift to bear and take rage in for a while. 1.9s apart, which is inside the
+	-- accepted band and NOT the mana cadence -- rage arrives from swings, from
+	-- damage taken and from Enrage, so it is not confined to one weapon speed.
+	-- Both halves of the corruption are asserted: the interval and the phase.
+	BarSweep:NotePlayerPower(Compat.RAGE, 0, 7700)
+	for i = 1, 15 do BarSweep:NotePlayerPower(Compat.RAGE, i * 6, 7700 + i * 1.9) end
+	equal("sweep/bear form rage gains do not move the mana cadence",
+		BarSweep:TickInterval(), casterCadence)
+	equal("sweep/bear form rage gains do not reset the mana tick phase",
+		st.origin, casterOrigin)
+
+	----------------------------------------------------------------------------
 	-- The sweep maths
 	----------------------------------------------------------------------------
 
@@ -3858,6 +3902,22 @@ local function testBarSweep()
 		tick.IsActive(st, 0, { atMax = "nonsense" }, fullMana))
 	check("sweep/a missing at-max mode shows it rather than erroring",
 		tick.IsActive(st, 0, {}, fullMana))
+
+	-- Plan 17. On a rage bar the tick line points at an event that never happens,
+	-- and no at-max mode makes it meaningful -- so it is suppressed outright,
+	-- ahead of the setting rather than through it.
+	local rageBar = { atMax = false, powerType = Compat.RAGE }
+	local fullRage = { atMax = true, powerType = Compat.RAGE }
+	check("sweep/the tick line is suppressed on a rage bar",
+		not tick.IsActive(st, 0, { atMax = "always" }, rageBar))
+	check("sweep/no at-max mode brings it back on a rage bar",
+		not tick.IsActive(st, 0, { atMax = "always" }, fullRage)
+		and not tick.IsActive(st, 0, { atMax = "mana" }, fullRage)
+		and not tick.IsActive(st, 0, { atMax = "energy" }, fullRage)
+		and not tick.IsActive(st, 0, { atMax = "never" }, fullRage))
+	check("sweep/suppressing rage does not disturb energy or mana",
+		tick.IsActive(st, 0, { atMax = "always" }, notFull)
+		and tick.IsActive(st, 0, { atMax = "always" }, fullMana))
 
 	----------------------------------------------------------------------------
 	-- Attachment: "only applies to mana bars"

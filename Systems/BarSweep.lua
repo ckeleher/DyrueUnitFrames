@@ -151,6 +151,14 @@ local PROVIDERS = {
 		-- same line is attached to the power bar and the shapeshift mana bar at
 		-- once and "at max" means a different thing on each.
 		IsActive = function(st, now, cfg, record)
+			-- Plan 17. Rage does not regenerate, so on a rage bar this line is a
+			-- progress bar towards an event that never happens. It is suppressed at
+			-- render time rather than hidden as an option, because `power.tick` is
+			-- one config block per BAR and a druid's power bar shows rage in bear
+			-- form and energy in cat form — there is no per-power-type config to
+			-- hide. The `decay` provider below is what a rage bar gets instead.
+			if record and record.powerType == Compat.RAGE then return false end
+
 			if not record or not record.atMax then return true end
 
 			local mode = (cfg and cfg.atMax) or "always"
@@ -526,6 +534,24 @@ function BarSweep:NotePlayerPower(powerType, value, now)
 	-- values are different resources and are not comparable at all.
 	if previous == nil or previousType ~= powerType then return end
 	if value == previous then return end
+
+	-- PLAN 17. Rage is routed out before the increase/decrease split below,
+	-- because both halves of that split are wrong for it.
+	--
+	-- A rage INCREASE is a gain from a weapon swing or an ability, not a regen
+	-- tick — and feeding it to NoteTick corrupted a value shared well beyond the
+	-- rage bar. Mainhand speeds are typically 2.4-3.6s, so a large share of those
+	-- gaps land inside NoteTick's accepted band and were being smoothed into
+	-- `state.interval` as if they were regen samples. A druid in bear form has
+	-- rage on the power bar and mana on the shapeshift mana bar reading that same
+	-- state (Elements/ShapeshiftMana.lua), so every rage gain in bear form reset
+	-- the phase of the MANA tick line and dragged its interval towards the bear's
+	-- swing timer. The one bar where the indicator earns its keep was the one
+	-- being corrupted by this.
+	--
+	-- A rage DECREASE is a spend in combat and a decay tick out of it, which the
+	-- five second rule has no interest in either way.
+	if powerType == Compat.RAGE then return end
 
 	if value > previous then
 		self:NoteTick(now)

@@ -499,7 +499,7 @@ local function sweepGroup(unitKey, getBar, apply, key, order, name, description)
 	}
 end
 
-local TICK_DESCRIPTION = L["A thin line sweeping across the bar towards the next energy or mana regeneration tick. The interval is measured from the game as it runs rather than assumed to be two seconds, so it stays correct if the cadence is ever different from what is expected."]
+local TICK_DESCRIPTION = L["A thin line sweeping across the bar towards the next energy or mana regeneration tick. The interval is measured from the game as it runs rather than assumed to be two seconds, so it stays correct if the cadence is ever different from what is expected. Rage does not regenerate, so nothing is drawn while the bar is showing rage."]
 
 local FSR_DESCRIPTION = L["Spending mana suppresses Spirit-based regeneration for five seconds, and every fresh expenditure restarts it. The line sweeps for exactly that window. Regeneration resumes on the first tick AFTER the window closes, so it can be up to one tick later than the line suggests - the power tick indicator above covers that remainder. Only shown while this bar is showing mana."]
 
