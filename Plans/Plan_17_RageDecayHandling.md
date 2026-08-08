@@ -1,6 +1,7 @@
 # Plan 17 — Rage Decay Handling
 
-**Status:** Not started
+**Status:** Both parts implemented on `Plan-17-rage-decay`. See *Implementation
+notes* at the foot of this document.
 **Created:** 8 August 2026
 **Branch:** `Plan-17-rage-decay`
 **Builds on:** [Plan 2](Archive/Plan_2_PowerTickIndicators.md) and
@@ -367,6 +368,102 @@ recommendation, so the design above stands unamended.
 4. **Rage only.** Energy, focus and mana all regenerate on a tick, so the
    existing indicator is already right for rogues, cats and hunter pets and none
    of them are touched. Happiness was raised and explicitly excluded.
+
+---
+
+## Implementation notes
+
+Where the build departed from the plan above, and why. Two commits on
+`Plan-17-rage-decay`: `ca021be` for part 1, `59af5dc` for part 2.
+
+### The bug was worse than this plan described
+
+The plan says rage gains were being "folded in as if they were regen samples",
+which implied rage was *competing* with real mana ticks for the shared cadence.
+It was not competing — in bear form it was the only bidder.
+
+`Elements/ShapeshiftMana.lua` calls `NoteManaSpent` on a mana *decrease* and
+notes nothing at all on an increase. So mana regen ticks are never observed while
+shapeshifted. Before part 1, that left rage gains as the sole input to
+`state.origin` and `state.interval` in bear form, and the shapeshift mana bar's
+tick line was running entirely on the bear's rage cadence. The regression test
+records it: 2.50s learned in caster form, dragged to 1.90s by fifteen rage gains.
+
+**What this means after the fix:** in bear form the mana bar's tick line now runs
+on the cadence last learned in caster form, or the seeded 2.0s if none has been.
+That is honest rather than correct — nothing observes mana ticks while shifted, so
+there is nothing better available without a new source. Left alone deliberately;
+it is a separate finding about Plan 2's coverage rather than part of this work, and
+it wants its own plan.
+
+### `rageOrigin` is the pre-decay gate, not a separate flag
+
+The plan gave the decay line four state fields and gated it on `rageObserved`.
+One field does the job: `rageOrigin` is set by the first observed decay tick and
+cleared on `PLAYER_REGEN_DISABLED`, so "is non-nil" already means "decay has
+started in this out-of-combat stretch". `rageObserved` survives as a reporting
+flag only — observed-versus-assumed for `/duf profile`, exactly as `observed`
+does for the tick line.
+
+### A large drop clears the phase rather than re-basing it
+
+The plan said an implausibly large decrease should "reset the phase". It sets it
+to `nil` instead. Re-basing to `now` would assert that a form change or a
+combat-drop wipe told us where the server's decay timer is, which it did not; nil
+makes the line wait for a real decay tick. In practice both readings look the
+same on screen, because the drops in question leave rage at zero and the line is
+inactive there anyway — but only one of them is a true statement.
+
+### The tick line is gated twice on purpose
+
+The provider clause is the rule and holds wherever a tick line is attached from —
+there are two attach sites, and `Elements/ShapeshiftMana.lua` is not obliged to
+know about rage. `Elements/PowerBar.lua` *also* stops attaching it, following how
+the five second rule is gated to mana, because `ActiveCount()` counts attached and
+enabled records: without it `/duf profile` would report a line that exists and can
+never draw. Redundant in effect, not in meaning.
+
+### Combat state is read live, and the events do the other three jobs
+
+`IsActive` calls `UnitAffectingCombat("player")` per frame rather than tracking a
+flag from `PLAYER_REGEN_ENABLED`/`DISABLED`. `NoteRagePower` needs the same answer
+at the moment of a power event, and one live source cannot disagree with itself the
+way a cached flag can if an event is ever missed. One C call per frame while a decay
+line is up.
+
+That leaves the two events doing exactly what the plan predicted and nothing more:
+timestamping the drop for the measurement, clearing the stale phase when a fight
+starts, and restarting a driver that had idled to a stop.
+
+### The line wraps at a whole interval, as the tick line does
+
+Worth writing down because it cost a test. At exactly one interval the fraction
+modulo returns 0, so the line is back at its origin edge rather than parked at the
+far one. The assertion had to be "at the far edge just *short* of the next tick,
+and back at the origin on the tick itself". Same behavior as Plan 2's sweep, same
+reason.
+
+### Also built
+
+- `/dufprobe rage`, a 90-second trace. Its first output is whether any rage change
+  arrived without an event, because every derived number depends on that answer.
+- A `Plan 17 — Rage decay` section in `Documents/COMPAT_FINDINGS.md`: the source
+  table above, the consequences for the code, and a fill-in table for the probe.
+  Not a client-capability question, but it belongs there for the same reason the
+  others do — the answer was looked for, not found, and the code was written around
+  the gap rather than around a guess.
+- `/duf profile` reports the derived interval, observed-or-assumed, whether decay is
+  running right now, and the measured pre-decay delay.
+
+### Not done
+
+Nothing from the plan was dropped. Still outstanding, and both were always
+after-the-fact by design: running the probe in game, and filling in the
+`_(fill in)_` rows it answers.
+
+**Test suite:** 886 → 947 assertions, all green, plus `luacheck` and `refcheck`
+clean. The four part-1 regression assertions were verified to fail with the fix
+reverted before being committed.
 
 ---
 
