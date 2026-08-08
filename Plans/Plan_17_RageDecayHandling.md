@@ -349,26 +349,24 @@ table.
 
 ---
 
-## Open questions
+## Decisions
 
-Numbered for reply.
+Asked before implementation, answered 8 August 2026. All four took the
+recommendation, so the design above stands unamended.
 
-1. **Scope** — Part 1 + Part 2 as written, or Part 1 alone for now (rage stops
-   corrupting the mana cadence and stops showing a meaningless line, no new
-   indicator)?
-2. **The pre-decay delay.** The recommendation above is to show nothing until
-   rage actually starts falling, and to *measure* the delay into `/duf profile`
-   rather than draw a sweep for a duration no source substantiates. The
-   alternative is a grace-window sweep now, seeded at the combat-drop timer, that
-   would be wrong by an unknown amount. Recommendation stands unless you want the
-   grace sweep.
-3. **Probe first, or build first?** Building against the seeded numbers and then
-   correcting them is fine — that is what the derivation is for — but if you would
-   rather have `/dufprobe rage` output in hand before Part 2's constants are
-   chosen, the probe is a small standalone first commit.
-4. **Rogues, cats, and hunter pets are untouched by this.** Energy and focus
-   regenerate normally, so they keep the tick line unchanged. Confirming in case
-   "handle it specially" was meant to cover any other non-regenerating resource.
+1. **Scope: both parts.** Part 1 lands first and separately — it is a bug fix
+   with its own regression tests and does not depend on Part 2.
+2. **The pre-decay delay: show nothing until rage actually falls.** The line is
+   gated on `rageObserved`. The delay is measured into `/duf profile` so the
+   number becomes known; a grace-window sweep stays out until it is, and is then
+   a follow-up plan rather than part of this one.
+3. **Build against the seeded numbers, correct after measuring.** Deriving the
+   interval at runtime is what makes the seed unimportant. `/dufprobe rage` still
+   ships with Part 2, but it informs the bands afterwards rather than gating the
+   work.
+4. **Rage only.** Energy, focus and mana all regenerate on a tick, so the
+   existing indicator is already right for rogues, cats and hunter pets and none
+   of them are touched. Happiness was raised and explicitly excluded.
 
 ---
 
