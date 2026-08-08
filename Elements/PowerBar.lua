@@ -46,6 +46,14 @@ local function syncSweeps(frame, el, cfg, powerType, atMax)
 	BarSweep:Attach(frame, el.bar, "tick", not isRage and cfg and cfg.tick or nil,
 		powerType, atMax)
 
+	-- The mirror image (Plan 17): rage gets a sweep towards the next moment it
+	-- DROPS. Gated on the displayed power the way the five second rule below is,
+	-- and for the same reason — a general rule about the resource rather than a
+	-- class check. A warrior always has it; a druid gets it in bear form and not in
+	-- cat; nobody else ever sees it.
+	BarSweep:Attach(frame, el.bar, "decay", isRage and cfg and cfg.decay or nil,
+		powerType, atMax)
+
 	-- The five second rule is about mana, so on the power bar the line is
 	-- attached only while the DISPLAYED power is mana — a general rule, not a
 	-- class check, same reasoning as §4.2. A caster gets it here; a druid in cat

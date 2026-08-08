@@ -263,6 +263,52 @@ If Edit Mode cannot do it, change the default in
 
 ---
 
+## Plan 17 — Rage decay
+
+Not a client-capability question but a **game-rule** question, and it belongs
+here for the same reason the others do: the answer was looked for, not found, and
+the code was written around the gap rather than around a guess.
+
+**What the sources say.** Rage decays only out of combat — every source agrees on
+that and nothing else is contested. Beyond it:
+
+| Claim | Source | Weight |
+|---|---|---|
+| ~1 rage/sec, delivered as 2 or 3 rage on a ~2.5 s tick | Vanilla WoW Wiki | One source. The discrete-tick shape is the useful part |
+| 1.25 rage/sec (75/min) | warcraft.wiki.gg | Retail. The wrong number to copy for 1.15.9 / 2.5.6 |
+| Decay begins "after a brief delay" | Classic warrior guides | No number given anywhere |
+| Vanilla Anger Management: "Increases the time required for your rage to decay while out of combat by 30%" | warcraft.wiki.gg | Solid, and it means **the rate differs between our two clients** |
+| Redesigned in 2.0.1 to "Generates 1 rage per 3 seconds while in combat" | same | So nothing modifies out-of-combat decay on TBC |
+| Entire rage bar lost instantly when combat drops | Blizzard forums, no developer reply | Player reports only. Handled defensively by the plausibility guard |
+
+**Consequence for the code.** No constant can be right for both clients at once,
+so `Systems/BarSweep.lua` derives the interval from observation exactly as it does
+the regen cadence — seeded at 2.5 s, band 1.5–4.0 s, outliers rejected. The band
+is wider than the regen band's 1.5–3.0 specifically so a 30% talent stretch on a
+2.5 s base (3.25 s) is not thrown away as an outlier.
+
+The pre-decay delay is not modeled at all. The decay line does not draw until rage
+is observed falling, which is correct whatever the true delay is, and the delay is
+*measured* into `/duf profile` so it stops being unknown.
+
+**To fill in, from `/dufprobe rage`:**
+
+| Question | Assumed | Observed |
+|---|---|---|
+| Does `UNIT_POWER_UPDATE` fire per decay tick? | Yes — the whole derivation rests on it | _(fill in)_ |
+| Decay interval, out of combat | ~2.5 s | _(fill in)_ |
+| Rage lost per tick | 2–3 | _(fill in)_ |
+| Delay from combat drop to first decay | Unknown, not modeled | _(fill in)_ |
+| Anything decaying *during* combat | No | _(fill in)_ |
+| Interval with vanilla Anger Management talented | ~3.25 s, or an amount change instead | _(fill in)_ |
+
+**If the first row comes back "no"**, the derived interval is unsound and detection
+has to move into the sweep driver's own `OnUpdate` — one `UnitPower` read per frame
+while a decay line is up. Designed but deliberately not built, on the same footing
+as the `spellcast` trigger in `BarSweep.TRIGGERS`.
+
+---
+
 ## Deviations from SPEC.md
 
 Recorded as they are made, so the reasoning survives.
@@ -275,7 +321,7 @@ Recorded as they are made, so the reasoning survives.
 | §FR-5.9 right-click cancel | Secure attribute on a separate overlay button, updated through `CombatQueue` | Aura icons must be shown and hidden constantly in combat, which a protected frame cannot do. Splitting insecure icon from secure overlay is the only arrangement that satisfies both. Cost: in combat the overlay can be one aura stale |
 | §5.7 incremental aura updates | `updateInfo` is used to *skip* no-op updates; the normal path is a full rescan | The spec calls this an optimization, not a blocker. Maintaining a parallel instance-ID store is a real bug surface and buys nothing measurable at Classic's aura counts |
 | §FR-4.1 "Default: green" | Health bars ship in `class` mode, with `reaction` as the NPC fallback | Class color says at a glance who you are looking at, and degrades to something meaningful for NPCs rather than to a fixed color that means nothing. The spec's green is still the stored `color` and is one dropdown away. Schema 4 migrates profiles still on the old default |
-| §5.7 three permitted tickers | A fourth was added: one `OnUpdate` driver in `Systems/BarSweep.lua`, shared by the power tick indicator (Plan 2) and the five second rule indicator (Plan 10) | The sweep is a continuous animation *between* two regen ticks and nothing fires in between — `UNIT_POWER_UPDATE` fires AT the tick, which is the moment the sweep restarts. Same category as the derived-unit poller: the game does not push what we need. It obeys the same discipline as the other three, running only while a visible bar has an active sweep and stopping the instant that stops being true, and `/duf profile` reports it. Player only, on the §FR-8.5 boundary: another unit's tick cadence and mana expenditure are not observable. Both plans share the one driver and one line-rendering path with a table of providers, so there is no fifth ticker |
+| §5.7 three permitted tickers | A fourth was added: one `OnUpdate` driver in `Systems/BarSweep.lua`, shared by the power tick indicator (Plan 2), the five second rule indicator (Plan 10) and the rage decay indicator (Plan 17) | The sweep is a continuous animation *between* two regen ticks and nothing fires in between — `UNIT_POWER_UPDATE` fires AT the tick, which is the moment the sweep restarts. Same category as the derived-unit poller: the game does not push what we need. It obeys the same discipline as the other three, running only while a visible bar has an active sweep and stopping the instant that stops being true, and `/duf profile` reports it. Player only, on the §FR-8.5 boundary: another unit's tick cadence, mana expenditure and rage decay are not observable. All three plans share the one driver and one line-rendering path with a table of providers, so a third indicator added no ticker and there is still no fifth |
 | §FR-5.6 "a configurable corner" / §FR-5.5 optional duration text | Both numeric overlays take any of the nine points, plus `ABOVE` and `BELOW`, with x/y offsets — and both ship **off** (Plan 13) | Corners were not the constraint; size was. At the specified 20px icon size an outlined stack count is over half the height of the art, and a full 8x2 debuff grid came out unreadable. The capability §FR-5.6 asks for is intact and wider; what changed is the shipped default and the fact that placement is now a setting instead of a hardcoded inset. Schema 14 migrates only the exact untouched default, so anyone who had already chosen a corner or a size keeps it |
 | §2.2 "incoming-heal prediction — out of domain" | Built, as `Systems/HealPrediction.lua` plus `Elements/HealPrediction.lua` (Plan 11) | The exclusion grouped it with combat text and threat meters, i.e. another addon's problem domain. It belongs with the other group — the things Classic cannot support — because it is a property of a health bar rather than a separate display, and what made it look foreign was the absent API rather than the feature. §2.1's first goal is replacing SUF day to day, and SUF has it. It costs none of what §2.2's other exclusions were protecting: no secure header, no Blizzard frame contact, no new library, and no new ticker. Amounts are derived by learning from the player's own combat log rather than shipped as a rank database, so there is nothing to go stale. The absorb half is deliberately still excluded, pending Plan 12 |
 | §5.1 file layout | A `Tests/` directory was added | A headless suite that runs the addon against a stubbed API in a real Lua 5.1 interpreter. Not in the spec's layout, but the project's entire premise is that the last one kept breaking, and this makes step 6 of the patch-day playbook cost thirty seconds instead of an evening |

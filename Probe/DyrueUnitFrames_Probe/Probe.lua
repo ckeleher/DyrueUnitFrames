@@ -14,6 +14,7 @@
 --   /dufprobe health     enemy health scaling on the current target (task 0.4)
 --   /dufprobe portrait   2D and 3D portrait feasibility (task 0.8)
 --   /dufprobe auraorder  60-second aura index stability trace (Plan 14)
+--   /dufprobe rage       90-second rage decay trace (Plan 17)
 --   /dufprobe dump       re-print the last survey
 
 local ADDON = ...
@@ -596,6 +597,202 @@ local function startAuraOrderTrace(seconds)
 end
 
 --------------------------------------------------------------------------------
+-- Plan 17 - rage decay trace
+--
+-- Rage decays out of combat instead of regenerating, and the rules for it are not
+-- reliably documented for 1.15.9 or 2.5.6. One vanilla source gives ~1 rage per
+-- second on a ~2.5s tick; the modern wiki's 1.25/sec is the retail figure; and the
+-- delay between combat dropping and rage starting to fall has no stated value at
+-- all. Worse, vanilla Anger Management stretches the decay time by 30%, so the
+-- numbers differ between the two clients this addon supports.
+--
+-- The five questions this answers, in the order they matter:
+--
+--   1. Does UNIT_POWER_UPDATE fire per decay tick, or does the client coalesce
+--      them? If it coalesces, the derived interval in Systems/BarSweep.lua is
+--      built on sand and detection has to move into the sweep driver's OnUpdate.
+--   2. What is the real interval on this client?
+--   3. How much rage per tick, and is it the documented 2 or 3?
+--   4. How long after the combat flag clears does the first decrease arrive?
+--   5. Does anything decay DURING combat, i.e. is the in-combat gate right?
+--
+-- Run it on a warrior, again on a druid in bear form, and once on a Classic Era
+-- warrior with Anger Management talented if one is available.
+--------------------------------------------------------------------------------
+
+local rageTracer = CreateFrame("Frame")
+
+local RAGE = (Enum and Enum.PowerType and Enum.PowerType.Rage) or 1
+
+local function startRageTrace(seconds)
+	seconds = seconds or 90
+	local log = {}
+	local started = GetTime()
+	local lastRage = UnitPower("player", RAGE)
+	local lastDropAt = nil        -- GetTime() of the last decrease, for the interval
+	local combatEndedAt = nil     -- and of the last combat drop, for the delay
+	local firstDecayDelay = nil
+	local intervals, steps = {}, {}
+	local inCombatDecays = 0
+	local silentChanges = 0
+
+	DyrueUnitFramesProbeDB.rageTrace = log
+
+	local function note(event, source)
+		local rage = UnitPower("player", RAGE)
+		if rage == lastRage then return end
+
+		local now = GetTime()
+		local delta = rage - lastRage
+		local combat = UnitAffectingCombat("player") and true or false
+		local entry = {
+			t = now - started,
+			event = event,
+			source = source,
+			rage = rage,
+			delta = delta,
+			combat = combat,
+			displayed = UnitPowerType("player"),
+			form = GetShapeshiftForm and GetShapeshiftForm() or -1,
+		}
+
+		if delta < 0 then
+			if combat then
+				inCombatDecays = inCombatDecays + 1
+			else
+				steps[#steps + 1] = -delta
+				if lastDropAt then
+					entry.since = now - lastDropAt
+					intervals[#intervals + 1] = entry.since
+				end
+				if combatEndedAt and not firstDecayDelay then
+					firstDecayDelay = now - combatEndedAt
+					entry.afterCombat = firstDecayDelay
+				end
+				lastDropAt = now
+			end
+		end
+
+		lastRage = rage
+		log[#log + 1] = entry
+
+		out(string.format("%.2fs %s rage=%d (%+d)%s%s%s",
+			entry.t, event, rage, delta,
+			combat and " |cffff5555IN COMBAT|r" or "",
+			entry.since and string.format(" since=%.2fs", entry.since) or "",
+			entry.afterCombat
+				and string.format(" |cffffcc00%.2fs AFTER COMBAT DROPPED|r", entry.afterCombat)
+				or ""))
+	end
+
+	for _, event in ipairs({
+		"UNIT_POWER_UPDATE", "UNIT_MAXPOWER", "UNIT_DISPLAYPOWER",
+		"PLAYER_REGEN_ENABLED", "PLAYER_REGEN_DISABLED",
+	}) do
+		pcall(rageTracer.RegisterEvent, rageTracer, event)
+	end
+
+	rageTracer:SetScript("OnEvent", function(_, event, unit)
+		if event == "PLAYER_REGEN_ENABLED" then
+			combatEndedAt = GetTime()
+			-- The decay timer starts from here, not from the last spend in the
+			-- fight, so the interval clock restarts with it.
+			lastDropAt = nil
+			out(string.format("%.2fs |cff40ff40combat dropped|r rage=%d",
+				GetTime() - started, UnitPower("player", RAGE)))
+			return
+		elseif event == "PLAYER_REGEN_DISABLED" then
+			combatEndedAt = nil
+			out(string.format("%.2fs |cffff5555combat started|r rage=%d",
+				GetTime() - started, UnitPower("player", RAGE)))
+			return
+		end
+		if unit and unit ~= "player" then return end
+		note(event, "event")
+	end)
+
+	-- Question 1, and the reason it is first: a 0.1s sampler catches any change the
+	-- events did not report. Every derived number below is only as good as the
+	-- events, and this is the check on them.
+	local sampler = C_Timer.NewTicker(0.1, function()
+		if UnitPower("player", RAGE) ~= lastRage then
+			silentChanges = silentChanges + 1
+			note("TICKER_ONLY", "sampler")
+		end
+	end)
+
+	out("Tracing rage for " .. seconds .. "s.")
+	out("Build rage on something, then STOP and stand still until it drains to zero.")
+	out("Do that twice if there is time, and once in bear form.")
+
+	C_Timer.After(seconds, function()
+		sampler:Cancel()
+		rageTracer:UnregisterAllEvents()
+		rageTracer:SetScript("OnEvent", nil)
+
+		local function mean(t)
+			if #t == 0 then return nil end
+			local sum = 0
+			for _, v in ipairs(t) do sum = sum + v end
+			return sum / #t
+		end
+
+		local meanInterval, meanStep = mean(intervals), mean(steps)
+		DyrueUnitFramesProbeDB.rageFindings = {
+			intervals = intervals,
+			steps = steps,
+			meanInterval = meanInterval,
+			meanStep = meanStep,
+			firstDecayDelay = firstDecayDelay,
+			inCombatDecays = inCombatDecays,
+			silentChanges = silentChanges,
+		}
+
+		header("Rage trace finished")
+		out(#log, "entries,", #intervals, "decay interval(s) sampled")
+
+		if silentChanges > 0 then
+			out("|cffff5555" .. silentChanges .. " change(s) the events did not report.|r")
+			out("Decay detection cannot rely on UNIT_POWER_UPDATE alone on this client;")
+			out("BarSweep would have to sample rage in the sweep driver instead.")
+		else
+			out("|cff40ff40Every change arrived as an event. The derived interval is sound.|r")
+		end
+
+		if meanInterval then
+			out(string.format("Decay interval: mean %.2fs over %d sample(s)",
+				meanInterval, #intervals))
+			if meanInterval < 1.5 or meanInterval > 4.0 then
+				out("|cffff5555Outside BarSweep's 1.5-4.0s band - the band needs widening.|r")
+			end
+		else
+			out("|cffffcc00No decay intervals sampled. Stand out of combat with rage banked.|r")
+		end
+
+		if meanStep then
+			out(string.format("Rage lost per tick: mean %.2f (documented 2 or 3)", meanStep))
+			if meanStep > 5 then
+				out("|cffff5555Above BarSweep's 5-rage plausibility guard.|r")
+			end
+		end
+
+		if firstDecayDelay then
+			out(string.format("|cffffcc00First decay landed %.2fs after combat dropped.|r",
+				firstDecayDelay))
+			out("This is the number nothing documents. Record it in COMPAT_FINDINGS.md.")
+		else
+			out("|cffffcc00Pre-decay delay not measured - no combat drop with rage banked.|r")
+		end
+
+		if inCombatDecays > 0 then
+			out("|cffff5555" .. inCombatDecays .. " decrease(s) while IN COMBAT.|r")
+			out("Expected: those are spends. If any were unexplained, the in-combat")
+			out("gate in the decay provider is wrong.")
+		end
+	end)
+end
+
+--------------------------------------------------------------------------------
 -- Slash command
 --------------------------------------------------------------------------------
 
@@ -613,6 +810,8 @@ SlashCmdList.DUFPROBE = function(input)
 		portraitProbe()
 	elseif cmd == "auraorder" then
 		startAuraOrderTrace(60)
+	elseif cmd == "rage" then
+		startRageTrace(90)
 	elseif cmd == "portraitoff" then
 		if portraitFrame then portraitFrame:Hide() end
 		if portraitFrame and portraitFrame.model then portraitFrame.model:Hide() end
@@ -622,7 +821,7 @@ SlashCmdList.DUFPROBE = function(input)
 		out("Survey from", record.timestamp, "toc", record.tocVersion)
 	else
 		survey()
-		out("Also run: |cffffcc00/dufprobe mana|r, |cffffcc00derived|r, |cffffcc00health|r, |cffffcc00portrait|r, |cffffcc00auraorder|r")
+		out("Also run: |cffffcc00/dufprobe mana|r, |cffffcc00derived|r, |cffffcc00health|r, |cffffcc00portrait|r, |cffffcc00auraorder|r, |cffffcc00rage|r")
 	end
 end
 
