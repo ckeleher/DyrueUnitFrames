@@ -1,8 +1,45 @@
 # Plan 19 — Group Heal Prediction
 
-**Status:** Not started. **Extends Plan 11.**
+**Status:** In progress on `Plan-19-group-heal-prediction`. **Extends Plan 11.**
+**Shelved pending a live probe run** — see below.
 **Created:** 9 August 2026
 **Branch:** `Plan-19-group-heal-prediction`
+
+---
+
+## Progress
+
+**Done — the probe, `72c88d5`.** `/dufprobe heals [label]` is built, committed on
+the branch and synced into both client flavors. It answers the five questions in
+*Probes* below and writes to `DyrueUnitFramesProbeDB.healsRuns`, which
+accumulates labelled runs so party and raid can be compared without a `/reload`
+destroying the state being measured.
+
+It was exercised against a scripted scene in a real Lua 5.1 runtime before going
+near a client, the way the Plan 3 probe was: six scenes covering both Q3
+outcomes, both inconclusive shapes, an event that fires with an empty
+`UnitCastingInfo`, and the legacy `UnitAura` path. **The verdict lines are what
+is under test.** A probe that reports confidently and wrongly is worse than no
+probe, because its answer goes straight into `COMPAT_FINDINGS.md`.
+
+**Blocked on:** a live run. It needs a party or raid with at least one other
+healer, in a real fight — the lines it measures only exist when someone else is
+casting. Shelved here deliberately rather than implementing against assumptions,
+because two of the five answers can change what this plan is worth:
+
+* **Q3** decides whether the direct-cast half exists at all.
+* **Q4** decides whether the HoT half — the part called certain above — stays
+  alive at raid distances.
+
+Nothing in the *Design* section below has been implemented. `Systems/`,
+`Elements/`, `Core/` and `Config/` are untouched on the branch.
+
+**To resume:** run `/dufprobe heals party`, then `/dufprobe heals raid` if the
+chance comes, then `/reload` once. Read the results out of
+`WTF\Account\<ACCOUNT>\SavedVariables\DyrueUnitFrames_Probe.lua` rather than from
+chat — chat is the summary and truncates. Fill in the `Plan 19` section of
+`Documents/COMPAT_FINDINGS.md` from what came back, then start on the Files
+table.
 
 ---
 
