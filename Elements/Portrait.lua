@@ -17,6 +17,7 @@ local ADDON, ns = ...
 local L = ns.L
 local Compat = ns.Compat
 local Errors = ns.Errors
+local Colors = ns.Colors
 
 local element = {
 	order = 5,
@@ -38,9 +39,21 @@ end
 function element.Build(frame)
 	local el = {}
 
+	-- Plan 18. On frame.content rather than on the model, which is the whole
+	-- mechanism: the model is a CHILD frame of content, and a child draws above
+	-- every layer of its parent (see Core.lua's draw-order note), so a texture
+	-- here is behind the model with no frame-level arithmetic to get wrong.
+	--
+	-- Sublevel 1, between the frame backdrop at 0 and the portrait art at 2.
+	-- All three are explicit because the backdrop can overlap this one, and a
+	-- tie in a draw layer resolves by creation order -- which works until an
+	-- element is built in a different order and then breaks with no error.
+	el.background = frame.content:CreateTexture(nil, "BACKGROUND", nil, 1)
+	el.background:Hide()
+
 	-- The 2D texture always exists: it is both a mode in its own right and the
 	-- fallback for a 3D model that will not load.
-	el.texture = frame.content:CreateTexture(nil, "BACKGROUND", nil, 1)
+	el.texture = frame.content:CreateTexture(nil, "BACKGROUND", nil, 2)
 	el.texture:Hide()
 
 	el.model = nil          -- created lazily; a PlayerModel is not free
@@ -155,6 +168,7 @@ function element.SetGeometry(frame, el, cfg, barStack, frameWidth)
 	el.barStack = barStack
 
 	place(frame, el, cfg, el.texture)
+	place(frame, el, cfg, el.background)
 	if el.model then place(frame, el, cfg, el.model) end
 
 	return el.inset
@@ -187,6 +201,20 @@ local function ensureModel(frame, el)
 	return model
 end
 
+--- Whether the fill behind the portrait should be drawn (Plan 18).
+--
+-- Keyed on the configured MODE, not on which widget happens to be rendering.
+-- A 3D model that is briefly unavailable — out of range, not yet seen — falls
+-- back to the 2D texture for a moment (FR-7.4), and a background strobing off
+-- and on with it would be worse than one that simply stays where it is. The
+-- user asked for a background on their 3D portrait; a transient failure does
+-- not make it a 2D portrait.
+local function backgroundShown(cfg)
+	if (cfg.mode or "none") ~= "3d" then return false end
+	local background = cfg.background
+	return background ~= nil and background.enabled ~= false
+end
+
 function element.Layout(frame, el, cfg)
 	-- Seed the geometry from the last known bar stack. `LayoutBars` runs
 	-- immediately after this, from the same ApplyConfig, and settles it with
@@ -197,8 +225,14 @@ function element.Layout(frame, el, cfg)
 	local mode = cfg.mode or "none"
 	if mode == "none" then
 		el.texture:Hide()
+		el.background:Hide()
 		if el.model then el.model:Hide() end
 	end
+
+	if cfg.background then
+		el.background:SetColorTexture(Colors:Unpack(cfg.background.color))
+	end
+	if not backgroundShown(cfg) then el.background:Hide() end
 
 	el.texture:SetDesaturated(cfg.desaturate and true or false)
 end
@@ -295,6 +329,7 @@ function element.Update(frame, el, cfg)
 
 	if mode == "none" then
 		el.texture:Hide()
+		el.background:Hide()
 		if el.model then el.model:Hide() end
 		el.lastGUID = nil
 		return
@@ -303,10 +338,13 @@ function element.Update(frame, el, cfg)
 	local unit = frame.unit
 	if not unit or not UnitExists(unit) then
 		el.texture:Hide()
+		el.background:Hide()
 		if el.model then el.model:Hide() end
 		el.lastGUID = nil
 		return
 	end
+
+	el.background:SetShown(backgroundShown(cfg))
 
 	if mode == "3d" and not el.modelFailed then
 		show3D(frame, el, cfg)
@@ -317,6 +355,7 @@ end
 
 function element.Disable(frame, el)
 	el.texture:Hide()
+	el.background:Hide()
 	if el.model then el.model:Hide() end
 	el.lastGUID = nil
 	-- The bars reclaim the column, and Factory's hit rect reads this back.

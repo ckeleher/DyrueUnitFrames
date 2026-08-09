@@ -3373,6 +3373,125 @@ local function testPortraitColumn()
 end
 
 --------------------------------------------------------------------------------
+-- 26c. The fill behind a 3D portrait (Plan 18)
+--
+-- A model renders transparent wherever there is no model, so without this the
+-- game world shows through the space around it. The mechanism is one texture on
+-- frame.content: the model is a CHILD frame of content, and a child draws above
+-- every layer of its parent, so a texture there is behind it by construction.
+--------------------------------------------------------------------------------
+
+local function testPortraitBackground()
+	local player = ns.frames.player
+	local cfg = ns:UnitConfig("player").portrait
+	local portrait = ns.Options.table.args.units.args.player.args.portrait.args
+	local background = portrait.background.args
+
+	equal("portraitbg/ships enabled", cfg.background.enabled, true)
+	local c = cfg.background.color
+	check("portraitbg/ships black and opaque",
+		c.r == 0 and c.g == 0 and c.b == 0 and c.a == 1,
+		string.format("%s %s %s %s", c.r, c.g, c.b, c.a))
+
+	-- New keys, no stored value changed, so EnsureProfile fills them and there
+	-- is nothing to migrate. Pinned so a later bump cannot claim this one
+	-- needed it -- the same guard the heal prediction suite uses.
+	equal("portraitbg/no schema bump of its own", ns.Defaults.SCHEMA_VERSION, 16)
+
+	portrait.mode.set(nil, "3d")
+	player:FullUpdate()
+	local el = player.elements.portrait
+
+	check("portraitbg/shown behind a 3D portrait", el.background:IsShown())
+
+	-- Behind the model by construction: on frame.content, which the model is a
+	-- child OF. Putting it on the model would draw it in front.
+	equal("portraitbg/lives on the frame content, not the model",
+		el.background:GetParent(), player.content)
+	check("portraitbg/the model is a child of the same frame",
+		el.model:GetParent() == player.content)
+
+	-- ...and explicitly ordered within that layer rather than relying on the
+	-- creation order that would otherwise break the tie.
+	local layer, sub = el.background:GetDrawLayer()
+	local artLayer, artSub = el.texture:GetDrawLayer()
+	local frameLayer, frameSub = player.background:GetDrawLayer()
+	equal("portraitbg/in the background layer", layer, "BACKGROUND")
+	check("portraitbg/above the frame backdrop",
+		frameLayer == layer and sub > frameSub, sub .. " vs " .. frameSub)
+	check("portraitbg/below the portrait art",
+		artLayer == layer and artSub > sub, artSub .. " vs " .. sub)
+
+	-- Geometry is the portrait's own, through the same place() Plan 7 built.
+	equal("portraitbg/matches the portrait width", el.background:GetWidth(), el.width)
+	equal("portraitbg/matches the portrait height", el.background:GetHeight(), el.height)
+	local point, relative, relativePoint = el.background:GetPoint(1)
+	local artPoint, artRelative, artRelativePoint = el.texture:GetPoint(1)
+	check("portraitbg/anchored exactly like the portrait",
+		point == artPoint and relative == artRelative
+			and relativePoint == artRelativePoint)
+
+	-- And it tracks the bar stack, so it cannot drift out of the column.
+	local powerOption = ns.Options.table.args.units.args.player.args.power.args
+	powerOption.height.set(nil, 16)
+	equal("portraitbg/follows the bar stack", el.background:GetHeight(), el.height)
+	powerOption.height.set(nil, 10)
+
+	-- Color round trip, alpha included -- the swatch carries it, so there is no
+	-- separate opacity slider to keep in step.
+	background.color.set(nil, 0.2, 0.4, 0.6, 0.5)
+	local fill = el.background.__color
+	check("portraitbg/color reaches the texture",
+		fill and fill[1] == 0.2 and fill[2] == 0.4 and fill[3] == 0.6,
+		fill and table.concat({ tostring(fill[1]), tostring(fill[2]),
+			tostring(fill[3]) }, " ") or "no fill")
+	equal("portraitbg/swatch alpha reaches the texture", fill and fill[4], 0.5)
+	local getR, getG, getB, getA = background.color.get(nil)
+	check("portraitbg/swatch reads back",
+		getR == 0.2 and getG == 0.4 and getB == 0.6 and getA == 0.5)
+	background.color.set(nil, 0, 0, 0, 1)
+
+	-- 3D only, by request.
+	portrait.mode.set(nil, "2d")
+	player:FullUpdate()
+	check("portraitbg/not drawn behind a 2D portrait", not el.background:IsShown())
+	check("portraitbg/the group is hidden for 2D", portrait.background.hidden())
+
+	portrait.mode.set(nil, "3d")
+	player:FullUpdate()
+	check("portraitbg/the group is shown for 3D", not portrait.background.hidden())
+
+	-- Keyed on the configured MODE, not on which widget is rendering. An
+	-- out-of-range unit falls back to the 2D texture (FR-7.4); the background
+	-- must not strobe off with it.
+	stub.units.player.visible = false
+	player:FullUpdate()
+	check("portraitbg/survives the 2D fallback", el.background:IsShown())
+	check("portraitbg/and the fallback really did happen", el.texture:IsShown())
+	stub.units.player.visible = true
+	player:FullUpdate()
+
+	-- The toggle.
+	background.enabled.set(nil, false)
+	check("portraitbg/toggle hides it", not el.background:IsShown())
+	check("portraitbg/swatch disabled while off", background.color.disabled())
+	background.enabled.set(nil, true)
+	check("portraitbg/toggle brings it back", el.background:IsShown())
+	check("portraitbg/swatch live while on", not background.color.disabled())
+
+	-- Gone entirely when the portrait is, in both of the ways that can happen.
+	local savedUnit = stub.units.player
+	stub.units.player = nil
+	player:FullUpdate()
+	check("portraitbg/hidden when the unit does not exist", not el.background:IsShown())
+	stub.units.player = savedUnit
+	player:FullUpdate()
+
+	portrait.mode.set(nil, "none")
+	check("portraitbg/hidden when the portrait is off", not el.background:IsShown())
+end
+
+--------------------------------------------------------------------------------
 -- 27. Combo points (Plan 9)
 --------------------------------------------------------------------------------
 
@@ -5317,6 +5436,7 @@ local suites = {
 	{ "bar-background", testBarBackground },
 	{ "portrait", testPortrait },
 	{ "portrait-column", testPortraitColumn },
+	{ "portrait-background", testPortraitBackground },
 	{ "combo-points", testComboPoints },
 	{ "bar-sweep", testBarSweep },
 	{ "highlight", testHighlight },

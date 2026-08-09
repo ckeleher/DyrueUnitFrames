@@ -434,6 +434,15 @@ local function unit(overrides)
 			camera = 0,
 			cameraY = 0,
 			desaturate = false,
+			-- Plan 18. A model renders transparent wherever there is no
+			-- geometry, so a 3D portrait shows the world through the space
+			-- around it -- a floating head rather than a portrait. 3D only, by
+			-- request: the 2D art's round corners have the same problem in
+			-- "native" shape, but that was not what was asked for.
+			background = {
+				enabled = true,
+				color = color(0, 0, 0, 1),
+			},
 		},
 
 		-- Plan 1. Only *active* states take a slot, so combat on its own sits

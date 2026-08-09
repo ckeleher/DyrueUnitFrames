@@ -935,6 +935,28 @@ local function portraitGroup(def)
 			set = function(_, v) portrait().desaturate = v; apply() end,
 		},
 
+		background = {
+			type = "group", order = 25, inline = true, name = L["Background"],
+			hidden = not3D,
+			args = {
+				note = {
+					type = "description", order = 0,
+					name = L["A 3D model is transparent wherever there is no model, so without this the game world shows through the space around the portrait."],
+				},
+				enabled = {
+					type = "toggle", order = 1, name = L["Enable"],
+					get = function() return portrait().background.enabled end,
+					set = function(_, v) portrait().background.enabled = v; apply() end,
+				},
+				color = Options.Color(L["Color"], 2,
+					function() return portrait().background end, "color", apply,
+					{
+						hasAlpha = true,
+						disabled = function() return not portrait().background.enabled end,
+					}),
+			},
+		},
+
 		cameraHeader = { type = "header", order = 30, name = L["Camera"], hidden = not3D },
 		camera = {
 			type = "range", order = 31, name = L["Distance"],

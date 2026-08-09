@@ -183,8 +183,17 @@ function methods:SetAttribute(k, v) self.__attributes[k] = v end
 function methods:GetAttribute(k) return self.__attributes[k] end
 
 function methods:CreateTexture(name, layer, template, sublevel)
-	return newWidget("Texture", name, self)
+	local t = newWidget("Texture", name, self)
+	-- Recorded so draw order within a layer can be asserted. Plan 18 puts three
+	-- textures in frame.content's BACKGROUND layer and two of them overlap, so
+	-- "which is on top" stopped being a question the suite could ignore.
+	t.__layer, t.__sublevel = layer or "ARTWORK", sublevel or 0
+	return t
 end
+function methods:SetDrawLayer(layer, sublevel)
+	self.__layer, self.__sublevel = layer, sublevel or 0
+end
+function methods:GetDrawLayer() return self.__layer, self.__sublevel end
 function methods:CreateFontString(name, layer)
 	local fs = newWidget("FontString", name, self)
 	return fs

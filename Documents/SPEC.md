@@ -379,6 +379,12 @@ The shapeshift mana bar (§4.3) is **excluded from that height in both of its mo
 
 **FR-7.6** Because 3D portraits carry a real maintenance cost for a purely cosmetic feature, the config UI notes plainly that 2D is the more robust choice. The option exists; the guidance is honest.
 
+**FR-7.7 3D background** *(added by Plan 18, 8 Aug 2026).* A model renders transparent wherever there is no model, so the game world shows through the space around the portrait. 3D mode therefore has a toggleable background fill with a configurable color, shipping **on and opaque black**.
+
+It is drawn as a texture on `frame.content` rather than on the model, because the model is a *child frame* of content and a child draws above every layer of its parent — so the fill is behind it by construction, with no frame-level arithmetic. Draw order within that layer is set explicitly (frame backdrop 0, portrait background 1, portrait art 2) rather than left to creation order.
+
+**3D only.** The 2D portrait's round art has the same transparent corners in `native` shape, but the shipped `square` shape crops them off and extending the fill there was not asked for. The setting is keyed on the *configured mode*, not on which widget is currently rendering: a model that is briefly unavailable falls back to the 2D texture per §FR-7.4, and the background stays put rather than strobing off with it.
+
 ---
 
 ### 4.8 Derived units
