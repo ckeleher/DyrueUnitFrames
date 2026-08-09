@@ -1,9 +1,15 @@
 # Plan 3 — Options Panel Clipping
 
-**Status:** In progress — diagnosis under way
+**Status:** In progress — cause narrowed to a zero-height viewport, not clipping
 **Created:** 2 August 2026
 **Updated:** 8 August 2026
 **Branch:** `Plan-3-options-panel-clipping`
+
+> **Read this first.** Neither of the two hypotheses below is the cause. The
+> first live probe run found the scroll frame has **no height at all**, which
+> makes the overflow a symptom rather than the bug. The sections below are kept
+> because the reasoning is still what rules them out, but the live finding is the
+> section titled *What the first probe run found*.
 
 ---
 
@@ -109,6 +115,77 @@ directly instead of inferring it from which tab misbehaves.
 
 ---
 
+## What the first probe run found — 8 August 2026
+
+**Classic Era 1.15.9 / build 69109, toc 11509, via `/dufprobe scroll`** on
+Player → Text with the options window open. Recorded in full in
+`Documents/COMPAT_FINDINGS.md` under *Plan 3*.
+
+```
+viewport  w=234 h=0   top=322 bottom=322
+content   w=234 h=797 top=322 bottom=-475
+scrollbar w=16  h=0   top=338 bottom=338
+```
+
+**The scroll frame has no height.** That is the finding, and it is neither
+hypothesis. Three things follow, and they redirect the whole plan:
+
+1. **The overflow is a symptom.** With a zero-height viewport, all 215 laid-out
+   objects are outside it by definition. Clipping cannot help, because there is
+   no region to clip to. Fixing `SetClipsChildren` would have changed nothing.
+2. **Nothing is mis-measured.** `content.height` and `content:GetHeight()` agree
+   at 797. The dynamic-`name` description theory is ruled out *as the cause* —
+   the layout computed a sane content height, and the viewport it was measured
+   against is what is wrong.
+3. **The floating arrows are explained exactly.** The scrollbar is anchored `-16`
+   and `+16` against the viewport's own top and bottom, so a zero-height viewport
+   collapses it to `h=0` and leaves its `ScrollUpButton` and `ScrollDownButton`
+   16px either side of a single point, both visible, with no container around
+   them. The *second* pair is the TreeGroup's own scrollbar
+   (`AceGUIContainer-TreeGroup.lua:670`), which uses the same
+   `UIPanelScrollBarTemplate`.
+
+Also measured, and it changes what any fix can verify:
+
+| | Classic Era 1.15.9 |
+|---|---|
+| `Frame:SetClipsChildren` | **present** |
+| `Frame:GetClipsChildren` | **absent** |
+
+The state cannot be read back on this build. Clipping can be applied but not
+confirmed from Lua, so verification is by measuring whether children still draw,
+not by asserting on the property. Not yet checked on Anniversary.
+
+### Still open: why is the height zero?
+
+Two candidates, needing different fixes:
+
+- **Never sized.** The window's layout never gives the content area a height, in
+  which case the fix is wherever that height is supposed to come from.
+- **Stale after a tab switch.** The height was right once and was not recomputed,
+  in which case the fix is a re-layout at the right moment.
+
+`/dufprobe scroll` now prints the **ancestry** — every ancestor's height, width
+and anchor points up to `UIParent` — which separates these. In the first run the
+zero went all the way up, and the TreeGroup frame beside it was zero too, so
+whatever it is sits above both and is not specific to the content scroll frame.
+
+### What the run exposed in the probe itself
+
+Both fixed on the branch, recorded because they affect how the next output reads:
+
+- It reported **another addon's panel** as container #1, complete with a
+  character roster. Widget numbering and scrollbar names are global across every
+  addon sharing the AceGUI instance. Containers are now attributed through
+  `AceConfigDialog.OpenFrames` (via LibStub's silent form, so a broken Ace3
+  degrades to "owner unknown" rather than erroring) and foreign ones collapse to
+  one line.
+- The scrollbar-state mismatch check only ran in **one direction**, so it missed
+  that other addon's `scrollBarShown = true` against a hidden bar. Now reported
+  either way round.
+
+---
+
 ## Diagnosis, before any fix
 
 **Step 2 is done** — see the correction above. Our ScrollFrame is byte-identical
@@ -146,6 +223,40 @@ rather than judgments about a screenshot.
 ---
 
 ## Fix options, in order of preference
+
+### 0. Give the viewport a height — the actual fix, pending the ancestry read
+
+Added 8 August 2026, and it supersedes everything below. The measured cause is a
+zero-height scroll viewport, so the fix is wherever that height should come from
+and does not. Options 1–4 were all written against symptoms.
+
+This cannot be specified further until the ancestry output says which frame the
+zero starts at, and whether it is zero on a fresh open or only after a tab
+switch. Those are different fixes:
+
+- **Zero from a fresh open** — the window is never sized, and the fix is at the
+  point where `AceConfigDialog:Open` and our option tree hand off.
+- **Zero only after a tab switch** — a re-layout is missing, and the fix is to
+  force one when the selected group changes.
+
+**One candidate already eliminated statically.** `Core/Core.lua:440` calls
+`AceConfigDialog:Open(ADDON)` with no size, and we never call
+`AceConfigDialog:SetDefaultSize`. That is *not* the cause: the library fills in
+its own defaults when the status table is empty
+(`AceConfigDialog-3.0.lua:1900-1905`, `width = 700`, `height = 500`), so the
+window is sized whether we ask or not. Adding a `SetDefaultSize` call would be
+cargo cult.
+
+That elimination sharpens the question. The observed viewport was **234 wide**,
+which is nothing like the content column of a 700-wide window — the tree takes
+about 175 and padding a little more, leaving roughly 480. So the outer window
+itself was small, not merely short. The status table is written back when the
+frame is dragged, so a resize during the session is one explanation and a
+collapsed or mid-layout frame is another. The probe now reports the status
+table's width and height alongside the ancestry, which distinguishes them.
+
+Deliberately not guessed at. The previous two rounds of this plan were both
+confident and both wrong; the ancestry read costs one more `/dufprobe scroll`.
 
 ### 1. ~~Update the vendored AceGUI-3.0~~ — ruled out, 8 August 2026
 
@@ -209,13 +320,14 @@ Only if 1–3 all fail. Heavy, and §11.2 sets the bar high deliberately.
 
 ## Files
 
-| File | Change | When |
+| File | Change | Status |
 |---|---|---|
-| `Probe/DyrueUnitFrames_Probe/Probe.lua` | Add the `scroll` sub-probe and its `/dufprobe` dispatch entry | **Now** — this is the diagnosis vehicle |
-| `Config/Options.lua` | The fix itself, per option 2 | After the probe reports |
-| `Config/Options_Text.lua` | Only if it proves to be the dynamic description (option 3) | After the probe reports |
-| `Libs/LICENSE.md` | Fix the claim that per-widget versions live in that table; they live in each widget's `local Type, Version` line | Now, alongside the probe |
-| `Documents/COMPAT_FINDINGS.md` | Record the `GetClipsChildren` default and interface build once measured | With the fix |
+| `Probe/DyrueUnitFrames_Probe/Probe.lua` | The `scroll` sub-probe: geometry, overflow census, scrollbar parentage, ancestry walk, TreeGroup coverage, container attribution | **Done** — `18910cf`, `2affb2e` |
+| `Libs/LICENSE.md` | Note that AceGUI's widgets version independently of the core, with the ScrollFrame row verified against upstream | **Done** — `18910cf` |
+| `Documents/COMPAT_FINDINGS.md` | Classic Era build identity, the `GetClipsChildren`-absent finding, the zero-height observation | **Done** — `2affb2e` |
+| Wherever the viewport height comes from | The fix, per option 0 | **Blocked** on the ancestry read |
+| ~~`Config/Options.lua`~~ | ~~`SetClipsChildren` per option 2~~ | Superseded — clipping is not the cause |
+| ~~`Config/Options_Text.lua`~~ | ~~Restructure the dynamic description per option 3~~ | Superseded — the content height measured correctly |
 
 ~~`Libs/AceGUI-3.0/**` replaced wholesale~~ — ruled out; we are already at
 upstream.
@@ -255,7 +367,9 @@ for a few pixels of overflow.
 | ~~Updating AceGUI changes other behavior~~ | Moot — option 1 is struck, no library update happens |
 | **Clipping the scroll frame hides the scrollbar** | The trap under option 2. The probe reports scrollbar parentage and rect *before* any fix is written, and the fix is verified by confirming the scrollbar still draws and still scrolls |
 | It is a client-side change we cannot fix | Option 3 sidesteps it by removing the measurement problem |
-| Fixing the symptom and not the cause | Diagnosis runs *first*, and now by measurement rather than by eye — the plan's original discriminator turned out to be weaker than written |
+| Fixing the symptom and not the cause | **This risk materialized twice.** Both original hypotheses were symptoms; the measured cause is a zero-height viewport. The lesson held anyway: diagnosis ran first, and the numbers overturned the reasoning rather than confirming it |
+| The clipping state cannot be verified on Classic Era | `GetClipsChildren` is absent while the setter is present, so no assertion can read it back. Any fix touching clipping is verified by measuring whether children still draw, never by reading the property |
+| Trusting the probe's container list | The first run attributed another addon's panel to us. Containers are now attributed through `AceConfigDialog.OpenFrames`; treat any output labelled "owner unknown" with suspicion |
 | Reaching into a pooled widget breaks on reuse | Any `SetParent`/`SetClipsChildren` we apply has to be re-applied or proven to survive AceGUI releasing and re-acquiring the container; verify by closing and reopening the options window several times, and by switching tabs |
 
 ---
@@ -266,8 +380,15 @@ Revised 8 August 2026. Still dominated by diagnosis, but the shape has changed:
 the cheap escape (bump the library) is gone, and the cheap fix (one call) has a
 trap in it.
 
-- Probe: under an hour, and it is written before anything else.
-- If it is the dynamic description (option 3): under an hour after that.
-- If it is clipping and the scrollbar needs reparenting: 2–3 hours, most of it
-  verifying that the reach-in survives AceGUI's widget pool across
-  close/reopen and tab switches.
+- Probe: **done**, two rounds.
+- If it is the dynamic description (option 3): ~~under an hour~~ — ruled out.
+- If it is clipping and the scrollbar needs reparenting: ~~2–3 hours~~ —
+  superseded.
+
+**Revised again, 8 August 2026, after the first live run.** The remaining work is
+one more `/dufprobe scroll` to read the ancestry, then a fix whose size depends
+on what it says: a missing size or a missing re-layout is likely under an hour,
+and a genuine client-behavior change in how these frames resolve their height
+could be considerably more. Not worth a tighter number until the ancestry is in —
+the two previous estimates were both made against causes that turned out to be
+wrong.
