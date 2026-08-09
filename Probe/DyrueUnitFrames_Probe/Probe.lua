@@ -15,7 +15,12 @@
 --   /dufprobe portrait   2D and 3D portrait feasibility (task 0.8)
 --   /dufprobe auraorder  60-second aura index stability trace (Plan 14)
 --   /dufprobe rage       90-second rage decay trace (Plan 17)
---   /dufprobe scroll     options panel clipping and overflow census (Plan 3)
+--   /dufprobe scroll [label]
+--                        options panel geometry (Plan 3). Chat gets a summary;
+--                        the full ancestry, anchors and overflow list go to
+--                        DyrueUnitFramesProbeDB.scrollRuns, which does not
+--                        truncate the way the chat frame does. Runs accumulate,
+--                        so label them and /reload once at the end.
 --   /dufprobe dump       re-print the last survey
 
 local ADDON = ...
@@ -928,15 +933,28 @@ local function describeDialogWindow(record)
 	local ok, dialog = pcall(_G.LibStub, "AceConfigDialog-3.0", true)
 	if not ok or type(dialog) ~= "table" then return end
 
-	header("Options window")
+	-- The 23:43 run came back with identifiedOurDialog = false, which means
+	-- OpenFrames had no "DyrueUnitFrames" key. Either the window was shut, or it
+	-- is registered under a name this probe does not know. Listing the keys
+	-- answers which, and costs one line.
+	local openNames = {}
+	if type(dialog.OpenFrames) == "table" then
+		for appName in pairs(dialog.OpenFrames) do
+			openNames[#openNames + 1] = tostring(appName)
+		end
+	end
+	table.sort(openNames)
+	record.openFrameNames = openNames
+	out("AceConfigDialog open frames:",
+		#openNames > 0 and table.concat(openNames, ", ") or "|cffff5555none - no options window is open|r")
 
 	local widget = type(dialog.OpenFrames) == "table"
 		and dialog.OpenFrames["DyrueUnitFrames"] or nil
-	out("open frame widget present", yn(widget ~= nil))
 	if widget and widget.frame then
 		out("window frame", rectOf(widget.frame))
 		record.windowWidth = widget.frame:GetWidth()
 		record.windowHeight = widget.frame:GetHeight()
+		record.windowRect = rectOf(widget.frame)
 	end
 
 	if type(dialog.GetStatusTable) ~= "function" then return end
@@ -954,36 +972,59 @@ local function describeDialogWindow(record)
 end
 
 -- The question the first report left open: the viewport had zero height, so
--- everything overflowed trivially. This walks up the parent chain printing each
+-- everything overflowed trivially. This walks up the parent chain recording each
 -- ancestor's size and anchors, to find the frame where the height dies.
-local function describeAncestry(frame)
-	out("|cffffcc00-- ancestry: follow the height up until it stops being zero --|r")
+--
+-- It records into the SavedVariables entry and prints only a one-line verdict.
+-- The chat frame's buffer cannot hold the full walk alongside everything else,
+-- and a report that scrolls off the top is worse than no report - the file is
+-- the deliverable here, chat is only the summary.
+local function collectAncestry(frame, entry)
+	local chain = {}
 	local current, hops = frame, 0
 	while current and hops < 12 do
 		local points = (current.GetNumPoints and current:GetNumPoints()) or 0
-		local height = current:GetHeight()
-		out(string.format("  %s%s h=%s w=%s shown=%s points=%d%s",
-			string.rep("  ", hops), labelOf(current),
-			px(height), px(current:GetWidth()),
-			(current.IsShown and current:IsShown()) and "y" or "n",
-			points,
-			(type(height) == "number" and height < 1) and " |cffff5555<- zero|r" or ""))
+		local step = {
+			label = labelOf(current),
+			height = current:GetHeight(),
+			width = current:GetWidth(),
+			shown = (current.IsShown and current:IsShown()) and true or false,
+			points = {},
+		}
 		for index = 1, math.min(points, 4) do
 			local ok, point, relativeTo, relativePoint, xOffset, yOffset =
 				pcall(current.GetPoint, current, index)
 			if ok and point then
-				local relName = "nil"
-				if relativeTo then
-					relName = (relativeTo.GetName and relativeTo:GetName()) or "unnamed"
-				end
-				out(string.format("  %s    %s -> %s.%s (%s, %s)",
-					string.rep("  ", hops), tostring(point), relName,
-					tostring(relativePoint), px(xOffset), px(yOffset)))
+				step.points[#step.points + 1] = {
+					point = tostring(point),
+					relativeTo = relativeTo
+						and ((relativeTo.GetName and relativeTo:GetName()) or "unnamed")
+						or "nil",
+					relativePoint = tostring(relativePoint),
+					x = xOffset, y = yOffset,
+				}
 			end
 		end
+		chain[#chain + 1] = step
 		if current == _G.UIParent then break end
 		current = current.GetParent and current:GetParent() or nil
 		hops = hops + 1
+	end
+	entry.ancestry = chain
+
+	-- The one thing worth saying in chat: how far up the zero goes.
+	local lastZero
+	for index = 1, #chain do
+		if type(chain[index].height) == "number" and chain[index].height < 1 then
+			lastZero = index
+		end
+	end
+	if lastZero then
+		entry.zeroRunsUpTo = chain[lastZero].label
+		out(string.format("  ancestry: %d frames, zero height up to and including |cffff5555%s|r",
+			#chain, chain[lastZero].label))
+	else
+		out(string.format("  ancestry: %d frames, none zero-height", #chain))
 	end
 end
 
@@ -997,22 +1038,21 @@ local function treeContainer(number, bar, record)
 		return
 	end
 
-	header(string.format("Tree scrollbar #%d", number))
-	out("treeframe", rectOf(treeframe))
-	out("scrollbar", rectOf(bar), "visible", yn(bar:IsVisible()))
-
 	local treeHeight = treeframe:GetHeight()
-	if type(treeHeight) == "number" and treeHeight < 1 then
-		out("|cffff5555Zero-height treeframe too - so this is not specific to the|r")
-		out("|cffff5555content scroll frame, and the cause is above both of them.|r")
-	end
+	out(string.format(" tree #%d: treeframe %s | bar %s visible %s%s",
+		number, rectOf(treeframe), rectOf(bar), yn(bar:IsVisible()),
+		(type(treeHeight) == "number" and treeHeight < 1)
+			and " |cffff5555<- zero-height treeframe|r" or ""))
 
 	local barName = bar:GetName()
 	local arrows = { "ScrollUpButton", "ScrollDownButton" }
+	local arrowInfo = {}
 	for index = 1, #arrows do
 		local button = barName and _G[barName .. arrows[index]]
 		if button then
-			out("  ", arrows[index], "visible", yn(button:IsVisible()), rectOf(button))
+			arrowInfo[arrows[index]] = {
+				visible = button:IsVisible(), rect = rectOf(button),
+			}
 		end
 	end
 
@@ -1020,6 +1060,9 @@ local function treeContainer(number, bar, record)
 		number = number,
 		barVisible = bar:IsVisible(),
 		treeHeight = treeHeight,
+		treeframeRect = rectOf(treeframe),
+		barRect = rectOf(bar),
+		arrows = arrowInfo,
 	}
 end
 
@@ -1043,25 +1086,21 @@ local function scrollContainer(number, bar, hasGetter, record, ours)
 	header(string.format("Scroll container #%d%s", number,
 		mine and " (ours)" or " (owner unknown)"))
 
-	local entry = { number = number }
+	local entry = { number = number, ownedByUs = mine }
 	-- Not `hasGetter and ... or nil`: a legitimate false would collapse to nil
 	-- there, and false is precisely the answer this probe exists to catch.
 	local clips
 	if hasGetter then clips = scrollframe:GetClipsChildren() end
 	entry.clipsChildren = clips
-	out("GetClipsChildren()", yn(clips),
-		clips == false and "|cffff5555<- nothing clips, so overflow is expected|r" or "")
 
-	out("viewport", rectOf(scrollframe))
-	out("content ", rectOf(content))
+	entry.viewportRect = rectOf(scrollframe)
+	entry.contentRect = rectOf(content)
 
 	local viewHeight = scrollframe:GetHeight()
 	local contentHeight = content and content:GetHeight()
 	entry.viewHeight, entry.contentHeight = viewHeight, contentHeight
-	out(string.format("content height %s vs viewport %s -> %s",
-		px(contentHeight), px(viewHeight),
-		(contentHeight and viewHeight and contentHeight > viewHeight + 2)
-			and "taller, so it should scroll" or "fits, so it should not scroll"))
+	out(string.format("  viewport %s | content %s | clips %s",
+		rectOf(scrollframe), rectOf(content), yn(clips)))
 
 	-- The 8 August report came back with viewport h=0 and content h=797, which
 	-- makes every child trivially outside the viewport. Clipping is then beside
@@ -1069,9 +1108,8 @@ local function scrollContainer(number, bar, hasGetter, record, ours)
 	-- redirects the whole investigation.
 	entry.zeroHeightViewport = type(viewHeight) == "number" and viewHeight < 1
 	if entry.zeroHeightViewport then
-		out("|cffff5555ZERO-HEIGHT VIEWPORT.|r The scroll frame has no height at all, so")
-		out("|cffff5555every child is outside it by definition and no clipping property|r")
-		out("|cffff5555can help. Fix the height, not the clipping. See the ancestry below.|r")
+		out("  |cffff5555ZERO-HEIGHT VIEWPORT|r - everything is outside it by definition,")
+		out("  so no clipping property can help. Fix the height.")
 	end
 
 	-- LayoutFinished does `self.content:SetHeight(height or 0 + 20)`, which Lua
@@ -1079,76 +1117,67 @@ local function scrollContainer(number, bar, hasGetter, record, ours)
 	-- non-nil, though the code reads as if (height or 0) + 20 was meant. Noted
 	-- because it means the content child is exactly as tall as its layout with
 	-- no slack, which matters when comparing the two numbers above.
-	out("content.height from OnHeightSet", px(content and content.height),
-		"(GetHeight above comes from LayoutFinished, with no padding)")
+	entry.contentHeightField = content and content.height
 
 	entry.scrollBarShown = widget and widget.scrollBarShown and true or false
 	entry.scrollBarVisible = bar:IsVisible()
-	out("widget believes the scrollbar is shown", yn(widget and widget.scrollBarShown))
-	out("scrollbar is actually visible", yn(bar:IsVisible()))
 	if contentHeight and viewHeight and contentHeight <= viewHeight + 2 and bar:IsVisible() then
-		out("|cffffcc00Mismatch: content says it fits but the scrollbar is up.|r")
-		out("That points at the measurement theory, not at clipping.")
+		entry.fitsButBarUp = true
+		out("  |cffffcc00Content says it fits but the scrollbar is up|r - measurement, not clipping.")
 	end
 	-- The first report had scrollBarShown true against a hidden bar, which the
 	-- check above cannot see because it only tests the other direction.
 	if entry.scrollBarShown ~= entry.scrollBarVisible then
-		out(string.format(
-			"|cffffcc00Stale state: widget.scrollBarShown is %s but the bar's visibility is %s.|r",
+		entry.barStateStale = true
+		out(string.format("  |cffffcc00Stale: scrollBarShown=%s, bar visible=%s|r",
 			tostring(entry.scrollBarShown), tostring(entry.scrollBarVisible)))
-		out("FixScroll and the bar have gone out of sync.")
 	end
 
 	local status = widget and (widget.status or widget.localstatus)
 	entry.offset = status and status.offset
-	out("scroll offset", px(status and status.offset),
-		"scrollvalue", px(status and status.scrollvalue))
+	entry.scrollValue = status and status.scrollvalue
 
-	out("|cffffcc00-- scrollbar parentage: decides whether fix option 2 is safe --|r")
 	local parentIsView = bar:GetParent() == scrollframe
 	local barLeft, viewRight = bar:GetLeft(), scrollframe:GetRight()
 	local outside = barLeft and viewRight and barLeft >= viewRight - 1
 	entry.barParentIsViewport, entry.barOutsideViewport = parentIsView, outside and true or false
-	out("scrollbar's parent is the scroll frame", yn(parentIsView))
-	out("scrollbar", rectOf(bar))
-	out("scrollbar left", px(barLeft), "vs viewport right", px(viewRight))
-	out("scrollbar sits outside the viewport", yn(outside))
+	entry.barRect = rectOf(bar)
 	if parentIsView and outside then
-		out("|cffff5555=> SetClipsChildren(true) here WOULD clip the scrollbar away.|r")
-		out("|cffff5555   Reparent it first, or clip something other than this frame.|r")
+		entry.clippingWouldEatTheBar = true
 	end
 
 	-- These two are almost certainly the "floating arrow pairs" in the report.
 	local barName = bar:GetName()
 	local arrows = { "ScrollUpButton", "ScrollDownButton" }
+	entry.arrows = {}
 	for index = 1, #arrows do
 		local button = barName and _G[barName .. arrows[index]]
 		if button then
-			out("  ", arrows[index], "visible", yn(button:IsVisible()), rectOf(button))
+			entry.arrows[arrows[index]] = {
+				visible = button:IsVisible(), rect = rectOf(button),
+			}
 		end
 	end
 
-	describeAncestry(scrollframe)
+	collectAncestry(scrollframe, entry)
 
 	if content then
 		local results = {}
 		walkOverflow(content, 1, 4, scrollframe:GetTop(), scrollframe:GetBottom(), results)
 		entry.overflowCount = #results
-		-- Capped at 8 lines now. The first run returned 215, and the ancestry
-		-- above is the useful part - the census only has to confirm that things
-		-- overflow and roughly by how much.
-		out(string.format("|cffffcc00-- overflow census: %d object(s) drawn outside the viewport --|r",
-			#results))
-		for index = 1, math.min(#results, 8) do
+		-- The full list goes to SavedVariables, capped only so the file stays a
+		-- sane size; chat gets the count. The first run printed 215 lines and
+		-- pushed everything useful off the top of the frame.
+		entry.overflow = {}
+		for index = 1, math.min(#results, 60) do
 			local item = results[index]
-			out(string.format("  %s%s h=%s %s%s",
-				string.rep("  ", item.depth - 1), item.label, px(item.height),
-				item.pastBottom and ("|cffff5555" .. px(item.pastBottom) .. "px below the fold|r") or "",
-				item.pastTop and ("|cffff5555" .. px(item.pastTop) .. "px above the top|r") or ""))
+			entry.overflow[index] = {
+				label = item.label, depth = item.depth, height = item.height,
+				pastBottom = item.pastBottom, pastTop = item.pastTop,
+			}
 		end
-		if #results > 8 then
-			out(string.format("  ... and %d more", #results - 8))
-		elseif #results == 0 then
+		out(string.format("  overflow: %d object(s) outside the viewport", #results))
+		if #results == 0 then
 			out("  |cff40ff40Nothing overflows right now.|r Drag the window shorter until")
 			out("  the scrollbar appears, or scroll down, then re-run.")
 		end
@@ -1157,8 +1186,9 @@ local function scrollContainer(number, bar, hasGetter, record, ours)
 	record.containers[#record.containers + 1] = entry
 end
 
-local function scrollProbe()
-	header("Options panel clipping (Plan 3)")
+local function scrollProbe(label)
+	if label == "" then label = nil end
+	header("Options panel clipping (Plan 3)" .. (label and (" - " .. label) or ""))
 
 	local version, build, buildDate, tocVersion = GetBuildInfo()
 	out("build", version, build, buildDate, "toc", tocVersion,
@@ -1180,6 +1210,7 @@ local function scrollProbe()
 	end
 
 	local record = {
+		label = label,
 		timestamp = date("%Y-%m-%d %H:%M:%S"),
 		version = version, build = build, buildDate = buildDate, tocVersion = tocVersion,
 		projectId = WOW_PROJECT_ID,
@@ -1223,15 +1254,24 @@ local function scrollProbe()
 	end
 
 	DyrueUnitFramesProbeDB.scrollProbe = record
-	out("Saved to DyrueUnitFramesProbeDB.scrollProbe")
-	out("|cffffcc00The question now is why the viewport has no height.|r Run this again on:")
-	out(" 1. Player -> Text with the window freshly opened, untouched")
-	out(" 2. the same tab after dragging the window bigger by a few pixels")
-	out(" 3. straight after switching to another tab and back")
-	out("If the ancestry shows a height on a fresh open and zero after a tab")
-	out("switch, it is a stale layout. If it is zero from the start, the window")
-	out("is never sized. Those need different fixes.")
-	out("Also run it once on the other flavor - the build line records which.")
+
+	-- Runs accumulate rather than overwrite. The interesting comparison is
+	-- between UI states - freshly opened against after a tab switch - and
+	-- SavedVariables only reach disk on /reload, so overwriting would force a
+	-- reload between each one and destroy the state being measured.
+	local runs = DyrueUnitFramesProbeDB.scrollRuns or {}
+	runs[#runs + 1] = record
+	while #runs > 10 do table.remove(runs, 1) end
+	DyrueUnitFramesProbeDB.scrollRuns = runs
+
+	out(string.format("|cff40ff40Saved as run %d%s.|r Chat shows the summary only - the ancestry,",
+		#runs, record.label and (" labelled '" .. record.label .. "'") or ""))
+	out("the anchors and the whole overflow list go to SavedVariables, which does")
+	out("not truncate.")
+	out("|cffffcc00Run it in each state you want compared, labelling them, e.g.|r")
+	out("  /dufprobe scroll fresh      then reopen and switch tabs, then")
+	out("  /dufprobe scroll tabswitch")
+	out("|cffffcc00Then /reload once|r to flush all of them to disk.")
 end
 
 --------------------------------------------------------------------------------
@@ -1255,7 +1295,7 @@ SlashCmdList.DUFPROBE = function(input)
 	elseif cmd == "rage" then
 		startRageTrace(90)
 	elseif cmd == "scroll" then
-		scrollProbe()
+		scrollProbe((input or ""):match("^%s*%S+%s+(.-)%s*$"))
 	elseif cmd == "portraitoff" then
 		if portraitFrame then portraitFrame:Hide() end
 		if portraitFrame and portraitFrame.model then portraitFrame.model:Hide() end
