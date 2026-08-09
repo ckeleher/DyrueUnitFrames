@@ -17,6 +17,7 @@ on each client, and run:
 /dufprobe derived
 /dufprobe health
 /dufprobe portrait
+/dufprobe scroll
 ```
 
 Then replace the "Assumed" column with what you actually saw, and note the date
@@ -30,9 +31,10 @@ Phase 0 is for.
 | | Classic Era / Hardcore | TBC Anniversary |
 |---|---|---|
 | Expected TOC | `11509` | `20506` |
-| Observed TOC | _(fill in)_ | _(fill in)_ |
-| Observed build | _(fill in)_ | _(fill in)_ |
-| Date tested | _(fill in)_ | _(fill in)_ |
+| Observed TOC | `11509` — as expected | _(fill in)_ |
+| Observed build | `1.15.9` / `69109`, dated `Aug 3 2026` | _(fill in)_ |
+| Observed `WOW_PROJECT_ID` | `2` | _(fill in)_ |
+| Date tested | 8 August 2026 | _(fill in)_ |
 
 ---
 
@@ -356,6 +358,109 @@ first sweep of a session.
 then unlearned, comparing the reported mean interval and mean step. If the interval
 stretches past 4.0 s — which no reading of the tooltip predicts — `RAGE_MAX_INTERVAL`
 in `Systems/BarSweep.lua` is the one constant to change.
+
+---
+
+## Plan 3 — Options panel clipping
+
+### VERIFIED — `GetClipsChildren` does not exist on Classic Era, but the setter does
+
+**Observed 8 August 2026, Classic Era 1.15.9 / 69109, via `/dufprobe scroll`.**
+
+```
+Frame:GetClipsChildren exists   no
+Frame:SetClipsChildren exists   yes
+```
+
+An asymmetric pair, which is the useful part. The clipping state **cannot be
+read back** on this build, so any probe or assertion that tries to confirm
+clipping by reading the property will report `nil` no matter what was set. The
+setter is present, so clipping can still be *applied* — it just cannot be
+verified from Lua. Verify by eye, or by measuring whether children still draw.
+
+Not yet checked on TBC Anniversary. Do not assume it matches: the whole reason
+this file exists is that the two clients differ.
+
+### VERIFIED — the AceConfigDialog scroll viewport can have zero height
+
+**Same run.** On Player → Text with the options window open:
+
+```
+viewport  w=234 h=0   top=322 bottom=322
+content   w=234 h=797 top=322 bottom=-475
+scrollbar w=16  h=0   top=338 bottom=338
+```
+
+The scroll frame had **no height at all**, and the zero propagated up the whole
+ancestry — the tree frame beside it was zero too. Consequences worth recording,
+because they misdirected the original diagnosis:
+
+- Every one of the 215 laid-out objects was "outside the viewport", trivially.
+  The overflow in the bug report is a *symptom* of the zero height, not evidence
+  that clipping is misconfigured.
+- Nothing was mis-measured. `content.height` and `content:GetHeight()` agreed at
+  797, which rules out the dynamic-`name` description theory as the cause.
+- The scrollbar is anchored `-16` / `+16` against the viewport's own top and
+  bottom, so a zero-height viewport collapses it to `h=0` and leaves its
+  `ScrollUpButton` and `ScrollDownButton` 16px either side of a single point,
+  both visible, with no container around them. **That is what the "floating
+  arrow pairs" in the report are** — and the second pair is the TreeGroup's own
+  scrollbar, which has the same template.
+
+### RESOLVED — a tall inline group evicted the nested tree
+
+**Ancestry read 9 August 2026, both a fresh open and after a tab switch —
+identical, so it was never a stale layout.** Heights from the window inward:
+
+```
+AceGUI:Frame        h=433
+ TreeGroup          h=420
+  Frame             h=420
+   TreeGroup        h=400
+    TabGroup        h=373
+     Frame          h=320
+      TabGroup      h=306    <- last healthy frame
+       TreeGroup    h=0      TOPLEFT (0, -324.9)   <- collapses here
+        Frame       h=0
+         TreeGroup  h=0
+          ScrollFrame h=0
+           content     h=797
+```
+
+**A group with `childGroups` renders its child groups as a nested tree or tab
+widget, and AceGUI places that widget below whatever loose args the group also
+has.** `Config/Options_Text.lua` carried the tag reference as an
+`inline = true` group at `order = 0`, and `Tags:AllHelp()` is 22 lines — about
+325px. The unit's tab content is ~306px, so the nested tree was anchored 324.9px
+down inside 306px: its top landed 18.9px below its own bottom and the height
+clamped to zero. Every descendant inherited it, including the scroll frame,
+whose 797px of content then drew unclipped from y=332 downward.
+
+So the tag reference *was* implicated, but not in the way first guessed. It is
+not mis-measured — `content.height` was correct at 796.8 in both runs. It is
+simply tall enough to evict its sibling.
+
+**Fix:** the tag reference became its own tree node rather than an inline group,
+so it renders inside the scroll frame and costs the parent container nothing.
+`Tests/tests.lua` grows a tripwire that estimates the loose lines above any
+`childGroups` widget and fails past a budget; reintroducing `inline = true`
+trips it on all fourteen units.
+
+**Window height mattered but was never the fix.** At AceConfigDialog's default
+500px the tab content is ~373px, leaving the tree ~48px — tiny but non-zero, so
+a larger window hid the bug rather than avoiding it.
+
+**A note on which panel this was.** Both runs reported an empty
+`AceConfigDialog.OpenFrames`, because `Core/Core.lua:316` also registers through
+`AddToBlizOptions`, and those containers live in `AceConfigDialog.BlizOptions`
+keyed by path. Anything attributing an AceGUI container to this addon has to
+check both tables; `/dufprobe scroll` now does, and reports which path a
+container came through.
+
+**A note on the fix.** The scrollbar is a child of the scroll frame anchored
+outside its right edge (`AceGUIContainer-ScrollFrame.lua:177`), so
+`SetClipsChildren(true)` on the scroll frame would clip the scrollbar away.
+Whatever the eventual fix, it is not that call on that frame.
 
 ---
 

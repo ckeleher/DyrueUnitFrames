@@ -1166,6 +1166,83 @@ local function validateOptions(node, path, report)
 	end
 end
 
+-- Plan 3. A group carrying `childGroups` renders its child groups as a nested
+-- tree or tab widget, and AceGUI places that widget BELOW whatever loose args
+-- the same group has. If those loose args are tall enough, the nested widget is
+-- anchored past the bottom of its parent, its height clamps to zero, and every
+-- descendant inherits that - including the scroll frame, whose content then
+-- draws unclipped over the panel border.
+--
+-- That is exactly what happened: 22 lines of tag reference (~325px) above the
+-- text-element tree inside a ~306px tab. It cost two rounds of live diagnosis
+-- because nothing here could see it, so this is the tripwire.
+--
+-- Pixels are not measurable headlessly, so this counts lines: explicit newlines
+-- plus a crude wrap estimate. The budget is deliberately loose. It is here to
+-- catch a structural mistake, not to reimplement a layout engine.
+local LOOSE_LINE_BUDGET = 12
+local WRAP_CHARS = 90
+
+local function estimateLines(text)
+	if type(text) ~= "string" then return 0 end
+	local lines = 1
+	for _ in text:gmatch("\n") do lines = lines + 1 end
+	return lines + math.floor(#text / WRAP_CHARS)
+end
+
+local function resolveName(node)
+	if type(node.name) == "string" then return node.name end
+	if type(node.name) == "function" then
+		local okay, value = pcall(node.name)
+		if okay and type(value) == "string" then return value end
+	end
+	return nil
+end
+
+-- Loose height means anything rendered in the group's own container: a bare
+-- description, or an inline group, which is what the tag reference used to be.
+local function looseLines(child)
+	if type(child) ~= "table" then return 0 end
+	if child.hidden then return 0 end
+	if child.type == "description" then
+		return estimateLines(resolveName(child))
+	end
+	if child.type == "group" and child.inline and type(child.args) == "table" then
+		local total = 0
+		for _, inner in pairs(child.args) do
+			if type(inner) == "table" and inner.type == "description" and not inner.hidden then
+				total = total + estimateLines(resolveName(inner))
+			end
+		end
+		return total
+	end
+	return 0
+end
+
+local function checkChildGroupsHeadroom(node, path, report)
+	if type(node) ~= "table" or node.type ~= "group" or type(node.args) ~= "table" then
+		return
+	end
+	if node.childGroups then
+		local total, worst, worstLines = 0, nil, 0
+		for key, child in pairs(node.args) do
+			local lines = looseLines(child)
+			total = total + lines
+			if lines > worstLines then worst, worstLines = key, lines end
+		end
+		if total > LOOSE_LINE_BUDGET then
+			report[#report + 1] = string.format(
+				"%s: childGroups='%s' has ~%d lines of loose text above its nested widget"
+					.. " (worst: %s at ~%d). That widget will be pushed out of its parent"
+					.. " and collapse to zero height. Move the text into a child group.",
+				path, tostring(node.childGroups), total, tostring(worst), worstLines)
+		end
+	end
+	for key, child in pairs(node.args) do
+		checkChildGroupsHeadroom(child, path .. "." .. tostring(key), report)
+	end
+end
+
 local function testOptions()
 	local tree = ns.Options.table
 	check("options/tree built", tree ~= nil and tree.args ~= nil)
@@ -1177,6 +1254,22 @@ local function testOptions()
 	else
 		fail("options/tree is well formed", table.concat(report, "; "))
 	end
+
+	local headroom = {}
+	checkChildGroupsHeadroom(tree, "root", headroom)
+	if #headroom == 0 then
+		ok("options/childGroups widgets have room to exist")
+	else
+		fail("options/childGroups widgets have room to exist", table.concat(headroom, "; "))
+	end
+
+	-- Plan 3, specifically: the tag reference must be its own tree node. As an
+	-- inline group it rendered above the text-element tree and collapsed it.
+	local texts = tree.args.units.args.player.args.texts
+	check("options/tag reference is a group", texts.args.tagHelp ~= nil
+		and texts.args.tagHelp.type == "group")
+	check("options/tag reference is NOT inline", not texts.args.tagHelp.inline)
+	check("options/text elements still use a tree", texts.childGroups == "tree")
 
 	-- FR-8.5: on a client without focus, the focus subtrees must be ABSENT.
 	check("options/focus present on TBC", tree.args.units.args.focus ~= nil)
