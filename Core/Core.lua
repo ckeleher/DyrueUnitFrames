@@ -599,7 +599,7 @@ function ns:ProfileReport()
 	Errors:Print(string.format(L["Aura duration ticker: %s"],
 		ns.elements.auras.IsTicking() and L["running"] or L["stopped"]))
 
-	-- The fourth ticker (Plans 2 and 10), reported for the same reason as the
+	-- The fourth ticker (Plans 2, 10 and 17), reported for the same reason as the
 	-- other three and with more reason than any of them: it is the one that
 	-- deviates from §5.7's closed list, so "is it idle when it should be idle"
 	-- has to be answerable. The observed interval is printed because it is
@@ -613,6 +613,17 @@ function ns:ProfileReport()
 		ns.BarSweep:TickObserved() and L["observed"] or L["assumed"]))
 	Errors:Print(string.format(L["  five second rule: %s"],
 		ns.BarSweep:IsFiveSecondRuleRunning() and L["running"] or L["idle"]))
+
+	-- Plan 17. Both numbers here are ones the plan went looking for and could not
+	-- find documented for 1.15.9 or 2.5.6, so this is where they stop being a
+	-- guess. The delay is the more interesting of the two: nothing states it.
+	Errors:Print(string.format(L["  rage decay interval: %.2fs (%s), %s"],
+		ns.BarSweep:RageInterval(),
+		ns.BarSweep:RageObserved() and L["observed"] or L["assumed"],
+		ns.BarSweep:IsRageDecaying() and L["decaying now"] or L["idle"]))
+	local firstDecay = ns.BarSweep:RageFirstDecayDelay()
+	Errors:Print(string.format(L["  rage decay begins: %s after combat drops"],
+		firstDecay and string.format("%.2fs", firstDecay) or L["not yet measured"]))
 
 	-- Plan 11. Not a ticker -- it is a subscription, and the expensive one:
 	-- COMBAT_LOG_EVENT_UNFILTERED cannot be unit-filtered and fires thousands of

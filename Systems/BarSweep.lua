@@ -1,13 +1,14 @@
 -- Systems/BarSweep.lua
 --
--- Plans 2 and 10 — the power tick indicator and the five second rule
--- indicator, which are one mechanism and are built as one.
+-- Plans 2, 10 and 17 — the power tick indicator, the five second rule
+-- indicator and the rage decay indicator, which are one mechanism and are built
+-- as one.
 --
--- Both draw a thin vertical line sweeping across a bar, driven by a timer. The
--- only differences are what sets the fraction and how long the sweep lasts. So
--- there is one module, one driver and one line-rendering path, with a table of
--- PROVIDERS supplying Fraction / Alpha / IsActive. Building them separately
--- would have meant two tickers, which is precisely what SPEC §5.7 warns about.
+-- All three draw a thin vertical line sweeping across a bar, driven by a timer.
+-- The only differences are what sets the fraction and how long the sweep lasts.
+-- So there is one module, one driver and one line-rendering path, with a table
+-- of PROVIDERS supplying Fraction / Alpha / IsActive. Building them separately
+-- would have meant three tickers, which is precisely what SPEC §5.7 warns about.
 --
 --------------------------------------------------------------------------------
 -- THE FOURTH TICKER
@@ -23,16 +24,18 @@
 --
 --   * It obeys the same discipline as the other three. It runs only while a
 --     visible bar has an *active* sweep on it and stops the instant that stops
---     being true, which /duf profile reports. With both indicators off it never
+--     being true, which /duf profile reports. With every indicator off it never
 --     starts; with only the five second rule on, it is idle until the player
---     spends mana.
+--     spends mana; with only rage decay on, it is idle until rage starts falling.
 --
---   * Player only. Another unit's tick cadence and mana expenditure are not
---     observable, so the options are absent rather than present and permanently
---     idle, following the focus-gating precedent in §FR-8.5.
+--   * Player only. Another unit's tick cadence, mana expenditure and rage decay
+--     are not observable, so the options are absent rather than present and
+--     permanently idle, following the focus-gating precedent in §FR-8.5.
 --
--- It is one OnUpdate moving at most four textures (two bars x two providers)
--- with no allocation per frame.
+-- It is one OnUpdate moving at most four textures with no allocation per frame.
+-- Three providers over two bars is five possible lines, but the tick and decay
+-- lines are mutually exclusive on any one bar — the tick needs a resource that
+-- regenerates and decay needs one that does not — so four is the ceiling.
 --------------------------------------------------------------------------------
 
 local ADDON, ns = ...
@@ -58,6 +61,46 @@ local DEFAULT_INTERVAL = 2.0
 local SMOOTHING = 0.3
 
 --------------------------------------------------------------------------------
+-- Rage decay (Plan 17)
+--
+-- Derived on the same terms as the regen cadence above, and MEASURED on the
+-- Anniversary client with /dufprobe rage — see Documents/COMPAT_FINDINGS.md for
+-- the trace. What the sources claimed and what the game actually does:
+--
+--   * Observed: 2.0s between decay ticks (ten samples, 1.95-2.12s, mean 2.04),
+--     losing an alternating 3 and 2 rage. That is 2.5 rage per 2s = 1.25/sec,
+--     which is exactly the figure the modern wiki gives and which the plan wrote
+--     off as a retail-only number. It was right. Classic stores rage at 10x
+--     internally, so 25 units a tick surfaces as 3, 2, 3, 2. The vanilla source
+--     had the amounts right and the interval wrong.
+--
+--   * Seeded at the observed 2.0s rather than the documented 2.5s, so the very
+--     first sweep of a session is right before anything is observed.
+--
+--   * The band stays wide. The rate is talent-modifiable on Classic Era and not
+--     on TBC: vanilla Anger Management reads "Increases the time required for your
+--     rage to decay while out of combat by 30%", redesigned in 2.0.1 into in-combat
+--     generation. 30% on a 2.0s base is 2.6s, and on the documented 2.5s base 3.25s
+--     — neither may be thrown away as an outlier, and the Classic Era case is still
+--     unmeasured.
+--
+--   * There is NO pre-decay delay. Two measured gaps from the combat drop to the
+--     first decay, 0.41s and 1.16s, are both under one interval: the server's decay
+--     cadence is fixed and a combat drop simply lands somewhere inside it. Nothing
+--     documents a delay because there is nothing to document. `rageFirstDecay` is
+--     therefore a phase offset, not a duration, and the decay line waits for a real
+--     tick rather than modeling anything.
+local RAGE_MIN_INTERVAL, RAGE_MAX_INTERVAL = 1.5, 4.0
+local RAGE_DEFAULT_INTERVAL = 2.0
+
+-- Observed out-of-combat decay steps were 1 to 3 rage; observed in-combat spends
+-- in the same trace were 10 to 15 (Maul, Demoralizing Roar). So the guard sits in
+-- a wide empty gap rather than near either population, which is what makes it a
+-- guard against large one-off drops — a form change zeroing rage, the reported
+-- whole-bar loss on combat drop — and not a precision instrument.
+local RAGE_MAX_DECAY_STEP = 5
+
+--------------------------------------------------------------------------------
 -- Shared state
 --
 -- One state table for every provider, because there is one player and one regen
@@ -77,6 +120,17 @@ local state = {
 	lastPowerType = nil,           -- and its type, so a shapeshift is not a spend
 
 	trigger = nil,                 -- trigger name the attached fsr config selected
+
+	-- Rage decay (Plan 17). Deliberately its own fields rather than sharing the
+	-- four above: rage is a separate mechanism on a separate cadence, and letting
+	-- the two meet is the bug part 1 of this plan fixed.
+	rageInterval = RAGE_DEFAULT_INTERVAL,  -- seconds between decay ticks
+	rageOrigin = nil,              -- GetTime() of the last observed decay tick,
+	                               -- and the "decay has started" signal itself
+	rageObserved = false,          -- has a real decay tick ever been seen?
+	rageSamples = 0,               -- accepted interval samples
+	rageCombatEnd = nil,           -- GetTime() of a combat drop not yet measured
+	rageFirstDecay = nil,          -- measured gap from combat drop to first decay
 }
 BarSweep.state = state
 
@@ -151,6 +205,14 @@ local PROVIDERS = {
 		-- same line is attached to the power bar and the shapeshift mana bar at
 		-- once and "at max" means a different thing on each.
 		IsActive = function(st, now, cfg, record)
+			-- Plan 17. Rage does not regenerate, so on a rage bar this line is a
+			-- progress bar towards an event that never happens. It is suppressed at
+			-- render time rather than hidden as an option, because `power.tick` is
+			-- one config block per BAR and a druid's power bar shows rage in bear
+			-- form and energy in cat form — there is no per-power-type config to
+			-- hide. The `decay` provider below is what a rage bar gets instead.
+			if record and record.powerType == Compat.RAGE then return false end
+
 			if not record or not record.atMax then return true end
 
 			local mode = (cfg and cfg.atMax) or "always"
@@ -212,12 +274,63 @@ local PROVIDERS = {
 			return clamp01(1 - over / fade)
 		end,
 	},
+
+	--- Plan 17. Rage decays out of combat instead of regenerating, so this is the
+	-- tick line's mirror image: a progress bar towards the next moment the player
+	-- LOSES rage.
+	decay = {
+		label = L["Rage decay"],
+
+		-- Three gates, and each one is a fact rather than a judgment call — which
+		-- is why, unlike the tick line's `atMax`, none of them is a setting:
+		--
+		--   * Only on a rage bar. Nothing else decays.
+		--   * Not in combat. Rage does not decay in combat at all, so there is no
+		--     next decay to count down to.
+		--   * Not at zero rage. Decay stops at zero; there is nothing left to lose.
+		--
+		-- `rageOrigin` is the fourth and is the answer to "how long does rage take
+		-- to start decaying". That delay is the least verifiable number in this
+		-- feature — undocumented, possibly zero, possibly just the combat-drop timer
+		-- the game already signals by clearing the combat flag — so rather than
+		-- sweep a line for a duration nothing substantiates, the line simply does
+		-- not appear until rage is actually observed falling. Correct whatever the
+		-- true delay turns out to be. The delay is measured anyway and reported by
+		-- /duf profile, so the number becomes known rather than guessed.
+		IsActive = function(st, now, cfg, record)
+			if not record or record.powerType ~= Compat.RAGE then return false end
+			if not st.rageOrigin then return false end
+			if (st.lastPower or 0) <= 0 then return false end
+
+			-- Read live rather than tracked from PLAYER_REGEN_DISABLED/ENABLED. One
+			-- C call per frame while a decay line is up, in exchange for a combat
+			-- state that cannot go stale if an event is ever missed — and NoteRagePower
+			-- needs the same answer at the moment of a power event, so one live source
+			-- keeps the two from disagreeing.
+			return not UnitAffectingCombat("player")
+		end,
+
+		-- The modulo is here for the reason it is on the tick line: a decay tick is
+		-- only *observed* when the client pushes a decrease, and if one is missed the
+		-- phase of the last one is a better estimate than parking against the edge.
+		Fraction = function(st, now)
+			local origin, interval = st.rageOrigin, st.rageInterval
+			if not origin or not interval or interval <= 0 then return 0 end
+
+			local elapsed = now - origin
+			if elapsed < 0 then return 0 end
+
+			return clamp01((elapsed % interval) / interval)
+		end,
+
+		Alpha = function() return 1 end,
+	},
 }
 
 BarSweep.PROVIDERS = PROVIDERS
 
 function BarSweep:ProviderNames()
-	return { "tick", "fsr" }
+	return { "tick", "fsr", "decay" }
 end
 
 --------------------------------------------------------------------------------
@@ -496,6 +609,68 @@ function BarSweep:NoteTick(now)
 	state.samples = state.samples + 1
 end
 
+--- A rage decay tick was observed (Plan 17). Only out-of-combat decreases of a
+-- plausible size reach here; NoteRagePower below is the filter.
+function BarSweep:NoteRageDecay(now)
+	now = now or GetTime()
+
+	local previous = state.rageOrigin
+	state.rageOrigin = now
+	state.rageObserved = true
+
+	-- The one measurement this feature exists to make honest. Only the FIRST decay
+	-- after a combat drop says anything about the delay, so the pending timestamp
+	-- is consumed rather than left to be re-measured by every later tick.
+	if state.rageCombatEnd then
+		state.rageFirstDecay = now - state.rageCombatEnd
+		state.rageCombatEnd = nil
+	end
+
+	if not previous then
+		self:Refresh()
+		return
+	end
+
+	-- Outliers rejected rather than clamped in, the same discipline NoteTick
+	-- follows and for the same reason: a long gap means a decay tick was missed,
+	-- not that the cadence is slow.
+	local sample = now - previous
+	if sample >= RAGE_MIN_INTERVAL and sample <= RAGE_MAX_INTERVAL then
+		local blended = state.rageInterval * (1 - SMOOTHING) + sample * SMOOTHING
+		if blended < RAGE_MIN_INTERVAL then blended = RAGE_MIN_INTERVAL end
+		if blended > RAGE_MAX_INTERVAL then blended = RAGE_MAX_INTERVAL end
+
+		state.rageInterval = blended
+		state.rageSamples = state.rageSamples + 1
+	end
+
+	self:Refresh()
+end
+
+--- The player's rage changed. Decides which of the three things it was.
+function BarSweep:NoteRagePower(previous, value, now)
+	-- A gain, from a swing or an ability. Not a tick, and it does not reschedule
+	-- the server's decay timer either — so the phase of the last observed decay is
+	-- left alone rather than pushed forward. Assuming otherwise would put the line
+	-- wrong after every swing.
+	if value > previous then return end
+
+	-- In combat a decrease is a spend, and rage does not decay in combat at all.
+	if UnitAffectingCombat("player") then return end
+
+	-- Too big to be a decay tick: shifting out of bear form zeroes rage, and the
+	-- reported whole-bar loss on combat drop has the same shape. The phase is
+	-- dropped rather than re-based, so the line waits for a real decay tick instead
+	-- of sweeping from an origin that was never a decay at all.
+	if (previous - value) > RAGE_MAX_DECAY_STEP then
+		state.rageOrigin = nil
+		self:Refresh()
+		return
+	end
+
+	self:NoteRageDecay(now)
+end
+
 --- Mana actually left the pool. Every fresh expenditure restarts the five
 -- seconds.
 --
@@ -527,6 +702,27 @@ function BarSweep:NotePlayerPower(powerType, value, now)
 	if previous == nil or previousType ~= powerType then return end
 	if value == previous then return end
 
+	-- PLAN 17. Rage is routed out before the increase/decrease split below,
+	-- because both halves of that split are wrong for it.
+	--
+	-- A rage INCREASE is a gain from a weapon swing or an ability, not a regen
+	-- tick — and feeding it to NoteTick corrupted a value shared well beyond the
+	-- rage bar. Mainhand speeds are typically 2.4-3.6s, so a large share of those
+	-- gaps land inside NoteTick's accepted band and were being smoothed into
+	-- `state.interval` as if they were regen samples. A druid in bear form has
+	-- rage on the power bar and mana on the shapeshift mana bar reading that same
+	-- state (Elements/ShapeshiftMana.lua), so every rage gain in bear form reset
+	-- the phase of the MANA tick line and dragged its interval towards the bear's
+	-- swing timer. The one bar where the indicator earns its keep was the one
+	-- being corrupted by this.
+	--
+	-- A rage DECREASE is a spend in combat and a decay tick out of it, which the
+	-- five second rule has no interest in either way.
+	if powerType == Compat.RAGE then
+		self:NoteRagePower(previous, value, now)
+		return
+	end
+
 	if value > previous then
 		self:NoteTick(now)
 	elseif powerType == Compat.MANA then
@@ -535,6 +731,40 @@ function BarSweep:NotePlayerPower(powerType, value, now)
 		end
 	end
 end
+
+--------------------------------------------------------------------------------
+-- Combat transitions (Plan 17)
+--
+-- Neither event is needed for the decay line to be CORRECT — `IsActive` reads the
+-- combat state live and the driver re-evaluates every frame, so the line stops of
+-- its own accord when a fight starts. They are registered for three things the
+-- render path cannot do for itself:
+--
+--   * Timestamp the combat drop, which is the only way the pre-decay delay can be
+--     measured rather than assumed.
+--   * Drop the phase when a fight starts. Rage does not decay in combat, so by the
+--     time the fight ends the origin from before it means nothing.
+--   * Restart a driver that has idled to a stop. Render calls stop() when nothing
+--     is active, and for a warrior with only this indicator on, nothing is active
+--     for the whole fight.
+--
+-- Own frame rather than an element's globalEvents table, following the watcher in
+-- Config/DragMode.lua: this is module state, not a property of any one frame, and
+-- the module is loaded whether or not any frame wants a line.
+--------------------------------------------------------------------------------
+
+local watcher = CreateFrame("Frame")
+watcher:RegisterEvent("PLAYER_REGEN_ENABLED")
+watcher:RegisterEvent("PLAYER_REGEN_DISABLED")
+watcher:SetScript("OnEvent", function(_, event)
+	if event == "PLAYER_REGEN_ENABLED" then
+		state.rageCombatEnd = GetTime()
+	else
+		state.rageOrigin = nil
+		state.rageCombatEnd = nil
+	end
+	BarSweep:Refresh()
+end)
 
 --------------------------------------------------------------------------------
 -- Reporting
@@ -554,6 +784,37 @@ function BarSweep:IsFiveSecondRuleRunning(now)
 	return PROVIDERS.fsr.IsActive(state, now or GetTime(), nil)
 end
 
+function BarSweep:RageInterval()
+	return state.rageInterval
+end
+
+function BarSweep:RageObserved()
+	return state.rageObserved
+end
+
+--- Seconds from the last combat drop to the first rage decay after it, or nil if
+-- that has not been seen yet. The number the plan could not find documented for
+-- either client, so /duf profile reports it and it stops being a guess.
+function BarSweep:RageFirstDecayDelay()
+	return state.rageFirstDecay
+end
+
+--- A rage bar, for asking the decay provider about the player's actual state
+-- rather than duplicating its gates. Module-level so the query allocates nothing.
+local RAGE_RECORD = { powerType = Compat.RAGE, atMax = false }
+
+--- Is rage decaying right now, as far as we can tell?
+--
+-- Delegated to the provider, the way IsFiveSecondRuleRunning is, and for a reason
+-- the first in-game run demonstrated: this originally checked `rageOrigin` and the
+-- combat flag by hand and so left out the provider's third gate, zero rage. At the
+-- end of a drain /duf profile said "decaying now" on the same line as "bar sweep
+-- ticker: stopped", which is exactly the kind of contradiction the report exists to
+-- surface rather than produce.
+function BarSweep:IsRageDecaying(now)
+	return PROVIDERS.decay.IsActive(state, now or GetTime(), nil, RAGE_RECORD)
+end
+
 --- Reset every derived value. Used by the test suite; there is no in-game path
 -- that needs it, because the state is per-session by nature.
 function BarSweep:Reset()
@@ -565,6 +826,13 @@ function BarSweep:Reset()
 	state.lastPower = nil
 	state.lastPowerType = nil
 	state.trigger = nil
+
+	state.rageInterval = RAGE_DEFAULT_INTERVAL
+	state.rageOrigin = nil
+	state.rageObserved = false
+	state.rageSamples = 0
+	state.rageCombatEnd = nil
+	state.rageFirstDecay = nil
 
 	for bar in pairs(attached) do
 		self:Detach(bar)

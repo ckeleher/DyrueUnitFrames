@@ -499,7 +499,9 @@ local function sweepGroup(unitKey, getBar, apply, key, order, name, description)
 	}
 end
 
-local TICK_DESCRIPTION = L["A thin line sweeping across the bar towards the next energy or mana regeneration tick. The interval is measured from the game as it runs rather than assumed to be two seconds, so it stays correct if the cadence is ever different from what is expected."]
+local TICK_DESCRIPTION = L["A thin line sweeping across the bar towards the next energy or mana regeneration tick. The interval is measured from the game as it runs rather than assumed to be two seconds, so it stays correct if the cadence is ever different from what is expected. Rage does not regenerate, so nothing is drawn while the bar is showing rage - the rage decay indicator below is what applies there."]
+
+local DECAY_DESCRIPTION = L["Rage drains while you are out of combat instead of regenerating, so this is the tick line's mirror image: a thin line sweeping towards the next moment you LOSE rage. Shown only while the bar is showing rage, which means a warrior always and a druid in bear form.\n\nNothing is drawn until rage is actually seen falling, which measured out at under one tick after combat drops - the game does not wait, it just keeps its own clock and your fight ends somewhere inside it. Like the tick line, the interval is measured from the game as it runs rather than assumed, so it stays correct for a talent that slows decay down. /duf profile reports what it has settled on."]
 
 local FSR_DESCRIPTION = L["Spending mana suppresses Spirit-based regeneration for five seconds, and every fresh expenditure restarts it. The line sweeps for exactly that window. Regeneration resumes on the first tick AFTER the window closes, so it can be up to one tick later than the line suggests - the power tick indicator above covers that remainder. Only shown while this bar is showing mana."]
 
@@ -592,6 +594,11 @@ local function powerGroup(def)
 
 		tick = sweepGroup(unitKey, power, apply, "tick", 40,
 			L["Power tick indicator"], TICK_DESCRIPTION),
+		-- Between the two it replaces and complements: it is what the tick line
+		-- becomes on a rage bar, so it reads better next to it than after the
+		-- five second rule, which has nothing to do with either.
+		decay = sweepGroup(unitKey, power, apply, "decay", 45,
+			L["Rage decay indicator"], DECAY_DESCRIPTION),
 		fsr = sweepGroup(unitKey, power, apply, "fsr", 50,
 			L["Five second rule indicator"], FSR_DESCRIPTION),
 	}

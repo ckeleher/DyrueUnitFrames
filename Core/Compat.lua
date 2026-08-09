@@ -146,6 +146,15 @@ Compat.hasSecretValues = (_G.issecretvalue ~= nil) or (_G.canaccessvalue ~= nil)
 Compat.MANA = (_G.Enum and _G.Enum.PowerType and _G.Enum.PowerType.Mana) or 0
 Compat.ENERGY = (_G.Enum and _G.Enum.PowerType and _G.Enum.PowerType.Energy) or 3
 
+--- Plan 17. Rage decays out of combat instead of regenerating, so it is the one
+-- power type the tick machinery in Systems/BarSweep.lua has to recognize by
+-- number rather than treat generically.
+--
+-- The literal fallback is safe here in a way the combo-point one below is NOT:
+-- 1 is rage in the Classic numbering the table below carries AND in the modern
+-- Enum.PowerType, so the two cannot disagree.
+Compat.RAGE = (_G.Enum and _G.Enum.PowerType and _G.Enum.PowerType.Rage) or 1
+
 local powerTypeNames = {
 	[0] = "MANA",
 	[1] = "RAGE",
@@ -738,6 +747,7 @@ function Compat.Describe()
 		hasAuraInstanceLookup = Compat.hasAuraInstanceLookup,
 		incrementalAurasSeen = Compat.SupportsIncrementalAuraUpdates(),
 		MANA = Compat.MANA,
+		RAGE = Compat.RAGE,
 		hasGetComboPoints = Compat.hasGetComboPoints,
 		hasComboPointEnum = Compat.hasComboPointEnum,
 		maxComboPoints = Compat.MAX_COMBO_POINTS,

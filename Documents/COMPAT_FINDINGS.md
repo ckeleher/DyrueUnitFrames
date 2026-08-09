@@ -157,8 +157,8 @@ the fallback ticker mandatory?
 | | Result |
 |---|---|
 | Changes the events reported | _(fill in)_ |
-| Changes only the 0.2s sampler saw | _(fill in)_ |
-| Verdict | _(fill in)_ |
+| Changes only the 0.2s sampler saw | **0**, across 735 ticks in one session (8 August 2026, Anniversary, bear form) |
+| Verdict | Provisional: events look reliable. Needs a few more sessions before the ticker goes to `off` |
 
 `/dufprobe mana` answers this directly and prints the verdict. The addon also
 answers it *during normal play*: `tickerMode = "auto"` counts every value the
@@ -263,6 +263,95 @@ If Edit Mode cannot do it, change the default in
 
 ---
 
+## Plan 17 — Rage decay
+
+Not a client-capability question but a **game-rule** question, and it belongs
+here for the same reason the others do: the answer was looked for, not found, and
+the code was written around the gap rather than around a guess.
+
+**What the sources said.** Rage decays only out of combat — every source agrees on
+that and nothing else was contested. Beyond it:
+
+| Claim | Source | Weight before measuring |
+|---|---|---|
+| ~1 rage/sec, delivered as 2 or 3 rage on a ~2.5 s tick | Vanilla WoW Wiki | One source. The discrete-tick shape is the useful part |
+| 1.25 rage/sec (75/min) | warcraft.wiki.gg | Read as retail-only, and therefore dismissed. **This was the wrong call — see below** |
+| Decay begins "after a brief delay" | Classic warrior guides | No number given anywhere |
+| Vanilla Anger Management: "Increases the time required for your rage to decay while out of combat by 30%" | warcraft.wiki.gg | Solid, and it means **the rate differs between our two clients** |
+| Redesigned in 2.0.1 to "Generates 1 rage per 3 seconds while in combat" | same | So nothing modifies out-of-combat decay on TBC |
+| Entire rage bar lost instantly when combat drops | Blizzard forums, no developer reply | Player reports only. Handled defensively by the plausibility guard |
+
+**MEASURED — `/dufprobe rage`, Anniversary client (2.5.6), druid in bear form,
+8 August 2026.** 56 entries, two full drains to zero, ten decay intervals sampled.
+
+| Question | Assumed | Observed |
+|---|---|---|
+| Does `UNIT_POWER_UPDATE` fire per decay tick? | Yes — the whole derivation rests on it | **Yes.** Zero changes the 0.1 s sampler caught that the events had not already reported |
+| Decay interval, out of combat | ~2.5 s | **2.0 s.** Ten samples, 1.95–2.12 s, mean 2.04. `/duf profile` independently settled on 2.05 s |
+| Rage lost per tick | 2–3 | **Alternating 3 and 2**, mean 2.50 |
+| Delay from combat drop to first decay | Unknown, not modeled | **None.** 0.41 s and 1.16 s on two drops, both *under* one interval |
+| Anything decaying *during* combat | No | **No.** Seven in-combat decreases, all 10–15 rage, all ability spends (Maul, Demoralizing Roar) |
+| Interval with vanilla Anger Management talented | ~2.6 s at the observed base, or an amount change instead | **UNEXPLORED** — no Classic Era warrior with the talent was available. See below |
+
+Three of those change what the code should say.
+
+**1. The 1.25/sec figure was right and the plan dismissed it.** 2.5 rage per 2.0 s
+tick *is* 1.25 rage/sec — exactly what warcraft.wiki.gg gives. It reads as a retail
+number only because it is quoted per-second. The alternating 3, 2, 3, 2 is the
+giveaway: Classic stores rage at 10× internally, so 25 units a tick cannot divide
+evenly into displayed rage and surfaces as 3 then 2. The vanilla source had the
+amounts right and the interval wrong; the modern one had the rate right all along.
+
+**2. The seed moved from 2.5 s to 2.0 s.** Derivation makes the seed almost
+irrelevant, but "almost" is the first sweep of a session before anything has been
+observed, and that one may as well be right.
+
+**3. There is no pre-decay delay to model.** Both measured gaps are under one
+interval, which is what you get when a fixed server cadence keeps running and the
+combat drop simply lands somewhere inside it. Nothing documents a delay because
+there is nothing to document. `rageFirstDecay` is a phase offset, not a duration —
+`/duf profile` still reports it, as evidence of exactly this.
+
+**Also observed in the same session, and it answers 0.2 above:** the shapeshift mana
+ticker reported 735 ticks and **0 corrections** — every mana value while shifted had
+already been delivered by an event. One session is not the "few sessions" §FR-2.5
+asks for before turning the fallback off, but it is the first real data point and it
+points at the events being reliable on this client.
+
+### UNEXPLORED — Anger Management on Classic Era
+
+The one row above that is still open, and the only place this feature is known to
+differ between the two supported clients. Recorded rather than left as a blank,
+because otherwise the next person has to re-derive it from the wiki.
+
+Vanilla Anger Management (Protection tier 1, 1.15.x) reads *"Increases the time
+required for your rage to decay while out of combat by 30%."* Patch 2.0.1 replaced
+it with in-combat generation, so **Anniversary is unaffected** and the 2.0 s measured
+above is the whole story there.
+
+The tooltip covers two different mechanisms, and they are not distinguishable
+without measuring:
+
+| Reading | Effect | What the code sees |
+|---|---|---|
+| The **interval** stretches | ~2.6 s between ticks, same 2–3 rage each | A new cadence, learned within a few ticks |
+| The **amount** shrinks | Still 2.0 s, less rage per tick | Nothing. The interval never moves |
+
+**Neither can break the line, which is why this shipped without the answer.** The
+band stays at **1.5–4.0 s** — wider than anything measured, deliberately — so 2.6 s
+is learned rather than rejected, and so is the 3.25 s a pre-measurement reading of
+the docs would have predicted. The amount feeds nothing but the
+`RAGE_MAX_DECAY_STEP` guard, and a *smaller* amount moves away from that guard, not
+towards it. Nothing is hardcoded to 2.0 except the seed, which governs only the
+first sweep of a session.
+
+**To close it:** `/dufprobe rage` on a Classic Era warrior with the talent learned,
+then unlearned, comparing the reported mean interval and mean step. If the interval
+stretches past 4.0 s — which no reading of the tooltip predicts — `RAGE_MAX_INTERVAL`
+in `Systems/BarSweep.lua` is the one constant to change.
+
+---
+
 ## Deviations from SPEC.md
 
 Recorded as they are made, so the reasoning survives.
@@ -275,7 +364,7 @@ Recorded as they are made, so the reasoning survives.
 | §FR-5.9 right-click cancel | Secure attribute on a separate overlay button, updated through `CombatQueue` | Aura icons must be shown and hidden constantly in combat, which a protected frame cannot do. Splitting insecure icon from secure overlay is the only arrangement that satisfies both. Cost: in combat the overlay can be one aura stale |
 | §5.7 incremental aura updates | `updateInfo` is used to *skip* no-op updates; the normal path is a full rescan | The spec calls this an optimization, not a blocker. Maintaining a parallel instance-ID store is a real bug surface and buys nothing measurable at Classic's aura counts |
 | §FR-4.1 "Default: green" | Health bars ship in `class` mode, with `reaction` as the NPC fallback | Class color says at a glance who you are looking at, and degrades to something meaningful for NPCs rather than to a fixed color that means nothing. The spec's green is still the stored `color` and is one dropdown away. Schema 4 migrates profiles still on the old default |
-| §5.7 three permitted tickers | A fourth was added: one `OnUpdate` driver in `Systems/BarSweep.lua`, shared by the power tick indicator (Plan 2) and the five second rule indicator (Plan 10) | The sweep is a continuous animation *between* two regen ticks and nothing fires in between — `UNIT_POWER_UPDATE` fires AT the tick, which is the moment the sweep restarts. Same category as the derived-unit poller: the game does not push what we need. It obeys the same discipline as the other three, running only while a visible bar has an active sweep and stopping the instant that stops being true, and `/duf profile` reports it. Player only, on the §FR-8.5 boundary: another unit's tick cadence and mana expenditure are not observable. Both plans share the one driver and one line-rendering path with a table of providers, so there is no fifth ticker |
+| §5.7 three permitted tickers | A fourth was added: one `OnUpdate` driver in `Systems/BarSweep.lua`, shared by the power tick indicator (Plan 2), the five second rule indicator (Plan 10) and the rage decay indicator (Plan 17) | The sweep is a continuous animation *between* two regen ticks and nothing fires in between — `UNIT_POWER_UPDATE` fires AT the tick, which is the moment the sweep restarts. Same category as the derived-unit poller: the game does not push what we need. It obeys the same discipline as the other three, running only while a visible bar has an active sweep and stopping the instant that stops being true, and `/duf profile` reports it. Player only, on the §FR-8.5 boundary: another unit's tick cadence, mana expenditure and rage decay are not observable. All three plans share the one driver and one line-rendering path with a table of providers, so a third indicator added no ticker and there is still no fifth |
 | §FR-5.6 "a configurable corner" / §FR-5.5 optional duration text | Both numeric overlays take any of the nine points, plus `ABOVE` and `BELOW`, with x/y offsets — and both ship **off** (Plan 13) | Corners were not the constraint; size was. At the specified 20px icon size an outlined stack count is over half the height of the art, and a full 8x2 debuff grid came out unreadable. The capability §FR-5.6 asks for is intact and wider; what changed is the shipped default and the fact that placement is now a setting instead of a hardcoded inset. Schema 14 migrates only the exact untouched default, so anyone who had already chosen a corner or a size keeps it |
 | §2.2 "incoming-heal prediction — out of domain" | Built, as `Systems/HealPrediction.lua` plus `Elements/HealPrediction.lua` (Plan 11) | The exclusion grouped it with combat text and threat meters, i.e. another addon's problem domain. It belongs with the other group — the things Classic cannot support — because it is a property of a health bar rather than a separate display, and what made it look foreign was the absent API rather than the feature. §2.1's first goal is replacing SUF day to day, and SUF has it. It costs none of what §2.2's other exclusions were protecting: no secure header, no Blizzard frame contact, no new library, and no new ticker. Amounts are derived by learning from the player's own combat log rather than shipped as a rank database, so there is nothing to go stale. The absorb half is deliberately still excluded, pending Plan 12 |
 | §5.1 file layout | A `Tests/` directory was added | A headless suite that runs the addon against a stubbed API in a real Lua 5.1 interpreter. Not in the spec's layout, but the project's entire premise is that the last one kept breaking, and this makes step 6 of the patch-day playbook cost thirty seconds instead of an evening |

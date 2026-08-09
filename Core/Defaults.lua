@@ -84,15 +84,17 @@ local function color(r, g, b, a)
 end
 Defaults.Color = color
 
---- One sweep-line indicator on a bar (Plans 2 and 10, Systems/BarSweep.lua).
+--- One sweep-line indicator on a bar (Plans 2, 10 and 17, Systems/BarSweep.lua).
 --
--- Both ship OFF. They are niche readouts — the tick line means nothing to most
--- classes and the five second rule means nothing to a class with no mana — and
--- a moving line on by default is intrusive.
+-- All three ship OFF. They are niche readouts — the tick line means nothing to
+-- most classes, the five second rule means nothing to a class with no mana, and
+-- rage decay means nothing to a class without rage — and a moving line on by
+-- default is intrusive.
 --
--- The two default colors differ deliberately. Both lines can be on the same
--- mana bar at once, and two identical white lines crossing each other is
--- unreadable; a mana-blue reads as "this one is about mana".
+-- The default colors all differ deliberately. Two of these lines can be on the
+-- same bar at once, and two identical white lines crossing each other is
+-- unreadable; a mana-blue reads as "this one is about mana", and a hot orange as
+-- "this one is about rage".
 local function sweep(direction, lineColor, extra)
 	local block = {
 		enabled = false,
@@ -345,6 +347,22 @@ local function unit(overrides)
 				-- exists, so there is no dropdown yet; see BarSweep.TRIGGERS.
 				trigger = "manaSpent",
 			}),
+			-- Plan 17. Rage decays out of combat rather than regenerating, so it
+			-- gets the tick line's mirror image and never the tick line itself.
+			--
+			-- LEFT because the resource is draining, the same reasoning that gave
+			-- the five second rule its direction. The color has to contrast with
+			-- the bar it is drawn on rather than match it: Systems/Colors.lua puts
+			-- rage at 0.78/0.25/0.25, so a red line would be invisible, and a hot
+			-- orange also stays distinct from the white tick and blue rule lines.
+			--
+			-- Power bar only. The shapeshift mana bar is a mana bar by definition
+			-- and can never show rage, the mirror image of why the five second rule
+			-- is never on a rage bar.
+			--
+			-- No at-max equivalent either. The tick line's is a judgment call, but
+			-- decay stopping at zero rage is a fact, so there is nothing to offer.
+			decay = sweep("LEFT", color(1, 0.55, 0.3)),
 		},
 
 		-- SPEC §4.2 — shapeshift mana. Present on every unit for schema

@@ -3594,6 +3594,7 @@ local function testBarSweep()
 	local Compat = ns.Compat
 	local st = BarSweep.state
 	local tick, fsr = BarSweep.PROVIDERS.tick, BarSweep.PROVIDERS.fsr
+	local decay = BarSweep.PROVIDERS.decay
 
 	local player = ns.frames.player
 	local powerCfg = ns:UnitConfig("player").power
@@ -3611,6 +3612,25 @@ local function testBarSweep()
 	equal("sweep/five second rule sweeps right to left", powerCfg.fsr.direction, "LEFT")
 	equal("sweep/both blocks exist on the shapeshift mana bar too",
 		manaCfg.tick ~= nil and manaCfg.fsr ~= nil, true)
+
+	-- Plan 17. Rage drains rather than regenerating, so the decay line sweeps the
+	-- other way -- and it exists on the power bar only, because the shapeshift mana
+	-- bar can never show rage.
+	equal("sweep/rage decay ships off", powerCfg.decay.enabled, false)
+	equal("sweep/rage decay sweeps right to left", powerCfg.decay.direction, "LEFT")
+	equal("sweep/no decay block on the shapeshift mana bar", manaCfg.decay, nil)
+	equal("sweep/decay ships at 0.9 opacity", powerCfg.decay.alpha, 0.9)
+	equal("sweep/decay color swatch is fully opaque", powerCfg.decay.color.a, 1)
+	-- Decay stopping at zero rage is a fact, not a judgment call, so unlike the
+	-- tick line there is nothing for an at-max style setting to decide.
+	equal("sweep/no at-max setting on the decay line", powerCfg.decay.atMax, nil)
+	-- A line the same color as the bar under it is an invisible line, and rage
+	-- bars are red (Systems/Colors.lua).
+	local rageR, rageG, rageB = ns.Colors:Power(nil, "RAGE")
+	check("sweep/the decay line does not ship the rage bar's own color",
+		not (powerCfg.decay.color.r == rageR
+			and powerCfg.decay.color.g == rageG
+			and powerCfg.decay.color.b == rageB))
 
 	-- Both lines can be on the same mana bar at once, and two identical white
 	-- lines crossing each other is unreadable.
@@ -3693,6 +3713,23 @@ local function testBarSweep()
 		powerOpts.fsr.args.hideTick ~= nil)
 	equal("sweep/no hide-tick control on the tick line",
 		powerOpts.tick.args.hideTick, nil)
+
+	-- Plan 17's controls: offered on the player's power bar, nowhere else.
+	equal("sweep/decay options offered on the player", powerOpts.decay.hidden, false)
+	equal("sweep/decay options hidden on the target",
+		units.target.args.power.args.decay.hidden, true)
+	equal("sweep/decay options hidden on a party frame",
+		units.party1.args.power.args.decay.hidden, true)
+	equal("sweep/no decay group on the shapeshift mana bar",
+		units.player.args.mana.args.decay, nil)
+	-- It borrows nothing from the other two: no at-max, no fade, no hide-tick.
+	equal("sweep/no at-max control on the decay line", powerOpts.decay.args.atMax, nil)
+	equal("sweep/no fade control on the decay line", powerOpts.decay.args.fade, nil)
+	equal("sweep/no hide-tick control on the decay line",
+		powerOpts.decay.args.hideTick, nil)
+	check("sweep/opacity slider on the decay line", powerOpts.decay.args.alpha ~= nil)
+	check("sweep/direction control on the decay line",
+		powerOpts.decay.args.direction ~= nil)
 
 	----------------------------------------------------------------------------
 	-- The trigger, made swappable
@@ -3780,6 +3817,246 @@ local function testBarSweep()
 		not BarSweep:TickObserved() and not BarSweep:IsFiveSecondRuleRunning(7001))
 
 	----------------------------------------------------------------------------
+	-- Rage is not a regen tick (Plan 17)
+	--
+	-- Rage decays out of combat instead of regenerating, so neither half of the
+	-- increase/decrease split above applies to it. An increase is a gain from a
+	-- swing or an ability, and it must not reach the regen cadence.
+	----------------------------------------------------------------------------
+
+	BarSweep:Reset()
+	BarSweep:NotePlayerPower(Compat.RAGE, 20, 7500)
+	-- 2.6s apart: inside the accepted 1.5-3.0s band, which is exactly why this
+	-- was being swallowed as a plausible regen sample.
+	BarSweep:NotePlayerPower(Compat.RAGE, 45, 7502.6)
+	check("sweep/a rage gain is not a regen tick", not BarSweep:TickObserved())
+	equal("sweep/a rage gain leaves the regen cadence alone",
+		BarSweep:TickInterval(), 2.0)
+	equal("sweep/a rage gain does not reset the tick phase", st.origin, nil)
+
+	BarSweep:NotePlayerPower(Compat.RAGE, 30, 7505)
+	check("sweep/spending rage does not start the five second rule",
+		not BarSweep:IsFiveSecondRuleRunning(7505))
+
+	-- The bug this fixes, and the reason it was never confined to warriors. A
+	-- druid in bear form has rage on the power bar and mana on the shapeshift
+	-- mana bar, and both lines read one shared cadence -- so rage gains at the
+	-- bear's swing timer were driving the MANA tick line.
+	BarSweep:Reset()
+	BarSweep:NotePlayerPower(Compat.MANA, 1000, 7600)
+	for i = 1, 25 do BarSweep:NotePlayerPower(Compat.MANA, 1000 + i * 40, 7600 + i * 2.5) end
+	local casterCadence = BarSweep:TickInterval()
+	local casterOrigin = st.origin
+	near("sweep/the mana cadence is learned in caster form", casterCadence, 2.5, 0.02)
+
+	-- Shift to bear and take rage in for a while. 1.9s apart, which is inside the
+	-- accepted band and NOT the mana cadence -- rage arrives from swings, from
+	-- damage taken and from Enrage, so it is not confined to one weapon speed.
+	-- Both halves of the corruption are asserted: the interval and the phase.
+	BarSweep:NotePlayerPower(Compat.RAGE, 0, 7700)
+	for i = 1, 15 do BarSweep:NotePlayerPower(Compat.RAGE, i * 6, 7700 + i * 1.9) end
+	equal("sweep/bear form rage gains do not move the mana cadence",
+		BarSweep:TickInterval(), casterCadence)
+	equal("sweep/bear form rage gains do not reset the mana tick phase",
+		st.origin, casterOrigin)
+
+	----------------------------------------------------------------------------
+	-- Rage decay: deriving the cadence (Plan 17)
+	--
+	-- The rules were looked up and are not reliably documented for either client:
+	-- one vanilla source gives ~1 rage/sec on a ~2.5s tick, the rate is talent-
+	-- modifiable on Classic Era and not on TBC, and the delay before decay starts
+	-- has no stated value anywhere. So the interval is derived exactly as the regen
+	-- cadence is, and the delay is measured rather than assumed.
+	----------------------------------------------------------------------------
+
+	stub.inCombat = false
+
+	BarSweep:Reset()
+	-- Seeded at the interval /dufprobe rage measured on the Anniversary client,
+	-- not the 2.5s the one vanilla source claimed.
+	equal("sweep/rage interval is seeded at the observed 2.0s",
+		BarSweep:RageInterval(), 2.0)
+	equal("sweep/seeded rage interval is reported as assumed",
+		BarSweep:RageObserved(), false)
+	equal("sweep/no decay delay measured yet", BarSweep:RageFirstDecayDelay(), nil)
+
+	-- 2 rage every 2.5s out of combat: the documented shape.
+	BarSweep:NotePlayerPower(Compat.RAGE, 60, 20000)
+	BarSweep:NotePlayerPower(Compat.RAGE, 58, 20002.5)
+	check("sweep/an out-of-combat rage drop is a decay tick", BarSweep:RageObserved())
+
+	for i = 2, 20 do
+		BarSweep:NotePlayerPower(Compat.RAGE, 60 - i * 2, 20000 + i * 2.5)
+	end
+	near("sweep/rage interval converges on the observed cadence",
+		BarSweep:RageInterval(), 2.5, 0.02)
+
+	-- A 30% talent stretch on a 2.5s base is 3.25s and must be accepted, which is
+	-- why this band is wider than the regen band's 1.5-3.0s.
+	BarSweep:Reset()
+	BarSweep:NotePlayerPower(Compat.RAGE, 100, 21000)
+	for i = 1, 30 do
+		BarSweep:NotePlayerPower(Compat.RAGE, 100 - i * 2, 21000 + i * 3.25)
+	end
+	near("sweep/a talent-stretched cadence is accepted, not rejected",
+		BarSweep:RageInterval(), 3.25, 0.02)
+	check("sweep/rage interval never leaves the 1.5-4.0s band",
+		BarSweep:RageInterval() >= 1.5 and BarSweep:RageInterval() <= 4.0,
+		tostring(BarSweep:RageInterval()))
+
+	-- An outlier gap is a MISSED tick, not a slower cadence. Rejected outright.
+	local heldRage = BarSweep:RageInterval()
+	BarSweep:NotePlayerPower(Compat.RAGE, 30, 21000 + 30 * 3.25 + 11.0)
+	equal("sweep/an outlier gap does not move the rage interval",
+		BarSweep:RageInterval(), heldRage)
+
+	-- In combat a decrease is a spend, and rage does not decay in combat at all.
+	BarSweep:Reset()
+	stub.inCombat = true
+	BarSweep:NotePlayerPower(Compat.RAGE, 80, 22000)
+	BarSweep:NotePlayerPower(Compat.RAGE, 65, 22001)
+	check("sweep/spending rage in combat is not a decay tick",
+		not BarSweep:RageObserved())
+	equal("sweep/a spend in combat leaves the phase unset", st.rageOrigin, nil)
+	stub.inCombat = false
+
+	-- Too big to be a decay tick: shifting out of bear form zeroes rage, and the
+	-- reported whole-bar loss on combat drop is the same shape. The phase is
+	-- dropped so the line waits for a real tick rather than sweeping from it.
+	BarSweep:Reset()
+	BarSweep:NotePlayerPower(Compat.RAGE, 60, 23000)
+	BarSweep:NotePlayerPower(Compat.RAGE, 58, 23002.5)
+	local phaseBefore = st.rageOrigin
+	check("sweep/a plausible drop sets the phase", phaseBefore ~= nil)
+	BarSweep:NotePlayerPower(Compat.RAGE, 0, 23005)
+	equal("sweep/an implausibly large drop drops the phase", st.rageOrigin, nil)
+	equal("sweep/and contributes no cadence sample", st.rageSamples, 0)
+
+	-- A gain does not reschedule the server's decay timer, so it leaves the phase
+	-- of the last observed decay alone.
+	BarSweep:Reset()
+	BarSweep:NotePlayerPower(Compat.RAGE, 60, 24000)
+	BarSweep:NotePlayerPower(Compat.RAGE, 58, 24002.5)
+	local phaseHeld = st.rageOrigin
+	BarSweep:NotePlayerPower(Compat.RAGE, 74, 24003.2)
+	equal("sweep/a rage gain does not move the decay phase", st.rageOrigin, phaseHeld)
+
+	----------------------------------------------------------------------------
+	-- Rage decay: the delay nobody documents
+	--
+	-- Measured from the combat drop to the first decay after it, and only the
+	-- first -- later ticks in the same stretch say nothing about it.
+	----------------------------------------------------------------------------
+
+	BarSweep:Reset()
+	stub.time = 25000
+	stub.fire("PLAYER_REGEN_ENABLED")
+	BarSweep:NotePlayerPower(Compat.RAGE, 60, 25001)
+	BarSweep:NotePlayerPower(Compat.RAGE, 57, 25003.1)
+	near("sweep/the pre-decay delay is measured from the combat drop",
+		BarSweep:RageFirstDecayDelay(), 3.1)
+
+	local measured = BarSweep:RageFirstDecayDelay()
+	BarSweep:NotePlayerPower(Compat.RAGE, 55, 25005.6)
+	equal("sweep/a later decay tick does not re-measure it",
+		BarSweep:RageFirstDecayDelay(), measured)
+
+	-- Entering combat drops the phase: rage does not decay in combat, so by the
+	-- time the fight ends the origin from before it means nothing.
+	stub.time = 25010
+	stub.fire("PLAYER_REGEN_DISABLED")
+	equal("sweep/entering combat drops the decay phase", st.rageOrigin, nil)
+
+	----------------------------------------------------------------------------
+	-- Rage decay: when the line draws
+	----------------------------------------------------------------------------
+
+	BarSweep:Reset()
+	local rageRecord = { powerType = Compat.RAGE, atMax = false }
+	local energyRecord = { powerType = Compat.ENERGY, atMax = false }
+	local manaRecord = { powerType = Compat.MANA, atMax = false }
+
+	-- Before rage has been seen falling, nothing is drawn. This is the answer to
+	-- "how long does rage take to start decaying": rather than sweep a line for a
+	-- duration no source substantiates, the line appears when the draining does.
+	BarSweep:NotePlayerPower(Compat.RAGE, 60, 26000)
+	check("sweep/no decay line before rage is seen falling",
+		not decay.IsActive(st, 26000, {}, rageRecord))
+
+	BarSweep:NotePlayerPower(Compat.RAGE, 58, 26002.5)
+	check("sweep/the decay line appears once rage starts falling",
+		decay.IsActive(st, 26002.5, {}, rageRecord))
+
+	check("sweep/the decay line is only ever on a rage bar",
+		not decay.IsActive(st, 26002.5, {}, energyRecord)
+		and not decay.IsActive(st, 26002.5, {}, manaRecord))
+
+	stub.inCombat = true
+	check("sweep/no decay line in combat",
+		not decay.IsActive(st, 26003, {}, rageRecord))
+	stub.inCombat = false
+
+	-- Decay stops at zero, so there is nothing left to count down to.
+	local heldPower = st.lastPower
+	st.lastPower = 0
+	check("sweep/no decay line at zero rage",
+		not decay.IsActive(st, 26003, {}, rageRecord))
+
+	-- What /duf profile reports has to agree with what the line does. The first
+	-- in-game run caught this disagreeing: at the end of a drain the report said
+	-- "decaying now" on the same line as "bar sweep ticker: stopped", because the
+	-- reporter checked the phase and the combat flag by hand and missed this gate.
+	check("sweep/the report does not claim decay at zero rage",
+		not BarSweep:IsRageDecaying(26003))
+	st.lastPower = heldPower
+	check("sweep/the report agrees with the line when rage is falling",
+		BarSweep:IsRageDecaying(26003))
+
+	stub.inCombat = true
+	check("sweep/the report does not claim decay in combat",
+		not BarSweep:IsRageDecaying(26003))
+	stub.inCombat = false
+
+	----------------------------------------------------------------------------
+	-- Rage decay: the sweep maths
+	----------------------------------------------------------------------------
+
+	BarSweep:Reset()
+	st.rageInterval = 2.5
+	BarSweep:NoteRageDecay(27000)
+	near("sweep/decay fraction is 0 at the tick", decay.Fraction(st, 27000), 0)
+	near("sweep/decay fraction is 0.5 at half an interval",
+		decay.Fraction(st, 27001.25), 0.5)
+	near("sweep/decay fraction restarts at a whole interval",
+		decay.Fraction(st, 27002.5), 0)
+	-- Same reason the tick line wraps: a missed observation should not park the
+	-- line against the far edge.
+	near("sweep/decay phase survives a stretch with no observed tick",
+		decay.Fraction(st, 27000 + 6.25), 0.5)
+	local decayStrayed = nil
+	for i = 0, 60 do
+		local f = decay.Fraction(st, 27000 + i * 0.41)
+		if f < 0 or f > 1 then decayStrayed = f end
+	end
+	check("sweep/decay fraction never leaves 0..1",
+		decayStrayed == nil, tostring(decayStrayed))
+	near("sweep/the decay line is fully opaque", decay.Alpha(st, 27000, {}), 1)
+
+	-- Reset has to clear every one of the new fields, since the rest of the suite
+	-- leans on it for isolation.
+	BarSweep:NoteRageDecay(27010)
+	st.rageCombatEnd = 27010
+	BarSweep:Reset()
+	check("sweep/reset clears every rage field",
+		BarSweep:RageInterval() == 2.0
+		and st.rageOrigin == nil
+		and st.rageObserved == false
+		and st.rageSamples == 0
+		and st.rageCombatEnd == nil
+		and st.rageFirstDecay == nil)
+
+	----------------------------------------------------------------------------
 	-- The sweep maths
 	----------------------------------------------------------------------------
 
@@ -3858,6 +4135,22 @@ local function testBarSweep()
 		tick.IsActive(st, 0, { atMax = "nonsense" }, fullMana))
 	check("sweep/a missing at-max mode shows it rather than erroring",
 		tick.IsActive(st, 0, {}, fullMana))
+
+	-- Plan 17. On a rage bar the tick line points at an event that never happens,
+	-- and no at-max mode makes it meaningful -- so it is suppressed outright,
+	-- ahead of the setting rather than through it.
+	local rageBar = { atMax = false, powerType = Compat.RAGE }
+	local fullRage = { atMax = true, powerType = Compat.RAGE }
+	check("sweep/the tick line is suppressed on a rage bar",
+		not tick.IsActive(st, 0, { atMax = "always" }, rageBar))
+	check("sweep/no at-max mode brings it back on a rage bar",
+		not tick.IsActive(st, 0, { atMax = "always" }, fullRage)
+		and not tick.IsActive(st, 0, { atMax = "mana" }, fullRage)
+		and not tick.IsActive(st, 0, { atMax = "energy" }, fullRage)
+		and not tick.IsActive(st, 0, { atMax = "never" }, fullRage))
+	check("sweep/suppressing rage does not disturb energy or mana",
+		tick.IsActive(st, 0, { atMax = "always" }, notFull)
+		and tick.IsActive(st, 0, { atMax = "always" }, fullMana))
 
 	----------------------------------------------------------------------------
 	-- Attachment: "only applies to mana bars"
@@ -4062,8 +4355,108 @@ local function testBarSweep()
 	check("sweep/the mana bar's own tick is suppressed",
 		not BarSweep:Line(manaBar, "tick"):IsShown())
 
+	----------------------------------------------------------------------------
+	-- Rage decay, end to end (Plan 17)
+	--
+	-- Bear form is the shape worth testing, and the stub player is already a druid
+	-- with a mana pool: rage on the power bar, mana on the shapeshift mana bar. The
+	-- two lines are mutually exclusive on any ONE bar -- the tick needs a resource
+	-- that regenerates and decay needs one that does not -- but both are up here,
+	-- on the bar each belongs on.
+	----------------------------------------------------------------------------
+
+	powerOpts.tick.args.enabled.set(nil, true)
+	powerOpts.decay.args.enabled.set(nil, true)
+	powerOpts.fsr.args.enabled.set(nil, false)
+	units.player.args.mana.args.tick.args.enabled.set(nil, true)
+	units.player.args.mana.args.fsr.args.enabled.set(nil, false)
+
+	BarSweep:Reset()
+	stub.inCombat = false
+	stub.units.player.powerType = 1
+	stub.units.player.powerToken = "RAGE"
+	stub.units.player.power = 60
+	player:FullUpdate()
+
+	check("sweep/the decay line attaches to a rage power bar",
+		BarSweep:IsAttached(powerBar, "decay"))
+	check("sweep/the tick line does not attach to a rage bar",
+		not BarSweep:IsAttached(powerBar, "tick"))
+	check("sweep/the mana bar keeps its tick line in bear form",
+		BarSweep:IsAttached(manaBar, "tick"))
+	check("sweep/no decay line on the shapeshift mana bar",
+		not BarSweep:IsAttached(manaBar, "decay"))
+
+	-- Attached but idle: rage has not been seen falling, so there is nothing to
+	-- sweep towards yet. This is the decay line's half of the claim that pays for
+	-- the fourth ticker -- except the mana bar's tick line is also up here and
+	-- holds the driver open, so the line itself is what has to be checked.
+	local decayLine = BarSweep:Line(powerBar, "decay")
+	check("sweep/a decay line texture exists", decayLine ~= nil)
+	powerBar:SetSize(200, 10)
+	manaBar:SetSize(200, 8)
+	BarSweep:Render(30000)
+	check("sweep/the decay line does not draw before rage is seen falling",
+		not decayLine:IsShown())
+
+	-- Rage starts falling. LEFT by default, so the line starts at the right edge
+	-- and reaches the left as the next decay lands.
+	st.rageInterval = 2.5
+	BarSweep:NoteRageDecay(30001)
+	powerBar:SetSize(200, 10)
+	BarSweep:Render(30001)
+	check("sweep/the decay line draws once rage is falling", decayLine:IsShown())
+	equal("sweep/the decay line starts at the right edge",
+		lineX(decayLine), 200 - 2)
+	powerBar:SetSize(200, 10)
+	BarSweep:Render(30002.25)
+	near("sweep/the decay line is halfway across at half an interval",
+		lineX(decayLine), (200 - 2) / 2)
+	-- Just short of the next tick, not at it: on a whole interval the phase wraps
+	-- and the line is back at the origin edge, exactly as the tick line does.
+	powerBar:SetSize(200, 10)
+	BarSweep:Render(30003.4)
+	check("sweep/the decay line reaches the far edge as the next tick lands",
+		lineX(decayLine) < 10, tostring(lineX(decayLine)))
+	powerBar:SetSize(200, 10)
+	BarSweep:Render(30003.5)
+	equal("sweep/and wraps back to the origin edge on the tick itself",
+		lineX(decayLine), 200 - 2)
+
+	-- Combat stops it where the game stops it, with no event needed: IsActive
+	-- reads the combat state live and the driver re-evaluates every frame.
+	stub.inCombat = true
+	powerBar:SetSize(200, 10)
+	BarSweep:Render(30004)
+	check("sweep/the decay line stops drawing in combat", not decayLine:IsShown())
+	stub.inCombat = false
+
+	-- Shift to cat: energy displayed, so the tick line comes back to the power bar
+	-- and the decay line leaves it.
+	stub.units.player.powerType = 3
+	stub.units.player.powerToken = "ENERGY"
+	stub.fire("UNIT_DISPLAYPOWER", "player")
+	check("sweep/shifting to energy detaches the decay line",
+		not BarSweep:IsAttached(powerBar, "decay"))
+	check("sweep/shifting to energy brings the tick line back",
+		BarSweep:IsAttached(powerBar, "tick"))
+
+	-- And turning the option off detaches rather than merely hiding.
+	stub.units.player.powerType = 1
+	stub.units.player.powerToken = "RAGE"
+	stub.fire("UNIT_DISPLAYPOWER", "player")
+	check("sweep/the decay line is back on the rage bar",
+		BarSweep:IsAttached(powerBar, "decay"))
+	powerOpts.decay.args.enabled.set(nil, false)
+	check("sweep/disabling the option detaches the decay line",
+		not BarSweep:IsAttached(powerBar, "decay"))
+
 	-- Back to caster shape for the section below, which needs the rule attached
 	-- to the power bar.
+	powerOpts.tick.args.enabled.set(nil, true)
+	powerOpts.fsr.args.enabled.set(nil, true)
+	units.player.args.mana.args.tick.args.enabled.set(nil, true)
+	units.player.args.mana.args.fsr.args.enabled.set(nil, true)
 	stub.units.player.powerType = 0
 	stub.units.player.powerToken = "MANA"
 	player:FullUpdate()
