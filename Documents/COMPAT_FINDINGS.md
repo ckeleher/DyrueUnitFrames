@@ -291,7 +291,7 @@ that and nothing else was contested. Beyond it:
 | Rage lost per tick | 2–3 | **Alternating 3 and 2**, mean 2.50 |
 | Delay from combat drop to first decay | Unknown, not modeled | **None.** 0.41 s and 1.16 s on two drops, both *under* one interval |
 | Anything decaying *during* combat | No | **No.** Seven in-combat decreases, all 10–15 rage, all ability spends (Maul, Demoralizing Roar) |
-| Interval with vanilla Anger Management talented | ~2.6 s at the observed base, or an amount change instead | _(still unmeasured — needs a Classic Era warrior)_ |
+| Interval with vanilla Anger Management talented | ~2.6 s at the observed base, or an amount change instead | **UNEXPLORED** — no Classic Era warrior with the talent was available. See below |
 
 Three of those change what the code should say.
 
@@ -312,15 +312,43 @@ combat drop simply lands somewhere inside it. Nothing documents a delay because
 there is nothing to document. `rageFirstDecay` is a phase offset, not a duration —
 `/duf profile` still reports it, as evidence of exactly this.
 
-The band stays at 1.5–4.0 s. It is now wider than anything measured, deliberately:
-the Anger Management case is still unmeasured, and it is the one client difference
-this feature is known to have.
-
 **Also observed in the same session, and it answers 0.2 above:** the shapeshift mana
 ticker reported 735 ticks and **0 corrections** — every mana value while shifted had
 already been delivered by an event. One session is not the "few sessions" §FR-2.5
 asks for before turning the fallback off, but it is the first real data point and it
 points at the events being reliable on this client.
+
+### UNEXPLORED — Anger Management on Classic Era
+
+The one row above that is still open, and the only place this feature is known to
+differ between the two supported clients. Recorded rather than left as a blank,
+because otherwise the next person has to re-derive it from the wiki.
+
+Vanilla Anger Management (Protection tier 1, 1.15.x) reads *"Increases the time
+required for your rage to decay while out of combat by 30%."* Patch 2.0.1 replaced
+it with in-combat generation, so **Anniversary is unaffected** and the 2.0 s measured
+above is the whole story there.
+
+The tooltip covers two different mechanisms, and they are not distinguishable
+without measuring:
+
+| Reading | Effect | What the code sees |
+|---|---|---|
+| The **interval** stretches | ~2.6 s between ticks, same 2–3 rage each | A new cadence, learned within a few ticks |
+| The **amount** shrinks | Still 2.0 s, less rage per tick | Nothing. The interval never moves |
+
+**Neither can break the line, which is why this shipped without the answer.** The
+band stays at **1.5–4.0 s** — wider than anything measured, deliberately — so 2.6 s
+is learned rather than rejected, and so is the 3.25 s a pre-measurement reading of
+the docs would have predicted. The amount feeds nothing but the
+`RAGE_MAX_DECAY_STEP` guard, and a *smaller* amount moves away from that guard, not
+towards it. Nothing is hardcoded to 2.0 except the seed, which governs only the
+first sweep of a session.
+
+**To close it:** `/dufprobe rage` on a Classic Era warrior with the talent learned,
+then unlearned, comparing the reported mean interval and mean step. If the interval
+stretches past 4.0 s — which no reading of the tooltip predicts — `RAGE_MAX_INTERVAL`
+in `Systems/BarSweep.lua` is the one constant to change.
 
 ---
 
