@@ -902,21 +902,42 @@ end
 -- character roster as container #1. LibStub is reached through its silent form
 -- and every step is optional, so an Ace3 broken by a patch downgrades this to
 -- "unknown" rather than erroring, which is the promise at the top of the file.
-local function ourDialogFrame()
-	if type(_G.LibStub) ~= "function" then return nil end
+-- Two registration paths, and the first version of this only knew one. A
+-- standalone `/duf` window lands in AceConfigDialog.OpenFrames, but
+-- Core/Core.lua:316 also calls AddToBlizOptions, and those live in
+-- AceConfigDialog.BlizOptions[appName] keyed by path. Checking only OpenFrames
+-- reported "not ours" for a panel that was plainly ours, so both are collected.
+local function ourDialogFrames()
+	if type(_G.LibStub) ~= "function" then return {} end
 	local ok, dialog = pcall(_G.LibStub, "AceConfigDialog-3.0", true)
-	if not ok or type(dialog) ~= "table" or type(dialog.OpenFrames) ~= "table" then
-		return nil
+	if not ok or type(dialog) ~= "table" then return {} end
+
+	local frames = {}
+	local widget = type(dialog.OpenFrames) == "table"
+		and dialog.OpenFrames["DyrueUnitFrames"] or nil
+	if widget and widget.frame then
+		frames[#frames + 1] = { source = "OpenFrames", frame = widget.frame }
 	end
-	local widget = dialog.OpenFrames["DyrueUnitFrames"]
-	return widget and widget.frame or nil
+
+	local bliz = type(dialog.BlizOptions) == "table"
+		and dialog.BlizOptions["DyrueUnitFrames"] or nil
+	if type(bliz) == "table" then
+		for _, group in pairs(bliz) do
+			if group and group.frame then
+				frames[#frames + 1] = { source = "BlizOptions", frame = group.frame }
+			end
+		end
+	end
+	return frames
 end
 
-local function isDescendantOf(frame, ancestor)
-	if not (frame and ancestor) then return nil end
+local function isDescendantOf(frame, owners)
+	if not frame or not owners or #owners == 0 then return nil end
 	local current, hops = frame, 0
 	while current and hops < 30 do
-		if current == ancestor then return true end
+		for index = 1, #owners do
+			if current == owners[index].frame then return owners[index].source end
+		end
 		current = current.GetParent and current:GetParent() or nil
 		hops = hops + 1
 	end
@@ -945,8 +966,22 @@ local function describeDialogWindow(record)
 	end
 	table.sort(openNames)
 	record.openFrameNames = openNames
-	out("AceConfigDialog open frames:",
-		#openNames > 0 and table.concat(openNames, ", ") or "|cffff5555none - no options window is open|r")
+
+	local blizNames = {}
+	if type(dialog.BlizOptions) == "table" then
+		for appName in pairs(dialog.BlizOptions) do
+			blizNames[#blizNames + 1] = tostring(appName)
+		end
+	end
+	table.sort(blizNames)
+	record.blizOptionNames = blizNames
+
+	out("OpenFrames:", #openNames > 0 and table.concat(openNames, ", ") or "none",
+		"| BlizOptions:", #blizNames > 0 and table.concat(blizNames, ", ") or "none")
+	if #openNames == 0 and #blizNames > 0 then
+		out("|cffffcc00No standalone window. What is on screen is the Settings-panel copy,|r")
+		out("|cffffcc00whose height comes from the Blizzard canvas, not from AceGUI.|r")
+	end
 
 	local widget = type(dialog.OpenFrames) == "table"
 		and dialog.OpenFrames["DyrueUnitFrames"] or nil
@@ -1084,7 +1119,7 @@ local function scrollContainer(number, bar, hasGetter, record, ours)
 	end
 
 	header(string.format("Scroll container #%d%s", number,
-		mine and " (ours)" or " (owner unknown)"))
+		mine and (" (ours, via " .. mine .. ")") or " (owner unknown)"))
 
 	local entry = { number = number, ownedByUs = mine }
 	-- Not `hasGetter and ... or nil`: a legitimate false would collapse to nil
@@ -1220,10 +1255,16 @@ local function scrollProbe(label)
 		treeBars = {},
 	}
 
-	local ours = ourDialogFrame()
-	record.identifiedOurDialog = ours ~= nil
-	out("our open options frame identified", yn(ours ~= nil),
-		ours == nil and "- containers cannot be attributed, so none are skipped" or "")
+	local ours = ourDialogFrames()
+	record.identifiedOurDialog = #ours > 0
+	record.ourDialogSources = {}
+	for index = 1, #ours do
+		record.ourDialogSources[index] = ours[index].source
+		record.ourDialogSources["rect" .. index] = rectOf(ours[index].frame)
+	end
+	out("our options frames found:", #ours > 0
+		and table.concat(record.ourDialogSources, ", ")
+		or "|cffff5555none - containers cannot be attributed, so none are skipped|r")
 
 	describeDialogWindow(record)
 
