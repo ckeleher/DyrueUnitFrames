@@ -1,15 +1,19 @@
 # Plan 3 — Options Panel Clipping
 
-**Status:** In progress — cause narrowed to a zero-height viewport, not clipping
+**Status:** Implemented and merged in
+[#17](https://github.com/ckeleher/DyrueUnitFrames/pull/17) (`8654680`). **None of
+the four fix options below was the answer**, and both of the plan's hypotheses
+were wrong. See *Outcome* at the foot of this document, which is the
+authoritative record where it and the body disagree.
 **Created:** 2 August 2026
-**Updated:** 8 August 2026
+**Updated:** 9 August 2026
 **Branch:** `Plan-3-options-panel-clipping`
 
-> **Read this first.** Neither of the two hypotheses below is the cause. The
-> first live probe run found the scroll frame has **no height at all**, which
-> makes the overflow a symptom rather than the bug. The sections below are kept
-> because the reasoning is still what rules them out, but the live finding is the
-> section titled *What the first probe run found*.
+> **Read this first.** Neither of the two hypotheses below is the cause, and
+> neither is the zero-height viewport that the first probe run found — that was
+> itself a symptom. The real cause was a tall inline group evicting a nested tree
+> widget from its parent. The body is kept because its reasoning is what ruled
+> the alternatives out, but jump to *Outcome* for what actually happened.
 
 ---
 
@@ -392,3 +396,95 @@ and a genuine client-behavior change in how these frames resolve their height
 could be considerably more. Not worth a tighter number until the ancestry is in —
 the two previous estimates were both made against causes that turned out to be
 wrong.
+
+**Actual:** roughly a day, essentially all of it diagnosis. The fix is one line.
+
+---
+
+## Outcome
+
+**Merged 9 August 2026 in [#17](https://github.com/ckeleher/DyrueUnitFrames/pull/17),
+squashed as `8654680`.** Authoritative where it disagrees with anything above.
+
+### The cause
+
+The ancestry read, on Classic Era 1.15.9, heights from the window inward:
+
+```
+AceGUI:Frame        h=433
+ TreeGroup          h=420
+  Frame             h=420
+   TreeGroup        h=400
+    TabGroup        h=373
+     Frame          h=320
+      TabGroup      h=306    <- last healthy frame
+       TreeGroup    h=0      TOPLEFT (0, -324.9)   <- collapses here
+        Frame       h=0
+         TreeGroup  h=0
+          ScrollFrame h=0
+           content     h=797
+```
+
+A group carrying `childGroups` renders its child groups as a nested tree or tab
+widget, and AceGUI places that widget **below** whatever loose args the same
+group has. The tag reference was an `inline = true` group at `order = 0`, and
+`Tags:AllHelp()` is 22 lines — about 325px. The unit's tab content is ~306px, so
+the nested tree was anchored 324.9px down inside 306px: its top landed 18.9px
+below its own bottom and the height clamped to zero. Every descendant inherited
+it, including the scroll frame, whose 797px of content then drew unclipped.
+
+The scrollbar is anchored `-16` / `+16` against the viewport's own edges, so it
+collapsed too and left its up and down buttons either side of a single point —
+the floating arrows in the request. The second pair was the TreeGroup's own
+scrollbar, which uses the same template.
+
+### The fix
+
+`Config/Options_Text.lua`: the tag reference became its own tree node instead of
+an inline group, so it renders inside the scroll frame and costs the parent
+container nothing. Ordered last, so opening Text still lands on a text element.
+
+### Every option in this plan was wrong
+
+Worth recording plainly, because the plan was rewritten twice and was still
+wrong the third time:
+
+| Option | Verdict |
+|---|---|
+| 1. Update vendored AceGUI | Dead. Byte-identical to upstream `master`, both v26, neither sets `SetClipsChildren`. Nothing to update to |
+| 2. `SetClipsChildren` from our side | Would have done nothing — there was no region to clip to — and would have clipped the scrollbar away, since the bar is a child of the scroll frame anchored outside its right edge |
+| 3. Restructure the dynamic description | Right file, wrong reason. The description was never mis-measured; `content.height` was correct at 796.8. It was simply tall enough to evict its sibling |
+| 4. Fork AceGUI | Never needed. `Libs/` was untouched |
+| 0. Give the viewport a height | The closest, but still aimed at a symptom. The viewport's height was inherited |
+
+The one structural lesson: **the plan's diagnosis section was the part that
+worked.** Every hypothesis in it was wrong, and it still converged, because it
+insisted on measurement before a fix and the measurements kept overturning the
+reasoning.
+
+### What else came out of it
+
+- `Tests/tests.lua` gained a tripwire for the *shape*: for any group with
+  `childGroups`, estimate the lines of loose text above its nested widget and
+  fail past a budget. Verified by reintroducing `inline = true`, which trips it
+  on all fourteen units.
+- `/dufprobe scroll [label]` is now a permanent sub-probe: geometry, ancestry
+  walk, overflow census, scrollbar parentage, window status table. Chat gets a
+  summary; the detail goes to SavedVariables, because a ~90-line report is
+  silently truncated by the chat frame — and the truncated part was the ancestry.
+- Container attribution has to check **both** `AceConfigDialog.OpenFrames` and
+  `AceConfigDialog.BlizOptions`; `Core/Core.lua:316` registers through the
+  latter. Checking one reported another addon's panel as ours, and ours as
+  nobody's.
+- `Documents/COMPAT_FINDINGS.md` gained the Classic Era build identity and the
+  finding that **`GetClipsChildren` does not exist there while
+  `SetClipsChildren` does** — clipping can be applied but never read back.
+- `Libs/LICENSE.md` now records that AceGUI's widgets version independently of
+  the core, which is the trap that made option 1 look plausible.
+
+### Left undone
+
+Every measurement is Classic Era. **The Anniversary client was never measured**,
+and its `GetClipsChildren` absence in particular should not be assumed to match.
+The fix is structural and does not depend on the client, but the compat table's
+Anniversary column is still `_(fill in)_`.
