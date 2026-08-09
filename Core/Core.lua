@@ -65,7 +65,7 @@ end
 --
 -- Hence one scheme, in one place, expressed as offsets from frame.content:
 --
---   PORTRAIT  behind the bars, so an inside-placed portrait reads as a backdrop
+--   PORTRAIT  behind the bars, so an overlay-placed portrait reads as a backdrop
 --   BARS      health, power, shapeshift mana
 --   AURAS     icon groups
 --   OVERLAY   text, highlight outlines, border edges -- above all of it

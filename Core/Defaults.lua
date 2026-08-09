@@ -27,8 +27,9 @@ local type, pairs, ipairs, next = type, pairs, ipairs, next
 -- 12 was the first version after that collapse; 13 raises the target's buff row
 -- off the combo bar added in Plan 9; 14 quiets the aura overlays (Plan 13);
 -- 15 gives every text element a width mode and puts the names on "fit"
--- (Plan 6).
-Defaults.SCHEMA_VERSION = 15
+-- (Plan 6); 16 renames the portrait placements and moves the default to the
+-- new "column" (Plan 7).
+Defaults.SCHEMA_VERSION = 16
 
 --------------------------------------------------------------------------------
 -- Table helpers
@@ -407,25 +408,41 @@ local function unit(overrides)
 		-- SPEC §4.7
 		portrait = {
 			mode = "none",             -- none | 2d | 3d
-			-- Beside the frame rather than behind the bars. "inside" puts the
-			-- portrait under the health bar, where a flat opaque fill hides it
-			-- almost completely.
-			placement = "outside",     -- inside | outside
-			side = "LEFT",             -- outside placement side
+			-- Plan 7. A column of the frame rather than an ornament beside it:
+			-- inside the secure button, so clicks on it target the unit, and
+			-- flush against the bars, which are inset to make room.
+			--   overlay  -- behind the bars, where a flat opaque fill hides it
+			--   detached -- outside the frame's own bounds entirely
+			placement = "column",      -- column | overlay | detached
+			side = "LEFT",             -- which side, for column and detached
 			-- 2D only. The game's portrait art has a circular alpha, so "square"
 			-- crops to the inscribed square -- the largest fully opaque region --
 			-- rather than trying to un-round the texture, which is not possible.
 			shape = "square",          -- square | native
-			width = 40,
-			height = 40,
+			-- Height tracks the health + power stack rather than a number typed
+			-- into a slider, so the portrait stays exactly as tall as the bars
+			-- it sits beside. `square` then carries that across to the width.
+			matchBarHeight = true,
+			square = true,
+			width = 40,                -- used when square is off
+			height = 40,               -- used when matchBarHeight is off
 			alpha = 1,
-			point = "LEFT",
+			point = "LEFT",            -- overlay placement only
 			relativePoint = "LEFT",
-			x = 2,
+			x = 0,                     -- gap between the portrait and the bars
 			y = 0,
 			camera = 0,
 			cameraY = 0,
 			desaturate = false,
+			-- Plan 18. A model renders transparent wherever there is no
+			-- geometry, so a 3D portrait shows the world through the space
+			-- around it -- a floating head rather than a portrait. 3D only, by
+			-- request: the 2D art's round corners have the same problem in
+			-- "native" shape, but that was not what was asked for.
+			background = {
+				enabled = true,
+				color = color(0, 0, 0, 1),
+			},
 		},
 
 		-- Plan 1. Only *active* states take a slot, so combat on its own sits

@@ -1,8 +1,11 @@
 # Plan 7 — Portrait Sizing and Clicks
 
-**Status:** Not started
+**Status:** Implemented on `Plan-7-portrait-column`. Four decisions were taken
+at the start of implementation and three of them changed what the plan below
+says; see *Implementation notes* at the foot of this document, which is the
+authoritative record where the two disagree.
 **Created:** 2 August 2026
-**Branch:** `first`
+**Branch written on:** `first` — implemented on `Plan-7-portrait-column`
 
 ---
 
@@ -220,3 +223,103 @@ no way to tell and said so.
 
 3–4 hours. The bar inset touches `LayoutBars`, which every layout test depends
 on, so most of the time is re-verification rather than new code.
+
+---
+
+## Implementation notes
+
+Written after the work. Where this section and the plan above disagree, this
+section is what was built.
+
+### The four decisions taken before starting
+
+| Question | Answer | Effect |
+|---|---|---|
+| Ship `column` as the default, and move existing profiles onto it? | **Both** | Schema 16 |
+| Should `reserve`-mode mana count towards the portrait height? | **No** — health + power, always | Contradicts the plan; see below |
+| Build the hit-rect trick for `detached`? | **Yes** | `Factory:ApplyHitRect` |
+| Add a `square` toggle (width follows height)? | **Yes, and default it on** | The plan proposed offering it; it ships enabled |
+
+### The mana bar is excluded in *both* modes
+
+The plan proposed excluding `append`-mode mana but *including* the `reserve`
+slot, on the grounds that reserve mode is the one where the stack has a fixed
+height. That was overruled: the portrait tracks health + power and nothing else,
+in every mode.
+
+The consequence is worth stating plainly, because it is visible: in `reserve`
+mode the mana slot is permanently allocated inside the frame, so the portrait
+now ends where the power bar ends and is **shorter than the frame** by the mana
+slot. Nothing jumps — the slot is reserved whether or not a druid is shifted —
+but the portrait is deliberately not flush with the frame's bottom edge there.
+
+One rule, stated once, is easier to reason about than a rule with a mode
+exception, and it is the literal reading of "the combined heights of the health
+bar and power bar".
+
+### `matchBarHeight` and `square` apply in every placement
+
+The plan framed the height rule as a property of `column`. It is not: a
+`detached` portrait that matches the bar stack is just as reasonable, and the
+request ("its height should **always** be equal…") does not carve out a
+placement. `Resolve` therefore computes size before it looks at placement, and
+only the *slot* — the width the bars give up — is column-specific.
+
+### Migration: the signal is `mode`, not the arriving schema version
+
+The plan's rule was "a profile at schema ≤ 7 predates any chance to deliberately
+choose". That signal no longer exists. The plan was written when the schema was
+at 7; it is now at 16, schemas 1–11 have since been collapsed into one
+declarative step (Plan 8), and every profile has had six versions in which
+`outside` could have been a real choice.
+
+What *is* still recoverable is whether the placement was ever seen. The portrait
+has shipped `mode = "none"` since 1.0, so a profile that still has it off has
+never rendered a portrait at all — there was nothing to judge, and the placement
+it carries can only be inherited. Where the portrait is on, "untouched" falls
+back to the whole shipped geometry tuple (`width = 40, height = 40, x = 2`),
+which is the rule steps 12–14 already used.
+
+So:
+
+- `inside` → `overlay` and `outside` → `detached`: **unconditional**, as planned.
+- `detached` → `column`: only where the placement is demonstrably inherited.
+- `x = 2` → `0`: only where the placement moved with it. A profile staying on
+  `detached` or `overlay` keeps the offset it has.
+
+The collapsed step's `inside` → `outside` rule was deliberately left alone rather
+than re-pointed at `column`. It is a truthful record of the schema-≤11 era
+default, and step 15 carries every profile the rest of the way under one rule,
+from any starting version.
+
+### The narrow-frame clamp does not log
+
+The plan's risk table said "clamp the inset **and log once** if clamped". The
+clamp is in `Portrait.Resolve` (`MIN_BAR_WIDTH = 20`) and the portrait shrinks
+*with* the slot, so the two never overlap. The log was dropped: the clamp is now
+self-evident in the rendered frame — the portrait visibly stops growing — and a
+chat line fired from a function that runs on every `LayoutBars` would need
+per-frame state to stay quiet, which is a worse trade than the thing it warns
+about.
+
+### Spec
+
+`SPEC.md` §FR-7.2 named the two old placements outright, so it was amended in
+place (§FR-7.2, plus new §FR-7.2a on the sizing rule and §FR-7.2b on
+click-targeting) rather than left standing against the code. Recorded in
+`Documents/COMPAT_FINDINGS.md` under *Deviations from SPEC.md*, with the
+`PlayerModel` mouse question added to the §0.8 table as the one thing here that
+only a client can answer.
+
+### Also changed
+
+- `Elements/ShapeshiftMana`'s bar is inset with the rest of the stack, even
+  though the portrait does not reach down to it. A bar lining up with the frame
+  edge instead of with the two bars directly above it reads as a mistake.
+- The width and height sliders are `disabled` rather than hidden when `square`
+  and `matchBarHeight` are driving them, so it is visible *why* they do nothing.
+- `x` is relabelled in the tooltip as the gap between the portrait and the bars
+  when the placement is `column`.
+
+**Test suite:** 928 → 1004 assertions, all green across all four passes, plus
+`luacheck` and `refcheck` clean.
