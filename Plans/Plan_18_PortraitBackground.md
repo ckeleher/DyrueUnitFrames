@@ -1,8 +1,11 @@
 # Plan 18 — Portrait Background
 
-**Status:** Not started
+**Status:** Implemented, on `Plan-7-portrait-column` alongside Plan 7 rather than
+on a branch of its own. Two of this plan's recommendations were overruled before
+work started — see *Implementation notes* at the foot of this document, which is
+the authoritative record where the two disagree.
 **Created:** 8 August 2026
-**Branch:** *(not yet created)*
+**Branch:** `Plan-7-portrait-column` (shared with Plan 7, by decision)
 **Builds on:** [Plan 7](Plan_7_PortraitSizingAndClicks.md) — its `place()` and
 `Portrait.Resolve` own the portrait's geometry, and this background has to share
 them exactly. Plan 7 is implemented but **not yet merged to `main`**; branch this
@@ -196,3 +199,63 @@ someone turns one on deliberately.
 1–1.5 hours. The mechanism is one texture on a frame that already exists, and
 Plan 7's `place()` means there is no new geometry to write. Most of the time is
 the tests and the sublevel renumber.
+
+---
+
+## Implementation notes
+
+Written after the work. Where this section and the plan above disagree, this
+section is what was built.
+
+### The three decisions taken before starting
+
+| Question | Answer | Effect |
+|---|---|---|
+| 2D `native` shape as well, or 3D only? | **3D only** — plan's recommendation overruled | A mode gate on the whole feature |
+| Own branch, or on top of Plan 7? | **On the Plan 7 branch** — plan's recommendation overruled | One PR carries both plans |
+| Start now, or test Plan 7 in game first? | **Start now** | Neither the R11 model-background question nor the Plan 7 in-game checks are answered yet |
+
+### 3D only, gated on the *mode*
+
+The gate is `cfg.mode == "3d"`, not "the model is what is currently rendering".
+Those are not the same thing, and the difference is visible: a model that is
+briefly unavailable — out of range, not yet seen — falls back to the 2D texture
+per §FR-7.4, and a background keyed on the rendering widget would strobe off and
+on with it. The user configured a 3D portrait; a transient failure does not make
+it a 2D portrait.
+
+There is a test for exactly this (`portraitbg/survives the 2D fallback`), and it
+was verified to fail under the other reading.
+
+The consequence the plan warned about still stands and was accepted: a 2D
+portrait in `native` shape keeps its transparent corners with no way to fill
+them. `square`, the shipped shape, crops them off, so this is invisible unless
+someone has deliberately chosen `native`.
+
+### Draw order is explicit now
+
+The sublevel renumber went in as planned — frame backdrop 0, portrait background
+1, portrait art 2 — and `Tests/wowstub.lua` grew `GetDrawLayer`/`SetDrawLayer`
+so the ordering is asserted rather than assumed. It was previously a no-op in
+the stub, which is why nothing had ever checked it.
+
+### What the plan got right
+
+`place()` took the background as a third caller with no changes at all, so the
+background inherits the placement, the bar-stack height and the `square` toggle
+for free. That was the main bet of building this on top of Plan 7 rather than on
+`main`, and it paid.
+
+### Still unverified
+
+The premise: that a `PlayerModel` renders transparent rather than drawing its own
+opaque backdrop. If it does not, none of this shows and the fallback is
+`SetFogColor` — with the cost the risk table describes. Nothing in the headless
+suite can answer it. Recorded in `Documents/COMPAT_FINDINGS.md` §0.8 with the
+other R11 rows.
+
+`SPEC.md` gained **§FR-7.7** for the feature, including the mode-gate reasoning.
+
+**Test suite:** 1004 → 1031 assertions, all four passes green, plus `luacheck`
+and `refcheck` clean. The sublevel ordering, the shared geometry and the
+fallback behavior were each verified to fail with their fix reverted.
