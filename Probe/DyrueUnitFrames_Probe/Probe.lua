@@ -918,6 +918,41 @@ local function isDescendantOf(frame, ancestor)
 	return false
 end
 
+-- The outer window's own size, and the status table AceConfigDialog sizes it
+-- from. The first run showed a 234-wide viewport, which is nothing like the
+-- content column of the 700x500 the library falls back to when the status table
+-- is empty (AceConfigDialog-3.0.lua:1900-1905). So the window was small rather
+-- than merely short, and these are the numbers that say which.
+local function describeDialogWindow(record)
+	if type(_G.LibStub) ~= "function" then return end
+	local ok, dialog = pcall(_G.LibStub, "AceConfigDialog-3.0", true)
+	if not ok or type(dialog) ~= "table" then return end
+
+	header("Options window")
+
+	local widget = type(dialog.OpenFrames) == "table"
+		and dialog.OpenFrames["DyrueUnitFrames"] or nil
+	out("open frame widget present", yn(widget ~= nil))
+	if widget and widget.frame then
+		out("window frame", rectOf(widget.frame))
+		record.windowWidth = widget.frame:GetWidth()
+		record.windowHeight = widget.frame:GetHeight()
+	end
+
+	if type(dialog.GetStatusTable) ~= "function" then return end
+	local okStatus, status = pcall(dialog.GetStatusTable, dialog, "DyrueUnitFrames")
+	if not okStatus or type(status) ~= "table" then return end
+
+	record.statusWidth, record.statusHeight = status.width, status.height
+	out("status table width", px(status.width), "height", px(status.height),
+		"(the library defaults these to 700 x 500 when unset)")
+	if type(status.height) == "number" and status.height < 100 then
+		out("|cffff5555The stored height is tiny.|r Either the window has been dragged")
+		out("|cffff5555down to nothing, or something wrote a bad height into the status|r")
+		out("|cffff5555table. Either way the fix is upstream of the scroll frame.|r")
+	end
+end
+
 -- The question the first report left open: the viewport had zero height, so
 -- everything overflowed trivially. This walks up the parent chain printing each
 -- ancestor's size and anchors, to find the frame where the height dies.
@@ -1158,6 +1193,8 @@ local function scrollProbe()
 	record.identifiedOurDialog = ours ~= nil
 	out("our open options frame identified", yn(ours ~= nil),
 		ours == nil and "- containers cannot be attributed, so none are skipped" or "")
+
+	describeDialogWindow(record)
 
 	local seen = 0
 	for number = 1, 40 do
