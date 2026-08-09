@@ -514,11 +514,57 @@ The same session reported the shapeshift mana ticker at **735 ticks, 0 correctio
 not the "few sessions" that doc asks for before turning the fallback off, but it is
 the first real data point and it is recorded in 0.2.
 
-### Still outstanding
+### UNEXPLORED EDGE CASE — Anger Management on Classic Era
 
-- `/dufprobe rage` on a **Classic Era warrior with Anger Management talented** —
-  the last unmeasured row, and the only one that could move a constant.
-- The bear-form mana tick gap described above. It wants its own plan.
+**Not tested, and not testable at the time this shipped:** no Classic Era warrior
+with the talent was available. Recorded here rather than left implicit, because it
+is the one place this feature is known to behave differently between the two
+supported clients and nobody should have to re-derive that from the wiki.
+
+**What is known.** Vanilla Anger Management (Protection tier 1, on 1.15.x) reads
+*"Increases the time required for your rage to decay while out of combat by 30%."*
+Patch 2.0.1 replaced it with in-combat generation, so **TBC / Anniversary is
+unaffected** — the 2.0 s measured above is the whole story there. Classic Era with
+the talent is the gap.
+
+**What is unknown**, and it is genuinely two different mechanisms wearing one
+tooltip:
+
+| Reading | Effect | What the code sees |
+|---|---|---|
+| The **interval** stretches | ~2.6 s between ticks, same 2–3 rage each | A new cadence. Derivation learns it within a few ticks |
+| The **amount** shrinks | Still 2.0 s, less rage per tick | Nothing at all. The interval never moves |
+
+**Why shipping without the answer is safe.** Both readings are already handled, and
+neither can break the line:
+
+- The accepted band is **1.5–4.0 s**, deliberately wider than anything measured.
+  2.6 s sits comfortably inside it, and so does the 3.25 s the pre-measurement
+  reading of the docs would have predicted. A stretched interval is learned, not
+  rejected.
+- The amount is not used for anything except the `RAGE_MAX_DECAY_STEP` plausibility
+  guard, and that guard is at 5 with observed decay steps of 1–3 and observed
+  in-combat spends of 10–15. A *smaller* amount moves away from the guard, not
+  towards it.
+- Nothing is hardcoded to 2.0 except the seed, which only governs the first sweep
+  of a session before any tick has been observed.
+
+So the failure mode if this is wrong is bounded: at worst the first sweep after
+login is paced for 2.0 s on a client where the truth is 2.6 s, and it self-corrects
+on the second decay tick.
+
+**How to close it.** `/dufprobe rage` on a Classic Era warrior with the talent
+learned, then unlearned, comparing the reported mean interval and mean step. Fill in
+the last row of the Plan 17 table in `Documents/COMPAT_FINDINGS.md`. If the interval
+turns out to stretch past 4.0 s — which no reading of the tooltip predicts —
+`RAGE_MAX_INTERVAL` is the one constant to change.
+
+### Also still outstanding
+
+The bear-form mana tick gap described above: nothing observes mana ticks while
+shapeshifted, so that line runs on the cadence last learned in caster form. A
+separate finding about Plan 2's coverage rather than part of this work. It wants its
+own plan.
 
 **Test suite:** 886 → 950 assertions, all green, plus `luacheck` and `refcheck`
 clean. Every regression assertion in parts 1 and 3 was verified to fail with its
