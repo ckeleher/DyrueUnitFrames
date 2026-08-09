@@ -1,6 +1,6 @@
 # Dyrue Unit Frames
 
-Unit frames for **WoW Classic Era / Hardcore (1.15.9)** and **TBC Anniversary
+Vibe-coded unit frames for **WoW Classic Era / Hardcore (1.15.9)** and **TBC Anniversary
 (2.5.6)**. One codebase, both clients.
 
 Built from primitives — `CreateFrame`, `StatusBar`, `FontString`, `Texture` —
