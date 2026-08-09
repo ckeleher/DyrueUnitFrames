@@ -17,6 +17,7 @@ on each client, and run:
 /dufprobe derived
 /dufprobe health
 /dufprobe portrait
+/dufprobe scroll
 ```
 
 Then replace the "Assumed" column with what you actually saw, and note the date
@@ -30,9 +31,10 @@ Phase 0 is for.
 | | Classic Era / Hardcore | TBC Anniversary |
 |---|---|---|
 | Expected TOC | `11509` | `20506` |
-| Observed TOC | _(fill in)_ | _(fill in)_ |
-| Observed build | _(fill in)_ | _(fill in)_ |
-| Date tested | _(fill in)_ | _(fill in)_ |
+| Observed TOC | `11509` — as expected | _(fill in)_ |
+| Observed build | `1.15.9` / `69109`, dated `Aug 3 2026` | _(fill in)_ |
+| Observed `WOW_PROJECT_ID` | `2` | _(fill in)_ |
+| Date tested | 8 August 2026 | _(fill in)_ |
 
 ---
 
@@ -356,6 +358,64 @@ first sweep of a session.
 then unlearned, comparing the reported mean interval and mean step. If the interval
 stretches past 4.0 s — which no reading of the tooltip predicts — `RAGE_MAX_INTERVAL`
 in `Systems/BarSweep.lua` is the one constant to change.
+
+---
+
+## Plan 3 — Options panel clipping
+
+### VERIFIED — `GetClipsChildren` does not exist on Classic Era, but the setter does
+
+**Observed 8 August 2026, Classic Era 1.15.9 / 69109, via `/dufprobe scroll`.**
+
+```
+Frame:GetClipsChildren exists   no
+Frame:SetClipsChildren exists   yes
+```
+
+An asymmetric pair, which is the useful part. The clipping state **cannot be
+read back** on this build, so any probe or assertion that tries to confirm
+clipping by reading the property will report `nil` no matter what was set. The
+setter is present, so clipping can still be *applied* — it just cannot be
+verified from Lua. Verify by eye, or by measuring whether children still draw.
+
+Not yet checked on TBC Anniversary. Do not assume it matches: the whole reason
+this file exists is that the two clients differ.
+
+### VERIFIED — the AceConfigDialog scroll viewport can have zero height
+
+**Same run.** On Player → Text with the options window open:
+
+```
+viewport  w=234 h=0   top=322 bottom=322
+content   w=234 h=797 top=322 bottom=-475
+scrollbar w=16  h=0   top=338 bottom=338
+```
+
+The scroll frame had **no height at all**, and the zero propagated up the whole
+ancestry — the tree frame beside it was zero too. Consequences worth recording,
+because they misdirected the original diagnosis:
+
+- Every one of the 215 laid-out objects was "outside the viewport", trivially.
+  The overflow in the bug report is a *symptom* of the zero height, not evidence
+  that clipping is misconfigured.
+- Nothing was mis-measured. `content.height` and `content:GetHeight()` agreed at
+  797, which rules out the dynamic-`name` description theory as the cause.
+- The scrollbar is anchored `-16` / `+16` against the viewport's own top and
+  bottom, so a zero-height viewport collapses it to `h=0` and leaves its
+  `ScrollUpButton` and `ScrollDownButton` 16px either side of a single point,
+  both visible, with no container around them. **That is what the "floating
+  arrow pairs" in the report are** — and the second pair is the TreeGroup's own
+  scrollbar, which has the same template.
+
+Still open: *why* the height is zero. The candidates are a layout that never
+sized the window and a stale layout after a tab switch, and they need different
+fixes. `/dufprobe scroll` prints the ancestry with each frame's height and
+anchors to separate them.
+
+**A note on the fix.** The scrollbar is a child of the scroll frame anchored
+outside its right edge (`AceGUIContainer-ScrollFrame.lua:177`), so
+`SetClipsChildren(true)` on the scroll frame would clip the scrollbar away.
+Whatever the eventual fix, it is not that call on that frame.
 
 ---
 

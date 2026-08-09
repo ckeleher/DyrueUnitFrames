@@ -891,7 +891,104 @@ local function walkOverflow(frame, depth, maxDepth, viewTop, viewBottom, results
 	end
 end
 
-local function scrollContainer(number, bar, hasGetter, record)
+-- Which of these containers is ours? The widget numbering and the scrollbar
+-- names are global across every addon sharing this AceGUI instance, so the scan
+-- picks up other addons' panels too - the first report came back with somebody's
+-- character roster as container #1. LibStub is reached through its silent form
+-- and every step is optional, so an Ace3 broken by a patch downgrades this to
+-- "unknown" rather than erroring, which is the promise at the top of the file.
+local function ourDialogFrame()
+	if type(_G.LibStub) ~= "function" then return nil end
+	local ok, dialog = pcall(_G.LibStub, "AceConfigDialog-3.0", true)
+	if not ok or type(dialog) ~= "table" or type(dialog.OpenFrames) ~= "table" then
+		return nil
+	end
+	local widget = dialog.OpenFrames["DyrueUnitFrames"]
+	return widget and widget.frame or nil
+end
+
+local function isDescendantOf(frame, ancestor)
+	if not (frame and ancestor) then return nil end
+	local current, hops = frame, 0
+	while current and hops < 30 do
+		if current == ancestor then return true end
+		current = current.GetParent and current:GetParent() or nil
+		hops = hops + 1
+	end
+	return false
+end
+
+-- The question the first report left open: the viewport had zero height, so
+-- everything overflowed trivially. This walks up the parent chain printing each
+-- ancestor's size and anchors, to find the frame where the height dies.
+local function describeAncestry(frame)
+	out("|cffffcc00-- ancestry: follow the height up until it stops being zero --|r")
+	local current, hops = frame, 0
+	while current and hops < 12 do
+		local points = (current.GetNumPoints and current:GetNumPoints()) or 0
+		local height = current:GetHeight()
+		out(string.format("  %s%s h=%s w=%s shown=%s points=%d%s",
+			string.rep("  ", hops), labelOf(current),
+			px(height), px(current:GetWidth()),
+			(current.IsShown and current:IsShown()) and "y" or "n",
+			points,
+			(type(height) == "number" and height < 1) and " |cffff5555<- zero|r" or ""))
+		for index = 1, math.min(points, 4) do
+			local ok, point, relativeTo, relativePoint, xOffset, yOffset =
+				pcall(current.GetPoint, current, index)
+			if ok and point then
+				local relName = "nil"
+				if relativeTo then
+					relName = (relativeTo.GetName and relativeTo:GetName()) or "unnamed"
+				end
+				out(string.format("  %s    %s -> %s.%s (%s, %s)",
+					string.rep("  ", hops), tostring(point), relName,
+					tostring(relativePoint), px(xOffset), px(yOffset)))
+			end
+		end
+		if current == _G.UIParent then break end
+		current = current.GetParent and current:GetParent() or nil
+		hops = hops + 1
+	end
+end
+
+-- TreeGroup keeps its own UIPanelScrollBarTemplate slider (TreeGroup.lua:670),
+-- so it contributes a second up/down pair - the likely other half of the "two
+-- pairs of arrows" in the original report.
+local function treeContainer(number, bar, record)
+	local treeframe = bar:GetParent()
+	if not (treeframe and treeframe:IsVisible()) then
+		out(string.format(" tree #%d exists but is not visible (pooled)", number))
+		return
+	end
+
+	header(string.format("Tree scrollbar #%d", number))
+	out("treeframe", rectOf(treeframe))
+	out("scrollbar", rectOf(bar), "visible", yn(bar:IsVisible()))
+
+	local treeHeight = treeframe:GetHeight()
+	if type(treeHeight) == "number" and treeHeight < 1 then
+		out("|cffff5555Zero-height treeframe too - so this is not specific to the|r")
+		out("|cffff5555content scroll frame, and the cause is above both of them.|r")
+	end
+
+	local barName = bar:GetName()
+	local arrows = { "ScrollUpButton", "ScrollDownButton" }
+	for index = 1, #arrows do
+		local button = barName and _G[barName .. arrows[index]]
+		if button then
+			out("  ", arrows[index], "visible", yn(button:IsVisible()), rectOf(button))
+		end
+	end
+
+	record.treeBars[#record.treeBars + 1] = {
+		number = number,
+		barVisible = bar:IsVisible(),
+		treeHeight = treeHeight,
+	}
+end
+
+local function scrollContainer(number, bar, hasGetter, record, ours)
 	local scrollframe = bar:GetParent()
 	local widget = scrollframe and scrollframe.obj
 	local content = widget and widget.content
@@ -901,7 +998,15 @@ local function scrollContainer(number, bar, hasGetter, record)
 		return
 	end
 
-	header(string.format("Scroll container #%d", number))
+	local mine = isDescendantOf(scrollframe, ours)
+	if mine == false then
+		out(string.format(" #%d belongs to another addon - skipped. %s",
+			number, rectOf(scrollframe)))
+		return
+	end
+
+	header(string.format("Scroll container #%d%s", number,
+		mine and " (ours)" or " (owner unknown)"))
 
 	local entry = { number = number }
 	-- Not `hasGetter and ... or nil`: a legitimate false would collapse to nil
@@ -923,6 +1028,17 @@ local function scrollContainer(number, bar, hasGetter, record)
 		(contentHeight and viewHeight and contentHeight > viewHeight + 2)
 			and "taller, so it should scroll" or "fits, so it should not scroll"))
 
+	-- The 8 August report came back with viewport h=0 and content h=797, which
+	-- makes every child trivially outside the viewport. Clipping is then beside
+	-- the point: there is nothing to clip to. Called out loudly because it
+	-- redirects the whole investigation.
+	entry.zeroHeightViewport = type(viewHeight) == "number" and viewHeight < 1
+	if entry.zeroHeightViewport then
+		out("|cffff5555ZERO-HEIGHT VIEWPORT.|r The scroll frame has no height at all, so")
+		out("|cffff5555every child is outside it by definition and no clipping property|r")
+		out("|cffff5555can help. Fix the height, not the clipping. See the ancestry below.|r")
+	end
+
 	-- LayoutFinished does `self.content:SetHeight(height or 0 + 20)`, which Lua
 	-- parses as `height or 20` - the 20px pad is never added when height is
 	-- non-nil, though the code reads as if (height or 0) + 20 was meant. Noted
@@ -938,6 +1054,14 @@ local function scrollContainer(number, bar, hasGetter, record)
 	if contentHeight and viewHeight and contentHeight <= viewHeight + 2 and bar:IsVisible() then
 		out("|cffffcc00Mismatch: content says it fits but the scrollbar is up.|r")
 		out("That points at the measurement theory, not at clipping.")
+	end
+	-- The first report had scrollBarShown true against a hidden bar, which the
+	-- check above cannot see because it only tests the other direction.
+	if entry.scrollBarShown ~= entry.scrollBarVisible then
+		out(string.format(
+			"|cffffcc00Stale state: widget.scrollBarShown is %s but the bar's visibility is %s.|r",
+			tostring(entry.scrollBarShown), tostring(entry.scrollBarVisible)))
+		out("FixScroll and the bar have gone out of sync.")
 	end
 
 	local status = widget and (widget.status or widget.localstatus)
@@ -969,21 +1093,26 @@ local function scrollContainer(number, bar, hasGetter, record)
 		end
 	end
 
+	describeAncestry(scrollframe)
+
 	if content then
 		local results = {}
 		walkOverflow(content, 1, 4, scrollframe:GetTop(), scrollframe:GetBottom(), results)
 		entry.overflowCount = #results
+		-- Capped at 8 lines now. The first run returned 215, and the ancestry
+		-- above is the useful part - the census only has to confirm that things
+		-- overflow and roughly by how much.
 		out(string.format("|cffffcc00-- overflow census: %d object(s) drawn outside the viewport --|r",
 			#results))
-		for index = 1, math.min(#results, 25) do
+		for index = 1, math.min(#results, 8) do
 			local item = results[index]
 			out(string.format("  %s%s h=%s %s%s",
 				string.rep("  ", item.depth - 1), item.label, px(item.height),
 				item.pastBottom and ("|cffff5555" .. px(item.pastBottom) .. "px below the fold|r") or "",
 				item.pastTop and ("|cffff5555" .. px(item.pastTop) .. "px above the top|r") or ""))
 		end
-		if #results > 25 then
-			out(string.format("  ... and %d more", #results - 25))
+		if #results > 8 then
+			out(string.format("  ... and %d more", #results - 8))
 		elseif #results == 0 then
 			out("  |cff40ff40Nothing overflows right now.|r Drag the window shorter until")
 			out("  the scrollbar appears, or scroll down, then re-run.")
@@ -1010,6 +1139,11 @@ local function scrollProbe()
 		out("the cause has to be something else. This line is the important one.")
 	end
 
+	if hasSetter and not hasGetter then
+		out("|cffffcc00Setter without a getter on this build.|r The clipping state cannot be")
+		out("read back, so GetClipsChildren() below will say nil whatever it is set to.")
+	end
+
 	local record = {
 		timestamp = date("%Y-%m-%d %H:%M:%S"),
 		version = version, build = build, buildDate = buildDate, tocVersion = tocVersion,
@@ -1017,19 +1151,35 @@ local function scrollProbe()
 		hasGetClipsChildren = hasGetter,
 		hasSetClipsChildren = hasSetter,
 		containers = {},
+		treeBars = {},
 	}
+
+	local ours = ourDialogFrame()
+	record.identifiedOurDialog = ours ~= nil
+	out("our open options frame identified", yn(ours ~= nil),
+		ours == nil and "- containers cannot be attributed, so none are skipped" or "")
 
 	local seen = 0
 	for number = 1, 40 do
 		local bar = _G[string.format("AceConfigDialogScrollFrame%dScrollBar", number)]
 		if bar then
 			seen = seen + 1
-			scrollContainer(number, bar, hasGetter, record)
+			scrollContainer(number, bar, hasGetter, record, ours)
 		end
 	end
 	record.scrollFramesFound = seen
 
-	if seen == 0 then
+	local trees = 0
+	for number = 1, 40 do
+		local bar = _G[string.format("AceConfigDialogTreeGroup%dScrollBar", number)]
+		if bar then
+			trees = trees + 1
+			treeContainer(number, bar, record)
+		end
+	end
+	record.treeBarsFound = trees
+
+	if seen == 0 and trees == 0 then
 		out("|cffff5555No AceConfigDialog scroll frames exist yet.|r")
 		out("Open the options with |cffffcc00/duf|r, click Player -> Text, then re-run.")
 		return
@@ -1037,13 +1187,14 @@ local function scrollProbe()
 
 	DyrueUnitFramesProbeDB.scrollProbe = record
 	out("Saved to DyrueUnitFramesProbeDB.scrollProbe")
-	out("|cffffcc00Repeat on each of these and keep every output:|r")
-	out(" 1. Player -> Text, the tab from the original report")
-	out(" 2. Player -> Auras -> Buffs, with nothing errored and nothing queued")
-	out("    behind combat - that is the control for the measurement theory")
-	out(" 3. either tab with the window dragged short enough to force scrolling")
-	out(" 4. straight after switching tabs, when a stale height would show")
-	out("Run it on both flavors. The build line above records which one this was.")
+	out("|cffffcc00The question now is why the viewport has no height.|r Run this again on:")
+	out(" 1. Player -> Text with the window freshly opened, untouched")
+	out(" 2. the same tab after dragging the window bigger by a few pixels")
+	out(" 3. straight after switching to another tab and back")
+	out("If the ancestry shows a height on a fresh open and zero after a tab")
+	out("switch, it is a stale layout. If it is zero from the start, the window")
+	out("is never sized. Those need different fixes.")
+	out("Also run it once on the other flavor - the build line records which.")
 end
 
 --------------------------------------------------------------------------------
