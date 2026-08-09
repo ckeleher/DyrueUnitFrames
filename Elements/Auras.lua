@@ -473,10 +473,27 @@ local function layoutGroup(frame, el, group, cfg, name)
 	local size = cfg.size or 20
 	local perRow = math.max(1, cfg.perRow or 8)
 	local rows = math.max(1, cfg.rows or 2)
+	local spacingX, spacingY = cfg.spacingX or 0, cfg.spacingY or 0
+
+	-- Own auras are scaled up and overflow their cell centered (FR-5.3), so an
+	-- icon in an outer cell reaches half the excess past the grid -- and the
+	-- group frame is anchored flush to the unit frame, so that half hung outside
+	-- it. Four pixels at the shipped 20px / 1.4x, on all four sides: the player's
+	-- buffs dipped into the combo bar and the target's debuffs into the frame.
+	--
+	-- Pad the box by that much and start the cells one pad in. The box then
+	-- bounds every icon it can draw, so x = 0 means the same thing at every icon
+	-- size, multiplier and anchor point -- which nudging the default offset by
+	-- four would not (Plan 20).
+	--
+	-- math.max is not decoration: the options slider stops at 1, but an imported
+	-- or hand-edited profile can carry less, and a negative pad would pull the
+	-- grid inward and reintroduce the bug mirrored.
+	local pad = size * (math.max(cfg.ownSizeMultiplier or 1, 1) - 1) / 2
 
 	group.frame:SetSize(
-		perRow * size + (perRow - 1) * (cfg.spacingX or 0),
-		rows * size + (rows - 1) * (cfg.spacingY or 0))
+		2 * pad + perRow * size + (perRow - 1) * spacingX,
+		2 * pad + rows * size + (rows - 1) * spacingY)
 
 	group.frame:SetFrameLevel(ns:Level(frame, "AURAS"))
 	group.frame:ClearAllPoints()
@@ -488,7 +505,8 @@ local function layoutGroup(frame, el, group, cfg, name)
 
 	-- Cells are laid out on the BASE size so rows stay aligned even when own
 	-- auras are scaled up; the larger button simply overflows its cell,
-	-- centered (FR-5.3).
+	-- centered (FR-5.3). It overflows into its neighbours as well as outward --
+	-- that is the price of aligned rows, and it is not what `pad` is about.
 	group.cells = group.cells or {}
 	local cells = group.cells
 	for i = #cells, 1, -1 do cells[i] = nil end
@@ -498,8 +516,8 @@ local function layoutGroup(frame, el, group, cfg, name)
 			local c = (cfg.growthX == "LEFT") and (perRow + 1 - col) or col
 			local r = (cfg.growthY == "UP") and (rows + 1 - row) or row
 			cells[#cells + 1] = {
-				x = (c - 0.5) * size + (c - 1) * (cfg.spacingX or 0),
-				y = -((r - 0.5) * size + (r - 1) * (cfg.spacingY or 0)),
+				x = pad + (c - 0.5) * size + (c - 1) * spacingX,
+				y = -(pad + (r - 0.5) * size + (r - 1) * spacingY),
 			}
 		end
 	end
