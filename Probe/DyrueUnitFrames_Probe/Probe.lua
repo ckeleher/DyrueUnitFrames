@@ -15,6 +15,12 @@
 --   /dufprobe portrait   2D and 3D portrait feasibility (task 0.8)
 --   /dufprobe auraorder  60-second aura index stability trace (Plan 14)
 --   /dufprobe rage       90-second rage decay trace (Plan 17)
+--   /dufprobe heals [label]
+--                        90-second group heal sourcing trace (Plan 19). Answers
+--                        whether other players' casts and HoTs are knowable at
+--                        all. Run it in a party or raid, mid-fight; runs
+--                        accumulate in DyrueUnitFramesProbeDB.healsRuns, so
+--                        label them and /reload once at the end.
 --   /dufprobe scroll [label]
 --                        options panel geometry (Plan 3). Chat gets a summary;
 --                        the full ancestry, anchors and overflow list go to
@@ -1316,6 +1322,489 @@ local function scrollProbe(label)
 end
 
 --------------------------------------------------------------------------------
+-- Plan 19 - group heal prediction
+--
+-- Plan 11 predicts only the player's own heals. Plan 19 widens that to the
+-- group, and it splits into a half that is certain and a half that hangs on one
+-- unanswered question. This probe answers the question.
+--
+-- The HoT half needs no probe: Compat.GetAura already returns the caster, so
+-- another player's HoT is detectable by deleting a filter. What it DOES need is
+-- confidence that the caster still resolves at raid distances (Q4) and that
+-- their heals reach the combat log at all (Q5) -- if either fails, group HoTs
+-- go quiet in exactly the raid where they matter, and the plan's value changes
+-- before a line of it is written.
+--
+-- The direct-cast half needs two things and only one is likely to exist:
+--
+--   * a cast-start signal for a unit that is not the player (Q1, Q2). Classic
+--     Era 1.15 restored native enemy cast bars, so this is expected to work --
+--     but "expected" is what this file exists to stop the addon relying on, and
+--     an enemy cast bar is not evidence about a FRIENDLY unit token.
+--   * the cast's TARGET (Q3), and there is no API for it. UNIT_SPELLCAST_SENT
+--     carries a target only for your own casts. The one remaining candidate is
+--     the combat log's SPELL_CAST_START, and whether it populates the dest
+--     fields could not be settled from documentation either way.
+--
+-- Q3 is the decisive line in this run. If SPELL_CAST_START carries a target,
+-- other players' direct heals become an ordinary plan -- the learning path is
+-- already keyed by caster. If it does not, the only honest routes left are
+-- LibHealComm's addon-to-addon comms or guessing at the caster's own target,
+-- and both are decisions rather than implementations.
+--
+-- SPELL_CAST_SUCCESS is counted alongside it as a CONTROL. It is expected to
+-- carry a target, so a run where neither has one means the trace saw nothing
+-- worth measuring, not that the answer is no.
+--
+-- Run it in a party or raid with at least one other healer, in a real fight.
+-- A solo run still reports the static half (CVars, event validity, the aura
+-- census) and says plainly that the rest is inconclusive.
+--------------------------------------------------------------------------------
+
+local healsTracer = CreateFrame("Frame")
+local healsRunning = false
+
+--- The combat log's "no destination" GUID. Some builds send nil instead, so
+-- both are treated as absent and the raw value is recorded either way.
+local NULL_GUID = "0000000000000000"
+
+--- How far away another unit's combat-log lines still reach you. This bounds
+-- LEARNING rather than display: a healer beyond it produces nothing to learn
+-- from, so their spells stay unlearned until they are nearby once.
+local COMBAT_LOG_RANGE_CVARS = {
+	"CombatLogRangeParty",
+	"CombatLogRangePartyPet",
+	"CombatLogRangeFriendlyPlayers",
+	"CombatLogRangeFriendlyPlayersPets",
+	"CombatLogRangeHostilePlayers",
+	"CombatLogRangeHostilePlayersPets",
+	"CombatLogRangeCreature",
+}
+
+local SPELLCAST_EVENTS = {
+	"UNIT_SPELLCAST_START",
+	"UNIT_SPELLCAST_CHANNEL_START",
+	"UNIT_SPELLCAST_SENT",
+}
+
+local function getCVar(name)
+	local fn = _G.GetCVar or (_G.C_CVar and _G.C_CVar.GetCVar)
+	if not fn then return nil end
+	local ok, value = pcall(fn, name)
+	if not ok then return nil end
+	return value
+end
+
+--- Every unit token in the current group, player included.
+local function groupUnits()
+	local units = { "player" }
+	local total = (GetNumGroupMembers and GetNumGroupMembers()) or 0
+	if IsInRaid and IsInRaid() then
+		for i = 1, total do units[#units + 1] = "raid" .. i end
+	else
+		-- GetNumGroupMembers counts the player in a party too, and party tokens
+		-- run 1..n-1.
+		for i = 1, math.max(total - 1, 0) do units[#units + 1] = "party" .. i end
+	end
+	return units
+end
+
+--- One helpful aura, through whichever accessor this client has. Deliberately
+-- a local copy rather than a call into Compat: this addon must still load on a
+-- patch that breaks the main one.
+local function readHelpfulAura(unit, index)
+	if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+		local data = C_UnitAuras.GetAuraDataByIndex(unit, index, "HELPFUL")
+		if not data or not data.name then return nil end
+		return data.name, data.spellId, data.sourceUnit, data.duration, data.expirationTime
+	end
+	if not UnitAura then return nil end
+	local name, _, _, _, duration, expirationTime, source, _, _, spellId =
+		UnitAura(unit, index, "HELPFUL")
+	if not name then return nil end
+	return name, spellId, source, duration, expirationTime
+end
+
+--- Q4. For every helpful aura on every group member, does the CASTER resolve to
+-- a unit token, and does that survive the caster being out of range?
+--
+-- The count that matters is `sourceOutOfRange`: an aura whose source resolved
+-- while that source was too far away to interact with is direct evidence that
+-- token resolution does not depend on distance. A run with zero of those has
+-- not answered the question -- it has just been run at close quarters.
+local function auraCensus()
+	local census = { units = {}, helpful = 0, withSource = 0, noSource = 0,
+		durational = 0, durationalNoSource = 0, sourceOutOfRange = 0, orphans = {} }
+
+	for _, unit in ipairs(groupUnits()) do
+		if UnitExists(unit) then
+			local entry = {
+				name = UnitName(unit),
+				visible = UnitIsVisible(unit) and true or false,
+				helpful = 0, withSource = 0, noSource = 0,
+			}
+
+			if UnitInRange then
+				local ok, inRange, checked = pcall(UnitInRange, unit)
+				if ok then entry.inRange, entry.rangeChecked = inRange, checked end
+			end
+
+			for index = 1, 40 do
+				local name, spellID, source, duration, expiration = readHelpfulAura(unit, index)
+				if not name then break end
+
+				entry.helpful = entry.helpful + 1
+				census.helpful = census.helpful + 1
+
+				-- A HoT always has a duration. Permanent raid buffs are the bulk
+				-- of a helpful scan and are noise for this question.
+				local hotLike = (duration and duration > 0 and expiration and expiration > 0)
+				if hotLike then census.durational = census.durational + 1 end
+
+				if source then
+					entry.withSource = entry.withSource + 1
+					census.withSource = census.withSource + 1
+					if UnitInRange then
+						local ok, inRange, checked = pcall(UnitInRange, source)
+						if ok and checked and not inRange then
+							census.sourceOutOfRange = census.sourceOutOfRange + 1
+						end
+					end
+				else
+					entry.noSource = entry.noSource + 1
+					census.noSource = census.noSource + 1
+					if hotLike then
+						census.durationalNoSource = census.durationalNoSource + 1
+						if #census.orphans < 20 then
+							census.orphans[#census.orphans + 1] = {
+								on = unit, aura = name, spellID = spellID,
+								onVisible = entry.visible, onInRange = entry.inRange,
+							}
+						end
+					end
+				end
+			end
+
+			census.units[unit] = entry
+		end
+	end
+
+	return census
+end
+
+local function startHealTrace(seconds, label)
+	if healsRunning then
+		out("|cffffcc00A heal trace is already running.|r Wait for it to finish.")
+		return
+	end
+
+	seconds = seconds or 90
+	if label == "" then label = nil end
+
+	local started = GetTime()
+	local version, build, buildDate, tocVersion = GetBuildInfo()
+
+	local record = {
+		timestamp = date("%Y-%m-%d %H:%M:%S"),
+		label = label,
+		version = version, build = build, buildDate = buildDate, tocVersion = tocVersion,
+		projectId = WOW_PROJECT_ID,
+		seconds = seconds,
+		playerGUID = UnitGUID("player"),
+
+		combatLogRanges = {},
+		eventsValid = {},
+		roster = {},
+
+		-- Q1: which unit tokens the client actually delivers spellcast events for
+		spellcastUnits = {},
+		-- Q2: what UnitCastingInfo returns for a unit that is not the player
+		castingInfo = {},
+		-- Q3, and its control
+		castStart = { total = 0, withDest = 0, nullDest = 0, fromGroup = 0, samples = {} },
+		castSuccess = { total = 0, withDest = 0, nullDest = 0 },
+		-- Sizing the cost of widening the combat-log guard
+		lines = 0,
+		heals = { direct = 0, periodic = 0, fromGroup = 0, fromOutside = 0, bySource = {}, sources = 0 },
+	}
+
+	for _, name in ipairs(COMBAT_LOG_RANGE_CVARS) do
+		record.combatLogRanges[name] = getCVar(name)
+	end
+	for _, event in ipairs(SPELLCAST_EVENTS) do
+		record.eventsValid[event] = eventExists(event)
+	end
+
+	-- The roster is both the group census and the "is this line worth reading"
+	-- test that Plan 19's combat-log guard will use, so it is built the same way
+	-- here: a GUID set, rebuilt on roster change rather than walked per line.
+	local roster = {}
+	local function rebuildRoster()
+		roster = {}
+		local named = {}
+		for _, unit in ipairs(groupUnits()) do
+			local guid = UnitGUID(unit)
+			if guid then
+				roster[guid] = true
+				named[guid] = (UnitName(unit) or unit)
+			end
+		end
+		record.roster = named
+		record.rosterSize = 0
+		for _ in pairs(named) do record.rosterSize = record.rosterSize + 1 end
+	end
+	rebuildRoster()
+
+	record.censusBefore = auraCensus()
+
+	local function hasDestination(guid)
+		return guid ~= nil and guid ~= "" and guid ~= NULL_GUID
+	end
+
+	local function onCombatLog()
+		local info = CombatLogGetCurrentEventInfo
+		if not info then return end
+		local _, subevent, _, sourceGUID, sourceName, _, _, destGUID, destName, _, _,
+			spellID, spellName = info()
+
+		record.lines = record.lines + 1
+
+		if subevent == "SPELL_CAST_START" then
+			local c = record.castStart
+			c.total = c.total + 1
+			local dest = hasDestination(destGUID)
+			if dest then c.withDest = c.withDest + 1 else c.nullDest = c.nullDest + 1 end
+			if roster[sourceGUID] then c.fromGroup = c.fromGroup + 1 end
+			-- Samples are capped rather than complete: the counts answer the
+			-- question and forty lines are enough to see the SHAPE of a dest
+			-- field, which is what a nil-versus-zeroed-GUID distinction needs.
+			if #c.samples < 40 then
+				c.samples[#c.samples + 1] = {
+					t = GetTime() - started,
+					source = sourceName, sourceGUID = sourceGUID,
+					dest = destName, destGUID = destGUID,
+					destPresent = dest,
+					spellID = spellID, spell = spellName,
+					fromGroup = roster[sourceGUID] and true or false,
+				}
+			end
+			return
+		end
+
+		if subevent == "SPELL_CAST_SUCCESS" then
+			local c = record.castSuccess
+			c.total = c.total + 1
+			if hasDestination(destGUID) then
+				c.withDest = c.withDest + 1
+			else
+				c.nullDest = c.nullDest + 1
+			end
+			return
+		end
+
+		if subevent ~= "SPELL_HEAL" and subevent ~= "SPELL_PERIODIC_HEAL" then return end
+
+		local h = record.heals
+		if subevent == "SPELL_HEAL" then h.direct = h.direct + 1 else h.periodic = h.periodic + 1 end
+
+		if roster[sourceGUID] then h.fromGroup = h.fromGroup + 1 else h.fromOutside = h.fromOutside + 1 end
+
+		local key = sourceGUID or "unknown"
+		local entry = h.bySource[key]
+		if not entry then
+			-- Bounded so a battleground cannot turn SavedVariables into a
+			-- transcript. Counts above are unaffected.
+			if h.sources >= 80 then return end
+			h.sources = h.sources + 1
+			entry = { name = sourceName, inGroup = roster[key] and true or false,
+				direct = 0, periodic = 0, spells = {} }
+			h.bySource[key] = entry
+		end
+		if subevent == "SPELL_HEAL" then
+			entry.direct = entry.direct + 1
+		else
+			entry.periodic = entry.periodic + 1
+		end
+		local id = spellID or 0
+		entry.spells[id] = (entry.spells[id] or 0) + 1
+	end
+
+	--- Q1 and Q2 together. The event is registered UNFILTERED -- not through
+	-- RegisterUnitEvent -- precisely so the unit token the client chooses to
+	-- send is the measurement rather than an assumption baked into the filter.
+	local function noteSpellcast(event, unit)
+		if not unit then return end
+		local key = event .. " " .. unit
+		record.spellcastUnits[key] = (record.spellcastUnits[key] or 0) + 1
+		if unit == "player" or event == "UNIT_SPELLCAST_SENT" then return end
+		if #record.castingInfo >= 25 then return end
+
+		-- Recorded as raw returns rather than as named fields: the signature has
+		-- moved before (the `rank` return went), and a probe that unpacks into
+		-- names it assumed would hide exactly that.
+		local sample = { t = GetTime() - started, event = event, unit = unit,
+			name = UnitName(unit), returns = {} }
+		local fn = _G.UnitCastingInfo
+		if event == "UNIT_SPELLCAST_CHANNEL_START" then fn = _G.UnitChannelInfo or fn end
+		if fn then
+			local packed = { pcall(fn, unit) }
+			sample.ok = packed[1]
+			for i = 2, 10 do sample.returns[i - 1] = tostring(packed[i]) end
+			sample.readable = (packed[1] and packed[2] ~= nil) and true or false
+		else
+			sample.ok, sample.readable = false, false
+		end
+		record.castingInfo[#record.castingInfo + 1] = sample
+	end
+
+	pcall(healsTracer.RegisterEvent, healsTracer, "COMBAT_LOG_EVENT_UNFILTERED")
+	pcall(healsTracer.RegisterEvent, healsTracer, "GROUP_ROSTER_UPDATE")
+	for _, event in ipairs(SPELLCAST_EVENTS) do
+		pcall(healsTracer.RegisterEvent, healsTracer, event)
+	end
+
+	healsTracer:SetScript("OnEvent", function(_, event, unit)
+		if event == "COMBAT_LOG_EVENT_UNFILTERED" then
+			onCombatLog()
+		elseif event == "GROUP_ROSTER_UPDATE" then
+			rebuildRoster()
+		else
+			noteSpellcast(event, unit)
+		end
+	end)
+
+	healsRunning = true
+
+	header("Heal sourcing trace (Plan 19)")
+	out("Tracing for " .. seconds .. "s. Group size:", record.rosterSize or 0)
+	out("|cffffcc00Run this in a party or raid with another healer, mid-fight.|r")
+	out("Solo, only the CVars and the aura census below mean anything.")
+
+	header("Combat log range (Q5 - bounds LEARNING, not display)")
+	for _, name in ipairs(COMBAT_LOG_RANGE_CVARS) do
+		local value = record.combatLogRanges[name]
+		out(" ", name, value == nil and "|cff808080absent|r" or tostring(value))
+	end
+
+	header("Spellcast events valid")
+	for _, event in ipairs(SPELLCAST_EVENTS) do
+		out(" ", event, yn(record.eventsValid[event]))
+	end
+
+	local before = record.censusBefore
+	header("Aura census (Q4)")
+	out(before.helpful, "helpful aura(s) across the group;",
+		before.withSource, "resolved a caster,", before.noSource, "did not")
+	out("Durational (HoT-like):", before.durational,
+		" of those with no caster:", before.durationalNoSource)
+	out("Resolved while the caster was OUT OF RANGE:", before.sourceOutOfRange,
+		before.sourceOutOfRange > 0 and "|cff40ff40(distance does not break it)|r" or "")
+
+	C_Timer.After(seconds, function()
+		healsTracer:UnregisterAllEvents()
+		healsTracer:SetScript("OnEvent", nil)
+		healsRunning = false
+
+		record.censusAfter = auraCensus()
+
+		local runs = DyrueUnitFramesProbeDB.healsRuns or {}
+		runs[#runs + 1] = record
+		while #runs > 10 do table.remove(runs, 1) end
+		DyrueUnitFramesProbeDB.healsRuns = runs
+		DyrueUnitFramesProbeDB.healsTrace = record
+
+		header("Heal sourcing trace finished")
+		out(record.lines, "combat log line(s) in", seconds .. "s",
+			string.format("(%.1f/s)", record.lines / seconds))
+
+		---------------------------------------------------------------- Q1 / Q2
+		local tokens, nonPlayer = {}, 0
+		for key, count in pairs(record.spellcastUnits) do
+			tokens[#tokens + 1] = key .. "=" .. count
+			if not key:find(" player$") then nonPlayer = nonPlayer + 1 end
+		end
+		table.sort(tokens)
+		header("Q1 - which units send spellcast events")
+		if #tokens == 0 then
+			out("|cffffcc00Nothing fired.|r Inconclusive - nobody cast near you.")
+		else
+			for i = 1, #tokens do out(" ", tokens[i]) end
+			if nonPlayer > 0 then
+				out("|cff40ff40Spellcast events DO fire for units other than the player.|r")
+			else
+				out("|cffff5555Only 'player' ever appeared.|r Other units' casts are not")
+				out("evented on this client; the combat log is the only source.")
+			end
+		end
+
+		local readable = 0
+		for _, sample in ipairs(record.castingInfo) do
+			if sample.readable then readable = readable + 1 end
+		end
+		header("Q2 - UnitCastingInfo on a non-player unit")
+		out(#record.castingInfo, "sample(s),", readable, "returned a cast")
+		if #record.castingInfo > 0 and readable == 0 then
+			out("|cffff5555The event fires but the reader is empty|r - no end time, so no")
+			out("window to predict over. Full returns are in SavedVariables.")
+		end
+
+		------------------------------------------------------------------- Q3
+		local cs, cc = record.castStart, record.castSuccess
+		header("Q3 - does SPELL_CAST_START carry a target? (decisive)")
+		out("SPELL_CAST_START:", cs.total, "line(s),", cs.withDest, "with a destination,",
+			cs.nullDest, "without.", cs.fromGroup, "from group members")
+		out("SPELL_CAST_SUCCESS (control):", cc.total, "line(s),", cc.withDest, "with a destination")
+
+		if cs.total == 0 then
+			out("|cffffcc00No cast-start lines at all.|r Inconclusive; run it in a fight.")
+		elseif cs.withDest > 0 then
+			out("|cff40ff40SPELL_CAST_START CARRIES A TARGET.|r Other players' direct heals")
+			out("are buildable with no comms library. Plan 19's deferral is one plan long.")
+		elseif cc.withDest == 0 then
+			out("|cffffcc00Neither subevent carried a destination|r - including the control,")
+			out("so this run measured nothing. Re-run it on targeted casts.")
+		else
+			out("|cffff5555SPELL_CAST_START never carried a target|r across", cs.total, "line(s),")
+			out("while the control did. Others' direct heals need LibHealComm or a guess")
+			out("at the caster's own target. The HoT half is unaffected.")
+		end
+
+		------------------------------------------------------------------- Q4
+		local after = record.censusAfter
+		header("Q4 - does the aura caster resolve at distance?")
+		out("Durational auras with no caster - before:", before.durationalNoSource,
+			" after:", after.durationalNoSource)
+		out("Resolved with the caster out of range - before:", before.sourceOutOfRange,
+			" after:", after.sourceOutOfRange)
+		if after.sourceOutOfRange > 0 or before.sourceOutOfRange > 0 then
+			out("|cff40ff40Resolution survives distance.|r The HoT half is sound.")
+		elseif after.durationalNoSource > 0 then
+			out("|cffff5555Some HoTs have no resolvable caster.|r Named in SavedVariables")
+			out("under orphans - check whether those casters were in your group at all.")
+		else
+			out("|cffffcc00No out-of-range casters were sampled.|r Not answered; re-run")
+			out("with the raid spread out.")
+		end
+
+		------------------------------------------------------------------- Q5
+		local h = record.heals
+		header("Q5 - heals reaching the log, and what the guard would cost")
+		out("Heals:", h.direct, "direct,", h.periodic, "periodic, from", h.sources, "source(s)")
+		out("From group members:", h.fromGroup, " from outside the group:", h.fromOutside)
+		if record.lines > 0 then
+			out(string.format("Heals are %.1f%% of all lines; the group's share is %.1f%%",
+				100 * (h.direct + h.periodic) / record.lines,
+				100 * h.fromGroup / record.lines))
+		end
+
+		out(string.format("|cff40ff40Saved as run %d%s.|r Chat is the summary; the samples,",
+			#runs, label and (" labelled '" .. label .. "'") or ""))
+		out("the full UnitCastingInfo returns and the orphan list go to SavedVariables.")
+		out("|cffffcc00/reload once|r when you are done to flush it to disk.")
+	end)
+end
+
+--------------------------------------------------------------------------------
 -- Slash command
 --------------------------------------------------------------------------------
 
@@ -1335,6 +1824,8 @@ SlashCmdList.DUFPROBE = function(input)
 		startAuraOrderTrace(60)
 	elseif cmd == "rage" then
 		startRageTrace(90)
+	elseif cmd == "heals" then
+		startHealTrace(90, (input or ""):match("^%s*%S+%s+(.-)%s*$"))
 	elseif cmd == "scroll" then
 		scrollProbe((input or ""):match("^%s*%S+%s+(.-)%s*$"))
 	elseif cmd == "portraitoff" then
@@ -1346,7 +1837,7 @@ SlashCmdList.DUFPROBE = function(input)
 		out("Survey from", record.timestamp, "toc", record.tocVersion)
 	else
 		survey()
-		out("Also run: |cffffcc00/dufprobe mana|r, |cffffcc00derived|r, |cffffcc00health|r, |cffffcc00portrait|r, |cffffcc00auraorder|r, |cffffcc00rage|r, |cffffcc00scroll|r")
+		out("Also run: |cffffcc00/dufprobe mana|r, |cffffcc00derived|r, |cffffcc00health|r, |cffffcc00portrait|r, |cffffcc00auraorder|r, |cffffcc00rage|r, |cffffcc00heals|r, |cffffcc00scroll|r")
 	end
 end
 
