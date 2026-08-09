@@ -223,9 +223,16 @@ nothing rather than a fabricated number.
 | Model updates on target change without an explicit `SetUnit` | **No** — re-called always | _(fill in)_ |
 | Camera survives a loading screen | **No** — re-applied on `PLAYER_ENTERING_WORLD` | _(fill in)_ |
 | Out-of-range unit | Model will not load; falls back to 2D | _(fill in)_ |
+| A `PlayerModel` inside the secure button swallows the click | **No** — `EnableMouse(false)` is set on it anyway (Plan 7) | _(fill in)_ |
 
 Every one of these is handled defensively already, so a "yes" anywhere just
 means the handling was precautionary rather than necessary.
+
+**How to close the last row.** Set a unit's portrait to 3D with `column`
+placement, then click the portrait itself. It should target the unit. The
+headless suite can only assert that the model reports the mouse as disabled,
+which is the client's own default — whether a model frame honors it is not
+answerable without a client, and is the same R11 category as everything above.
 
 ---
 
@@ -367,6 +374,7 @@ Recorded as they are made, so the reasoning survives.
 | §5.7 three permitted tickers | A fourth was added: one `OnUpdate` driver in `Systems/BarSweep.lua`, shared by the power tick indicator (Plan 2), the five second rule indicator (Plan 10) and the rage decay indicator (Plan 17) | The sweep is a continuous animation *between* two regen ticks and nothing fires in between — `UNIT_POWER_UPDATE` fires AT the tick, which is the moment the sweep restarts. Same category as the derived-unit poller: the game does not push what we need. It obeys the same discipline as the other three, running only while a visible bar has an active sweep and stopping the instant that stops being true, and `/duf profile` reports it. Player only, on the §FR-8.5 boundary: another unit's tick cadence, mana expenditure and rage decay are not observable. All three plans share the one driver and one line-rendering path with a table of providers, so a third indicator added no ticker and there is still no fifth |
 | §FR-5.6 "a configurable corner" / §FR-5.5 optional duration text | Both numeric overlays take any of the nine points, plus `ABOVE` and `BELOW`, with x/y offsets — and both ship **off** (Plan 13) | Corners were not the constraint; size was. At the specified 20px icon size an outlined stack count is over half the height of the art, and a full 8x2 debuff grid came out unreadable. The capability §FR-5.6 asks for is intact and wider; what changed is the shipped default and the fact that placement is now a setting instead of a hardcoded inset. Schema 14 migrates only the exact untouched default, so anyone who had already chosen a corner or a size keeps it |
 | §2.2 "incoming-heal prediction — out of domain" | Built, as `Systems/HealPrediction.lua` plus `Elements/HealPrediction.lua` (Plan 11) | The exclusion grouped it with combat text and threat meters, i.e. another addon's problem domain. It belongs with the other group — the things Classic cannot support — because it is a property of a health bar rather than a separate display, and what made it look foreign was the absent API rather than the feature. §2.1's first goal is replacing SUF day to day, and SUF has it. It costs none of what §2.2's other exclusions were protecting: no secure header, no Blizzard frame contact, no new library, and no new ticker. Amounts are derived by learning from the player's own combat log rather than shipped as a rank database, so there is nothing to go stale. The absorb half is deliberately still excluded, pending Plan 12 |
+| §FR-7.2 placement is `inside` or `outside` | A third placement, `column`, is the new default, and the other two were renamed `overlay` and `detached` (Plan 7) | Neither original placement puts the portrait beside the bars, which is what was actually wanted: `inside` hides it behind an opaque fill, `outside` puts it beyond the secure button's rect where it cannot be clicked. `column` is inside the button — so click-targeting falls out for free, with no second secure frame and no attribute duplication — and the bars inset for it the same way the mana bar's slot reserves height, rather than inventing a second notion of an element reserving space. The rename is because keeping `inside` for "behind the bars" alongside a `column` that is also inside the frame would have been actively misleading. §FR-7.2 was amended in place rather than left standing against the code. Schema 16 renames unconditionally and moves only placements that can be shown to be inherited rather than chosen |
 | §5.1 file layout | A `Tests/` directory was added | A headless suite that runs the addon against a stubbed API in a real Lua 5.1 interpreter. Not in the spec's layout, but the project's entire premise is that the last one kept breaking, and this makes step 6 of the patch-day playbook cost thirty seconds instead of an evening |
 
 ---

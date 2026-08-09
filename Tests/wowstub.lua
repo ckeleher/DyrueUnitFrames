@@ -135,6 +135,19 @@ function methods:SetPoint(point, relative, relativePoint, x, y)
 	}
 end
 function methods:SetAllPoints(other) self.__allPoints = other or self.__parent end
+-- Modeled rather than left to the no-op fallback, because Plan 7 uses it to
+-- make a detached portrait clickable and an assertion has to be able to see it.
+-- Frames come into the world NOT taking the mouse, exactly as the client does.
+-- Modeling the default the other way round would make Plan 7's EnableMouse(false)
+-- on the 3D model look necessary in the harness when the question it settles is
+-- only answerable on a real client.
+function methods:EnableMouse(v) self.__mouse = v and true or false end
+function methods:IsMouseEnabled() return self.__mouse == true end
+function methods:SetHitRectInsets(l, r, t, b) self.__hitRect = { l, r, t, b } end
+function methods:GetHitRectInsets()
+	local h = self.__hitRect or { 0, 0, 0, 0 }
+	return h[1], h[2], h[3], h[4]
+end
 function methods:ClearAllPoints() self.__points = {} end
 function methods:GetPoint(i)
 	local p = self.__points[i or 1]

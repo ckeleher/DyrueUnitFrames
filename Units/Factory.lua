@@ -194,6 +194,40 @@ function methods:ApplyLayout()
 
 	self:ApplyBorder()
 	self:LayoutBars()
+
+	-- After LayoutBars, which is where the portrait's width is settled.
+	self:ApplyHitRect()
+end
+
+--- Extend the click area over a `detached` portrait (Plan 7).
+--
+-- The button targets the unit for any click inside its own rect, so a `column`
+-- portrait is click-targetable for free. A `detached` one is drawn beyond that
+-- rect and would be the one placement you cannot click, which is a poor answer
+-- to "the portrait should also be click-targetable" — so the rect is grown to
+-- cover it. Negative insets grow.
+--
+-- Protected: this is a frame-geometry method on the secure button, so it runs
+-- only from ApplyLayout, inside CombatQueue. It is deliberately NOT part of
+-- LayoutBars, which has to stay callable mid-combat for the shapeshift bar.
+function methods:ApplyHitRect()
+	local cfg = self.cfg
+	local portrait = cfg and cfg.portrait
+	local el = self.elements.portrait
+
+	local reach = 0
+	if el and self.activeElements.portrait and portrait
+		and portrait.placement == "detached" then
+		reach = (el.width or 0) + math.max(portrait.x or 0, 0)
+	end
+
+	if reach <= 0 then
+		self:SetHitRectInsets(0, 0, 0, 0)
+	elseif portrait.side == "RIGHT" then
+		self:SetHitRectInsets(0, -reach, 0, 0)
+	else
+		self:SetHitRectInsets(-reach, 0, 0, 0)
+	end
 end
 
 --- Four edge textures rather than a backdrop, so the thickness is exact at any
@@ -273,22 +307,44 @@ function methods:LayoutBars()
 		or (height - powerSlot - reserveSlot)
 	if healthHeight < 1 then healthHeight = 1 end
 
+	-- Plan 7. A `column` portrait is a column of the frame, so it takes width
+	-- out of the bars exactly as the mana bar takes height — one idea of "an
+	-- element reserving space", not two.
+	--
+	-- The height it tracks is health + power and never the shapeshift mana bar,
+	-- in either of that bar's modes. In `append` the bar is outside the frame's
+	-- bounds; in `reserve` it is inside but below the portrait's own stack. A
+	-- portrait that grew and shrank every time a druid shifted form would be
+	-- precisely the layout jump §FR-2.3 exists to avoid.
+	local portraitCfg = cfg.portrait
+	local inset = 0
+	if self.activeElements.portrait and elements.portrait and portraitCfg then
+		inset = ns.elements.portrait.SetGeometry(self, elements.portrait,
+			portraitCfg, healthHeight + powerSlot, width)
+	end
+
+	local barX = (inset > 0 and (portraitCfg.side or "LEFT") ~= "RIGHT") and inset or 0
+	local barWidth = width - inset
+
 	local y = 0
 	if elements.health then
-		ns.elements.health.SetGeometry(self, elements.health, 0, y, width, healthHeight)
+		ns.elements.health.SetGeometry(self, elements.health, barX, y, barWidth, healthHeight)
 	end
 	y = y - healthHeight
 
 	if powerSlot > 0 and elements.power then
 		y = y - (powerCfg.spacing or 0)
-		ns.elements.power.SetGeometry(self, elements.power, 0, y, width, powerCfg.height)
+		ns.elements.power.SetGeometry(self, elements.power, barX, y, barWidth, powerCfg.height)
 		y = y - (powerCfg.height or 0)
 	end
 
 	if manaSlot > 0 and elements.mana and elements.mana.shown then
 		y = y - (manaCfg.spacing or 0)
-		local manaWidth = (manaCfg.widthMode == "custom") and (manaCfg.width or width) or width
-		ns.elements.mana.SetGeometry(self, elements.mana, 0, y, manaWidth, manaCfg.height)
+		-- Inset with the rest of the stack even though the portrait does not
+		-- reach it: a bar that lined up with the frame edge instead of with the
+		-- two bars directly above it would read as a mistake.
+		local manaWidth = (manaCfg.widthMode == "custom") and (manaCfg.width or barWidth) or barWidth
+		ns.elements.mana.SetGeometry(self, elements.mana, barX, y, manaWidth, manaCfg.height)
 	end
 
 	-- Text elements anchored to a bar need re-pointing when a bar's visibility

@@ -103,7 +103,10 @@ local UNIT_RULES = {
 		when = function(cfg) return isSpecGreen(cfg.health and cfg.health.color) end,
 	},
 
-	-- Portraits, from behind the bars to beside the frame.
+	-- Portraits, from behind the bars to beside the frame. This one stops short
+	-- of the current default deliberately: "column" arrived in schema 16 under
+	-- a new set of identifiers, and step 15 below carries every profile the
+	-- rest of the way, from any starting version, under one rule.
 	{ path = { "portrait", "placement" }, old = { "inside" }, new = "outside" },
 
 	-- State indicators: shipped at 0, briefly 10, settled at 5. One line.
@@ -350,10 +353,65 @@ local function textWidthModes(profile)
 	return profile
 end
 
+--- 15 -> 16. Plan 7 made the portrait a column of the frame: inside the secure
+-- button so clicks on it target the unit, flush against the bars, and exactly
+-- as tall as they are. Two changes in one step, and they need different rules.
+--
+-- 1. The value rename, `inside` -> `overlay` and `outside` -> `detached`, is
+--    unconditional. These are internal identifiers rather than user choices,
+--    and a profile left on an unknown value would silently fall through to the
+--    default -- which is the one outcome worse than either rename.
+--
+-- 2. The default move, `detached` -> `column`, is not. `outside` became the
+--    default in ab7f37d, so after the rename a profile on `detached` is
+--    ambiguous: it might be that inherited default, or a placement somebody
+--    chose deliberately in the six schemas since.
+--
+-- The distinguishing signal is `mode`. The portrait has shipped `none` since
+-- 1.0, so a profile that still has it off has never rendered a portrait at all
+-- -- there was nothing to judge, and the placement it carries can only be
+-- inherited. Where the portrait IS on, "untouched" falls back to the whole
+-- shipped geometry tuple, the same rule steps 12-14 used: anyone who has sized
+-- or offset their portrait keeps the placement they sized it for.
+--
+-- Runs before EnsureProfile, so a nil `mode` means "predates the setting"
+-- rather than "already filled in", and reads as off.
+local function portraitPlacementInherited(portrait)
+	if (portrait.mode or "none") == "none" then return true end
+	return portrait.width == 40 and portrait.height == 40 and portrait.x == 2
+end
+
+local function portraitColumn(profile)
+	local units = profile.units
+	if type(units) ~= "table" then return profile end
+
+	for _, u in pairs(units) do
+		local p = type(u) == "table" and u.portrait
+		if type(p) == "table" then
+			if p.placement == "inside" then
+				p.placement = "overlay"
+			elseif p.placement == "outside" then
+				p.placement = "detached"
+			end
+
+			if p.placement == "detached" and portraitPlacementInherited(p) then
+				p.placement = "column"
+				-- The old 2px gap beside the frame. A column is flush with the
+				-- bars, and this is the same inherited default, so it goes with
+				-- the placement rather than being left behind as a seam.
+				if p.x == 2 then p.x = 0 end
+			end
+		end
+	end
+
+	return profile
+end
+
 local steps = {
 	[12] = raiseTargetBuffs,
 	[13] = quietAuraOverlays,
 	[14] = textWidthModes,
+	[15] = portraitColumn,
 }
 
 Migrate.steps = steps

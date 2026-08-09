@@ -825,8 +825,13 @@ local function portraitGroup(def)
 
 	local function isNone() return portrait().mode == "none" end
 	local function not3D() return portrait().mode ~= "3d" end
-	local function notInside()
-		return isNone() or portrait().placement == "outside"
+	--- Point/relative point are free anchoring, which only `overlay` uses:
+	-- a column and a detached portrait both anchor themselves to an edge.
+	local function notOverlay()
+		return isNone() or portrait().placement ~= "overlay"
+	end
+	local function noSide()
+		return isNone() or portrait().placement == "overlay"
 	end
 
 	local args = {
@@ -854,39 +859,68 @@ local function portraitGroup(def)
 			type = "select", order = 10, name = L["Placement"],
 			hidden = isNone,
 			values = {
-				outside = L["Beside the frame"],
-				inside = L["Over the frame (behind the bars)"],
+				column = L["A column of the frame"],
+				overlay = L["Over the frame (behind the bars)"],
+				detached = L["Outside the frame"],
 			},
-			desc = L["The bars are an opaque fill covering the whole frame, so 'over the frame' hides the portrait almost completely unless you make the bars translucent."],
+			sorting = { "column", "overlay", "detached" },
+			desc = L["A column sits inside the frame beside the bars, which give up the width for it -- and because it is inside the frame, clicking it targets the unit. The bars are an opaque fill covering the whole frame, so 'over the frame' hides the portrait almost completely unless you make them translucent."],
 			get = function() return portrait().placement end,
 			set = function(_, v) portrait().placement = v; apply() end,
 		},
 		side = {
 			type = "select", order = 11, name = L["Side"],
-			hidden = function() return isNone() or portrait().placement ~= "outside" end,
+			hidden = noSide,
 			values = { LEFT = L["Left"], RIGHT = L["Right"] },
 			get = function() return portrait().side end,
 			set = function(_, v) portrait().side = v; apply() end,
 		},
+		matchBarHeight = {
+			type = "toggle", order = 11.5, name = L["Match the bar height"],
+			hidden = isNone,
+			desc = L["Height follows the health bar plus the power bar, so the portrait is exactly as tall as they are. The shapeshift mana bar is deliberately excluded: a portrait that resized every time you changed form would be worse than one that is a few pixels short."],
+			get = function() return portrait().matchBarHeight end,
+			set = function(_, v) portrait().matchBarHeight = v; apply() end,
+		},
+		square = {
+			type = "toggle", order = 11.6, name = L["Square"],
+			hidden = isNone,
+			desc = L["Width follows the height."],
+			get = function() return portrait().square end,
+			set = function(_, v) portrait().square = v; apply() end,
+		},
 		width = Options.Range(L["Width"], 12, "width", portrait, "width", apply,
-			{ hidden = isNone, min = 4, softMin = 8, softMax = 200 }),
+			{
+				hidden = isNone, min = 4, softMin = 8, softMax = 200,
+				disabled = function() return portrait().square end,
+			}),
 		height = Options.Range(L["Height"], 13, "height", portrait, "height", apply,
-			{ hidden = isNone, min = 4, softMin = 8, softMax = 200 }),
+			{
+				hidden = isNone, min = 4, softMin = 8, softMax = 200,
+				disabled = function() return portrait().matchBarHeight end,
+			}),
 		point = {
 			type = "select", order = 14, name = L["Point on the portrait"],
-			hidden = notInside,
+			hidden = notOverlay,
 			values = ns.Anchoring:PointValues(),
 			get = function() return portrait().point end,
 			set = function(_, v) portrait().point = v; apply() end,
 		},
 		relativePoint = {
 			type = "select", order = 15, name = L["Point on the unit frame"],
-			hidden = notInside,
+			hidden = notOverlay,
 			values = ns.Anchoring:PointValues(),
 			get = function() return portrait().relativePoint end,
 			set = function(_, v) portrait().relativePoint = v; apply() end,
 		},
-		x = Options.Range(L["X offset"], 16, "offset", portrait, "x", apply, { hidden = isNone }),
+		x = Options.Range(L["X offset"], 16, "offset", portrait, "x", apply, {
+			hidden = isNone,
+			desc = function()
+				if portrait().placement == "column" then
+					return L["The gap between the portrait and the bars. Zero keeps them flush."]
+				end
+			end,
+		}),
 		y = Options.Range(L["Y offset"], 17, "offset", portrait, "y", apply, { hidden = isNone }),
 		alpha = {
 			type = "range", order = 18, name = L["Opacity"],

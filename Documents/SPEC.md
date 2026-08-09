@@ -348,7 +348,21 @@ Individual frames may still be detached and positioned independently for anyone 
 | `2d` | `SetPortraitTexture(texture, unit)` | Cheap, reliable, no ongoing liability |
 | `3d` | `PlayerModel` frame + `SetUnit(unit)` | Live model; see FR-7.4 for the caveats |
 
-**FR-7.2** Common settings across modes: size (independent width and height per §FR-1.3), anchor point and offset, alpha, and a placement option of `inside` (overlaid on the frame, behind bars and text) or `outside` (its own space to the left or right of the frame).
+**FR-7.2** Common settings across modes: size (independent width and height per §FR-1.3), anchor point and offset, alpha, and a placement option:
+
+| Placement | Meaning |
+|---|---|
+| `column` | A column **within** the frame, on the left or right of the bars, which inset to make room. **Default** |
+| `overlay` | Overlaid on the frame, behind bars and text |
+| `detached` | Its own space to the left or right of the frame, outside its bounds |
+
+*Amended by Plan 7 (8 Aug 2026).* The original spec offered only `inside` and `overlay`'s two-way choice under the names `inside`/`outside`, neither of which puts the portrait beside the bars. The names were changed with the addition because keeping `inside` for "behind the bars" next to a `column` that is also inside the frame would have been actively misleading.
+
+**FR-7.2a Size tracks the bar stack.** By default the portrait's height is the health bar plus the power bar, so it is exactly as tall as the bars it sits beside, and a `square` toggle carries that across to the width. Both are settings; turning them off restores the manual sliders.
+
+The shapeshift mana bar (§4.3) is **excluded from that height in both of its modes.** In `append` it is outside the frame's bounds; in `reserve` it is inside but below the portrait's own stack. Including it would mean a portrait that resized every time a druid changed form, which is the layout jump §FR-2.3 exists to prevent.
+
+**FR-7.2b Portraits are click-targetable.** A `column` or `overlay` portrait is inside the secure button's rect and therefore already targets the unit on click; a model frame must have `EnableMouse(false)` so it does not swallow the click. A `detached` portrait is drawn beyond that rect, so the frame's hit rect is grown to cover it with negative `SetHitRectInsets` — a protected geometry call, routed through `CombatQueue` per §FR-1.6, and reset to zero when the placement changes.
 
 **FR-7.3** 2D mode: fall back to the default question-mark portrait texture when the unit's portrait is unavailable. Refresh on `UNIT_PORTRAIT_UPDATE` and on unit change.
 

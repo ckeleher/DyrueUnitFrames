@@ -540,7 +540,10 @@ local function assertModern(label, profile)
 	want("backdrop off", player.background.enabled, false)
 	want("player health class colored", player.health.colorMode, "class")
 	want("target health class colored", target.health.colorMode, "class")
-	want("portrait beside the frame", player.portrait.placement, "outside")
+	-- Two steps together: the collapsed step moves the old `inside` default to
+	-- `outside`, and step 15 renames that to `detached` and — since the
+	-- portrait was never switched on — carries it to `column`.
+	want("portrait is a column", player.portrait.placement, "column")
 	want("indicators raised", player.indicators.y, 5)
 	want("blizzard frames hidden", profile.general.blizzardFrames, "hide")
 	want("blizzard party hidden", profile.general.blizzardParty, true)
@@ -648,6 +651,64 @@ local function testMigration()
 		ancient.units.player.health.brightness, 0.8)
 	equal("migrate/and for keys added even later",
 		ancient.units.player.indicators.y, 5)
+
+	--------------------------------------------------------------------------
+	-- 15 -> 16: the portrait placements (Plan 7)
+	--
+	-- Two changes in one step with two different rules, which is exactly where
+	-- a migration goes wrong quietly, so both are pinned separately.
+	--------------------------------------------------------------------------
+
+	local function portraitProfile(portrait)
+		return { schemaVersion = 15, units = { player = { portrait = portrait } } }
+	end
+
+	local function migratedPortrait(portrait)
+		local p = portraitProfile(portrait)
+		Migrate:Run(p, {})
+		return p.units.player.portrait
+	end
+
+	-- The rename is unconditional: an unknown value would fall through to the
+	-- default, which is worse than either rename.
+	equal("migrate/inside becomes overlay",
+		migratedPortrait({ mode = "2d", placement = "inside",
+			width = 90, height = 30, x = 12 }).placement, "overlay")
+	equal("migrate/outside becomes detached",
+		migratedPortrait({ mode = "3d", placement = "outside",
+			width = 90, height = 30, x = 12 }).placement, "detached")
+
+	-- The default move is not. A portrait that was never switched on has never
+	-- shown its placement, so what it carries can only be the inherited
+	-- default -- and inherited defaults move.
+	local never = migratedPortrait({ mode = "none", placement = "outside", x = 2 })
+	equal("migrate/an unused portrait moves to column", never.placement, "column")
+	equal("migrate/and loses the old gap with it", never.x, 0)
+
+	-- Same where the portrait is on but nothing about it has been touched.
+	local untouched = migratedPortrait({ mode = "2d", placement = "outside",
+		width = 40, height = 40, x = 2 })
+	equal("migrate/an untouched portrait moves too", untouched.placement, "column")
+
+	-- ...and a portrait somebody has actually sized keeps the placement they
+	-- sized it for. `detached` here is a choice, not an inheritance.
+	local sized = migratedPortrait({ mode = "2d", placement = "outside",
+		width = 90, height = 30, x = 12 })
+	equal("migrate/a sized portrait keeps its placement", sized.placement, "detached")
+	equal("migrate/and keeps its gap", sized.x, 12)
+
+	-- The gap only moves when the placement does.
+	local keptGap = migratedPortrait({ mode = "2d", placement = "inside",
+		width = 40, height = 40, x = 2 })
+	equal("migrate/overlay keeps its offset", keptGap.x, 2)
+
+	-- Idempotent: a second pass over the output changes nothing.
+	local settled = portraitProfile({ mode = "none", placement = "outside", x = 2 })
+	Migrate:Run(settled, {})
+	settled.schemaVersion = 15
+	Migrate:Run(settled, {})
+	equal("migrate/portrait step is idempotent",
+		settled.units.player.portrait.placement, "column")
 
 	--------------------------------------------------------------------------
 	-- Failure handling
@@ -2949,7 +3010,7 @@ local function testDrawOrder()
 	check("draworder/auras below the overlay",
 		auraLevel < target.overlay:GetFrameLevel())
 
-	-- An inside-placed portrait belongs behind the bars, as a backdrop.
+	-- An overlay-placed portrait belongs behind the bars, as a backdrop.
 	local portraitOption = ns.Options.table.args.units.args.player.args.portrait.args
 	portraitOption.mode.set(nil, "3d")
 	player:FullUpdate()
@@ -3059,7 +3120,7 @@ local function testPortrait()
 	-- active set, which is what stops it being laid out and updated.
 	check("portrait/not active while off", player.activeElements.portrait == nil)
 
-	equal("portrait/placed beside the frame by default", cfg.portrait.placement, "outside")
+	equal("portrait/a column of the frame by default", cfg.portrait.placement, "column")
 	equal("portrait/square by default", cfg.portrait.shape, "square")
 
 	-- 2D
@@ -3081,17 +3142,22 @@ local function testPortrait()
 	portrait.shape.set(nil, "square")
 	player:FullUpdate()
 
-	-- Beside the frame, not over it.
+	-- A column of the frame: flush with the top-left corner, which is the top
+	-- of the health bar.
 	local point, relative, relativePoint = el.texture:GetPoint(1)
-	equal("portrait/anchored to the frame's left edge", point, "RIGHT")
-	equal("portrait/relative to the content's left", relativePoint, "LEFT")
-	equal("portrait/2D sized", el.texture:GetWidth(), cfg.portrait.width)
+	equal("portrait/anchored to the frame's top-left", point, "TOPLEFT")
+	equal("portrait/relative to the content's top-left", relativePoint, "TOPLEFT")
 	equal("portrait/2D opacity applied", el.texture:GetAlpha(), 1)
 
 	portrait.alpha.set(nil, 0.4)
 	equal("portrait/2D opacity slider works", el.texture:GetAlpha(), 0.4)
 	portrait.alpha.set(nil, 1)
 
+	-- The width slider only has anything to say once the square toggle stops
+	-- driving the width off the height.
+	check("portrait/width slider disabled while square", portrait.width.disabled())
+	portrait.square.set(nil, false)
+	check("portrait/width slider live once square is off", not portrait.width.disabled())
 	portrait.width.set(nil, 64)
 	equal("portrait/2D width slider works", el.texture:GetWidth(), 64)
 
@@ -3122,6 +3188,188 @@ local function testPortrait()
 	portrait.mode.set(nil, "none")
 	portrait.alpha.set(nil, 1)
 	portrait.width.set(nil, 40)
+	portrait.square.set(nil, true)
+end
+
+--------------------------------------------------------------------------------
+-- 26b. The portrait as a column of the frame (Plan 7)
+--
+-- Three claims: it is exactly as tall as the health + power stack, the bars
+-- give up the width for it, and it is inside the button's rect so clicks on it
+-- target the unit. The harness cannot generate a real click, so the last one is
+-- asserted as geometry — which is the whole of it, since the button already
+-- targets on any click inside its own rect and textures never take the mouse.
+--------------------------------------------------------------------------------
+
+local function testPortraitColumn()
+	local player = ns.frames.player
+	local cfg = ns:UnitConfig("player")
+	local portrait = ns.Options.table.args.units.args.player.args.portrait.args
+	local health, power = player.elements.health.bar, player.elements.power.bar
+
+	portrait.mode.set(nil, "2d")
+	local el = player.elements.portrait
+
+	-- Height: health + power, and the power bar's own slider moves it.
+	local barStack = health:GetHeight() + power:GetHeight() + cfg.power.spacing
+	equal("column/height is the bar stack", el.height, barStack)
+	equal("column/texture carries that height", el.texture:GetHeight(), barStack)
+	equal("column/square carries it across to the width", el.width, barStack)
+
+	local powerOption = ns.Options.table.args.units.args.player.args.power.args
+	powerOption.height.set(nil, 16)
+	equal("column/a taller power bar is still covered",
+		el.height, health:GetHeight() + 16 + cfg.power.spacing)
+	powerOption.height.set(nil, 10)
+
+	-- Disabling the power bar shrinks it to the health bar alone.
+	powerOption.enabled.set(nil, false)
+	equal("column/no power bar means the health height", el.height, health:GetHeight())
+	powerOption.enabled.set(nil, true)
+	equal("column/back again", el.height, health:GetHeight() + power:GetHeight())
+
+	-- The bars give up the width, and start where the portrait ends.
+	local _, _, _, barX = health:GetPoint(1)
+	equal("column/health inset by the portrait", barX, el.width)
+	equal("column/health gives up the width", health:GetWidth(), cfg.width - el.width)
+	equal("column/power matches the health bar", power:GetWidth(), health:GetWidth())
+	local _, _, _, powerX = power:GetPoint(1)
+	equal("column/power inset too", powerX, el.width)
+
+	-- The gap slider opens one, and the bars move with it rather than being
+	-- overlapped by it.
+	portrait.x.set(nil, 6)
+	local _, _, _, gappedX = health:GetPoint(1)
+	equal("column/gap pushes the bars", gappedX, el.width + 6)
+	equal("column/gap comes out of the bar width",
+		health:GetWidth(), cfg.width - el.width - 6)
+	portrait.x.set(nil, 0)
+
+	-- On the right, the portrait is the one that moves and the bars stay put.
+	portrait.side.set(nil, "RIGHT")
+	local sidePoint = el.texture:GetPoint(1)
+	equal("column/right side anchors top-right", sidePoint, "TOPRIGHT")
+	local _, _, _, rightBarX = health:GetPoint(1)
+	equal("column/bars stay at the left edge", rightBarX, 0)
+	equal("column/bars still give up the width", health:GetWidth(), cfg.width - el.width)
+	portrait.side.set(nil, "LEFT")
+
+	-- Clickability, as geometry: the whole portrait is inside the button's own
+	-- rect, and the rect is not extended for it.
+	check("column/portrait starts inside the frame", el.width <= cfg.width)
+	equal("column/portrait is parented into the button",
+		el.texture:GetParent(), player.content)
+	local left, right = player:GetHitRectInsets()
+	check("column/no hit rect needed", left == 0 and right == 0)
+
+	-- A model frame is the one widget here that could swallow the click. The
+	-- harness models the client's default (mouse off), so what this pins is the
+	-- invariant rather than the call that guarantees it -- the real answer is
+	-- risk R11 territory and only a client can give it.
+	portrait.mode.set(nil, "3d")
+	player:FullUpdate()
+	check("column/3D model does not take the mouse",
+		not player.elements.portrait.model:IsMouseEnabled())
+	portrait.mode.set(nil, "2d")
+	player:FullUpdate()
+
+	--------------------------------------------------------------------
+	-- The shapeshift mana bar must not move it, in either of its modes.
+	--------------------------------------------------------------------
+
+	local before = el.height
+	cfg.mana.mode = "append"
+	player:LayoutBars()
+	equal("column/append mana leaves the portrait alone", el.height, before)
+
+	-- Reserve mode takes its slot out of the frame, so the health bar shortens
+	-- and the portrait follows it down -- but it still ends where the power bar
+	-- ends, not at the bottom of the frame.
+	cfg.mana.mode = "reserve"
+	player:LayoutBars()
+	equal("column/reserve mana still tracks health plus power",
+		el.height, health:GetHeight() + power:GetHeight() + cfg.power.spacing)
+	check("column/reserve mana leaves the portrait short of the frame",
+		el.height < cfg.height, el.height .. " vs " .. cfg.height)
+
+	-- Guarded: the width assertion below only means anything while the bar is
+	-- actually being laid out, and an unshown bar would keep a stale width and
+	-- pass by accident.
+	check("column/the shapeshift bar is up for the next assertion",
+		player.elements.mana.shown)
+	equal("column/the mana bar lines up with the bars above it",
+		player.elements.mana.bar:GetWidth(), health:GetWidth())
+	cfg.mana.mode = "append"
+	player:LayoutBars()
+
+	--------------------------------------------------------------------
+	-- The other two placements leave the bars alone.
+	--------------------------------------------------------------------
+
+	portrait.placement.set(nil, "overlay")
+	equal("column/overlay takes no slot", el.inset, 0)
+	equal("column/overlay leaves the bars full width", health:GetWidth(), cfg.width)
+	local overlayPoint, _, overlayRelative = el.texture:GetPoint(1)
+	equal("column/overlay honors the anchor point", overlayPoint, cfg.portrait.point)
+	equal("column/overlay honors the relative point", overlayRelative,
+		cfg.portrait.relativePoint)
+
+	portrait.placement.set(nil, "detached")
+	equal("column/detached takes no slot", el.inset, 0)
+	equal("column/detached leaves the bars full width", health:GetWidth(), cfg.width)
+
+	-- ...and detached grows the click area instead, since it is drawn beyond
+	-- the button's rect. Negative insets grow.
+	left, right = player:GetHitRectInsets()
+	equal("column/detached grows the rect leftward", left, -el.width)
+	equal("column/detached leaves the right edge alone", right, 0)
+
+	portrait.side.set(nil, "RIGHT")
+	left, right = player:GetHitRectInsets()
+	equal("column/detached on the right grows rightward", right, -el.width)
+	equal("column/detached on the right leaves the left edge alone", left, 0)
+	portrait.side.set(nil, "LEFT")
+
+	-- The gap counts: the portrait is that much further out.
+	portrait.x.set(nil, 8)
+	left = player:GetHitRectInsets()
+	equal("column/detached rect covers the gap too", left, -(el.width + 8))
+	portrait.x.set(nil, 0)
+
+	-- Changing away resets it. A stale negative inset would leave the frame
+	-- swallowing clicks over empty screen.
+	portrait.placement.set(nil, "column")
+	left, right = player:GetHitRectInsets()
+	check("column/rect reset when the placement changes", left == 0 and right == 0)
+
+	portrait.mode.set(nil, "none")
+	left, right = player:GetHitRectInsets()
+	check("column/rect reset when the portrait is turned off", left == 0 and right == 0)
+	equal("column/bars reclaim the width when it is off", health:GetWidth(), cfg.width)
+
+	--------------------------------------------------------------------
+	-- The manual height slider, and the clamp on a narrow frame.
+	--------------------------------------------------------------------
+
+	local resolve = ns.elements.portrait.Resolve
+
+	local w, h = resolve({ mode = "2d", matchBarHeight = false, height = 25, width = 30 }, 48, 220)
+	equal("column/manual height ignores the bar stack", h, 25)
+	equal("column/manual width with square off", w, 30)
+
+	w, h = resolve({ mode = "2d", matchBarHeight = false, square = true, height = 25 }, 48, 220)
+	equal("column/square follows the manual height", w, 25)
+
+	-- A column wider than the frame can hold must not produce a zero-width
+	-- bar, and must shrink with the slot rather than overlapping what is left.
+	local narrowW, _, slot = resolve({ mode = "2d", square = false, width = 200 }, 48, 100)
+	equal("column/slot clamped to leave a usable bar", slot, 80)
+	equal("column/portrait shrinks with the slot", narrowW, 80)
+
+	-- A disabled portrait resolves to nothing at all, whatever else is set.
+	local offW, offH, offSlot = resolve({ mode = "none", width = 200 }, 48, 220)
+	check("column/mode none resolves to nothing",
+		offW == 0 and offH == 0 and offSlot == 0)
 end
 
 --------------------------------------------------------------------------------
@@ -4682,10 +4930,11 @@ local function testHealPrediction()
 	--
 	-- The number is whatever main is at, not a version this plan owns. It was
 	-- 13 when the branch was written and moved to 15 underneath it (Plans 13
-	-- and 14); re-pinned on rebase after checking this branch's Defaults.lua
-	-- still matches main's exactly. Re-pin the same way if it moves again --
-	-- what the assertion guards is that Plan 11 adds no bump of its own.
-	equal("heal/added keys without a schema bump", ns.Defaults.SCHEMA_VERSION, 15)
+	-- and 14), then to 16 (Plan 7); re-pinned each time after checking this
+	-- branch's Defaults.lua still matches main's exactly. Re-pin the same way
+	-- if it moves again -- what the assertion guards is that Plan 11 adds no
+	-- bump of its own.
+	equal("heal/added keys without a schema bump", ns.Defaults.SCHEMA_VERSION, 16)
 
 	equal("heal/every unit carries the block",
 		ns:UnitConfig("targettarget").healPrediction ~= nil, true)
@@ -5067,6 +5316,7 @@ local suites = {
 	{ "draw-order", testDrawOrder },
 	{ "bar-background", testBarBackground },
 	{ "portrait", testPortrait },
+	{ "portrait-column", testPortraitColumn },
 	{ "combo-points", testComboPoints },
 	{ "bar-sweep", testBarSweep },
 	{ "highlight", testHighlight },
