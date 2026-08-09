@@ -1,7 +1,8 @@
 # Plan 17 — Rage Decay Handling
 
-**Status:** Both parts implemented on `Plan-17-rage-decay`. See *Implementation
-notes* at the foot of this document.
+**Status:** Both parts implemented on `Plan-17-rage-decay`, and the constants
+corrected against a live `/dufprobe rage` run. See *Implementation notes* and
+*Outcome* at the foot of this document.
 **Created:** 8 August 2026
 **Branch:** `Plan-17-rage-decay`
 **Builds on:** [Plan 2](Archive/Plan_2_PowerTickIndicators.md) and
@@ -457,13 +458,71 @@ reason.
 
 ### Not done
 
-Nothing from the plan was dropped. Still outstanding, and both were always
-after-the-fact by design: running the probe in game, and filling in the
-`_(fill in)_` rows it answers.
+Nothing from the plan was dropped.
 
-**Test suite:** 886 → 947 assertions, all green, plus `luacheck` and `refcheck`
-clean. The four part-1 regression assertions were verified to fail with the fix
-reverted before being committed.
+---
+
+## Outcome — measured, 8 August 2026
+
+`/dufprobe rage` was run on the Anniversary client (2.5.6), druid in bear form:
+56 entries, two full drains to zero, ten decay intervals sampled. Committed as
+part 3, `e76ebc7`. The full record is in `Documents/COMPAT_FINDINGS.md`; what it
+changed:
+
+| | Plan assumed | Measured |
+|---|---|---|
+| Events fire per decay tick | Yes, and everything rests on it | **Yes.** Zero changes the 0.1 s sampler caught that the events had not already reported |
+| Decay interval | ~2.5 s | **2.0 s** — ten samples, 1.95–2.12, mean 2.04. `/duf profile` settled on 2.05 independently |
+| Rage per tick | 2–3 | **Alternating 3 and 2**, mean 2.50 |
+| Pre-decay delay | Unknown, deliberately not modeled | **There is none** |
+| In-combat decay | None | **None.** Seven in-combat decreases, all 10–15 rage, all spends |
+
+**The seed moved to 2.0.** Derivation makes the seed nearly irrelevant; "nearly"
+is the first sweep of a session, and that one may as well be right.
+
+**The plan dismissed the correct figure.** It wrote off warcraft.wiki.gg's
+1.25 rage/sec as a retail-only number. 2.5 rage per 2.0 s tick *is* 1.25/sec.
+The alternating 3, 2, 3, 2 is the tell: Classic stores rage at 10× internally, so
+25 units a tick cannot divide evenly into displayed rage. The vanilla source had
+the amounts right and the interval wrong; the modern one had the rate right all
+along and only *looked* like retail because it was quoted per second.
+
+**There is no pre-decay delay to model, which is a better reason for the design
+than the one the plan gave.** Both gaps from combat dropping to the first decay —
+0.41 s and 1.16 s — are under one interval. The server's cadence keeps running and
+the fight simply ends somewhere inside it. Nothing documents a delay because there
+is nothing to document. `rageFirstDecay` is a phase offset, not a duration.
+
+**The band stays at 1.5–4.0 s**, now wider than anything measured, deliberately:
+the Classic Era Anger Management case is the one known client difference and is
+still unmeasured.
+
+### One bug the run caught
+
+`/duf profile` printed `rage decay interval: 2.05s (observed), decaying now` on the
+same line as `bar sweep ticker: stopped`. Rage was at zero: the line was correctly
+inactive and the *report* was wrong. `IsRageDecaying` checked the phase and the
+combat flag by hand and so missed the provider's third gate. It now delegates to
+`PROVIDERS.decay.IsActive`, the way `IsFiveSecondRuleRunning` always has, so the two
+cannot drift again. Exactly the class of contradiction `/duf profile` exists to
+surface rather than produce.
+
+### Also confirmed, for §FR-2.5
+
+The same session reported the shapeshift mana ticker at **735 ticks, 0 corrections**
+— every mana value while shifted had already arrived as an event. One session is
+not the "few sessions" that doc asks for before turning the fallback off, but it is
+the first real data point and it is recorded in 0.2.
+
+### Still outstanding
+
+- `/dufprobe rage` on a **Classic Era warrior with Anger Management talented** —
+  the last unmeasured row, and the only one that could move a constant.
+- The bear-form mana tick gap described above. It wants its own plan.
+
+**Test suite:** 886 → 950 assertions, all green, plus `luacheck` and `refcheck`
+clean. Every regression assertion in parts 1 and 3 was verified to fail with its
+fix reverted before being committed.
 
 ---
 
