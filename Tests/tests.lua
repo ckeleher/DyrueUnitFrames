@@ -3873,7 +3873,10 @@ local function testBarSweep()
 	stub.inCombat = false
 
 	BarSweep:Reset()
-	equal("sweep/rage interval is seeded at 2.5s", BarSweep:RageInterval(), 2.5)
+	-- Seeded at the interval /dufprobe rage measured on the Anniversary client,
+	-- not the 2.5s the one vanilla source claimed.
+	equal("sweep/rage interval is seeded at the observed 2.0s",
+		BarSweep:RageInterval(), 2.0)
 	equal("sweep/seeded rage interval is reported as assumed",
 		BarSweep:RageObserved(), false)
 	equal("sweep/no decay delay measured yet", BarSweep:RageFirstDecayDelay(), nil)
@@ -3999,7 +4002,21 @@ local function testBarSweep()
 	st.lastPower = 0
 	check("sweep/no decay line at zero rage",
 		not decay.IsActive(st, 26003, {}, rageRecord))
+
+	-- What /duf profile reports has to agree with what the line does. The first
+	-- in-game run caught this disagreeing: at the end of a drain the report said
+	-- "decaying now" on the same line as "bar sweep ticker: stopped", because the
+	-- reporter checked the phase and the combat flag by hand and missed this gate.
+	check("sweep/the report does not claim decay at zero rage",
+		not BarSweep:IsRageDecaying(26003))
 	st.lastPower = heldPower
+	check("sweep/the report agrees with the line when rage is falling",
+		BarSweep:IsRageDecaying(26003))
+
+	stub.inCombat = true
+	check("sweep/the report does not claim decay in combat",
+		not BarSweep:IsRageDecaying(26003))
+	stub.inCombat = false
 
 	----------------------------------------------------------------------------
 	-- Rage decay: the sweep maths
@@ -4032,7 +4049,7 @@ local function testBarSweep()
 	st.rageCombatEnd = 27010
 	BarSweep:Reset()
 	check("sweep/reset clears every rage field",
-		BarSweep:RageInterval() == 2.5
+		BarSweep:RageInterval() == 2.0
 		and st.rageOrigin == nil
 		and st.rageObserved == false
 		and st.rageSamples == 0

@@ -63,32 +63,41 @@ local SMOOTHING = 0.3
 --------------------------------------------------------------------------------
 -- Rage decay (Plan 17)
 --
--- Derived on the same terms as the regen cadence above, for stronger reasons.
--- The plan looked the rules up and found them not reliably documented for either
--- of our clients:
+-- Derived on the same terms as the regen cadence above, and MEASURED on the
+-- Anniversary client with /dufprobe rage — see Documents/COMPAT_FINDINGS.md for
+-- the trace. What the sources claimed and what the game actually does:
 --
---   * Vanilla sources give ~1 rage per second, delivered as 2 or 3 rage on a
---     ~2.5s tick. One source. The modern wiki's 1.25/sec is the RETAIL figure and
---     is the wrong number to copy here.
+--   * Observed: 2.0s between decay ticks (ten samples, 1.95-2.12s, mean 2.04),
+--     losing an alternating 3 and 2 rage. That is 2.5 rage per 2s = 1.25/sec,
+--     which is exactly the figure the modern wiki gives and which the plan wrote
+--     off as a retail-only number. It was right. Classic stores rage at 10x
+--     internally, so 25 units a tick surfaces as 3, 2, 3, 2. The vanilla source
+--     had the amounts right and the interval wrong.
 --
---   * The rate is talent-modifiable on Classic Era and not on TBC. Vanilla Anger
---     Management reads "Increases the time required for your rage to decay while
---     out of combat by 30%"; 2.0.1 redesigned it into in-combat generation. So a
---     hardcoded constant cannot be right for both clients at once.
+--   * Seeded at the observed 2.0s rather than the documented 2.5s, so the very
+--     first sweep of a session is right before anything is observed.
 --
---   * The delay between combat dropping and rage starting to fall has no
---     documented value at all. It is measured here rather than assumed — see
---     NoteRageDecay and /duf profile.
+--   * The band stays wide. The rate is talent-modifiable on Classic Era and not
+--     on TBC: vanilla Anger Management reads "Increases the time required for your
+--     rage to decay while out of combat by 30%", redesigned in 2.0.1 into in-combat
+--     generation. 30% on a 2.0s base is 2.6s, and on the documented 2.5s base 3.25s
+--     — neither may be thrown away as an outlier, and the Classic Era case is still
+--     unmeasured.
 --
--- The band is wider than the regen band because a 30% stretch on a 2.5s base is
--- 3.25s and must not be rejected as an outlier.
+--   * There is NO pre-decay delay. Two measured gaps from the combat drop to the
+--     first decay, 0.41s and 1.16s, are both under one interval: the server's decay
+--     cadence is fixed and a combat drop simply lands somewhere inside it. Nothing
+--     documents a delay because there is nothing to document. `rageFirstDecay` is
+--     therefore a phase offset, not a duration, and the decay line waits for a real
+--     tick rather than modeling anything.
 local RAGE_MIN_INTERVAL, RAGE_MAX_INTERVAL = 1.5, 4.0
-local RAGE_DEFAULT_INTERVAL = 2.5
+local RAGE_DEFAULT_INTERVAL = 2.0
 
--- A decay tick is documented as 2 or 3 rage. Anything bigger out of combat is
--- something else — shifting out of bear form zeroes rage, and players report
--- losing the whole bar as combat drops — so it is not read as a cadence sample.
--- A guard against large one-off drops, not a precision instrument.
+-- Observed out-of-combat decay steps were 1 to 3 rage; observed in-combat spends
+-- in the same trace were 10 to 15 (Maul, Demoralizing Roar). So the guard sits in
+-- a wide empty gap rather than near either population, which is what makes it a
+-- guard against large one-off drops — a form change zeroing rage, the reported
+-- whole-bar loss on combat drop — and not a precision instrument.
 local RAGE_MAX_DECAY_STEP = 5
 
 --------------------------------------------------------------------------------
@@ -790,11 +799,20 @@ function BarSweep:RageFirstDecayDelay()
 	return state.rageFirstDecay
 end
 
---- Is rage decaying right now, as far as we can tell? The `rageOrigin` half of
--- this is the pre-decay gate: true only once rage has been seen falling.
-function BarSweep:IsRageDecaying()
-	if not state.rageOrigin then return false end
-	return not UnitAffectingCombat("player")
+--- A rage bar, for asking the decay provider about the player's actual state
+-- rather than duplicating its gates. Module-level so the query allocates nothing.
+local RAGE_RECORD = { powerType = Compat.RAGE, atMax = false }
+
+--- Is rage decaying right now, as far as we can tell?
+--
+-- Delegated to the provider, the way IsFiveSecondRuleRunning is, and for a reason
+-- the first in-game run demonstrated: this originally checked `rageOrigin` and the
+-- combat flag by hand and so left out the provider's third gate, zero rage. At the
+-- end of a drain /duf profile said "decaying now" on the same line as "bar sweep
+-- ticker: stopped", which is exactly the kind of contradiction the report exists to
+-- surface rather than produce.
+function BarSweep:IsRageDecaying(now)
+	return PROVIDERS.decay.IsActive(state, now or GetTime(), nil, RAGE_RECORD)
 end
 
 --- Reset every derived value. Used by the test suite; there is no in-game path

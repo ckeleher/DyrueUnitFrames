@@ -157,8 +157,8 @@ the fallback ticker mandatory?
 | | Result |
 |---|---|
 | Changes the events reported | _(fill in)_ |
-| Changes only the 0.2s sampler saw | _(fill in)_ |
-| Verdict | _(fill in)_ |
+| Changes only the 0.2s sampler saw | **0**, across 735 ticks in one session (8 August 2026, Anniversary, bear form) |
+| Verdict | Provisional: events look reliable. Needs a few more sessions before the ticker goes to `off` |
 
 `/dufprobe mana` answers this directly and prints the verdict. The addon also
 answers it *during normal play*: `tickerMode = "auto"` counts every value the
@@ -269,43 +269,58 @@ Not a client-capability question but a **game-rule** question, and it belongs
 here for the same reason the others do: the answer was looked for, not found, and
 the code was written around the gap rather than around a guess.
 
-**What the sources say.** Rage decays only out of combat — every source agrees on
-that and nothing else is contested. Beyond it:
+**What the sources said.** Rage decays only out of combat — every source agrees on
+that and nothing else was contested. Beyond it:
 
-| Claim | Source | Weight |
+| Claim | Source | Weight before measuring |
 |---|---|---|
 | ~1 rage/sec, delivered as 2 or 3 rage on a ~2.5 s tick | Vanilla WoW Wiki | One source. The discrete-tick shape is the useful part |
-| 1.25 rage/sec (75/min) | warcraft.wiki.gg | Retail. The wrong number to copy for 1.15.9 / 2.5.6 |
+| 1.25 rage/sec (75/min) | warcraft.wiki.gg | Read as retail-only, and therefore dismissed. **This was the wrong call — see below** |
 | Decay begins "after a brief delay" | Classic warrior guides | No number given anywhere |
 | Vanilla Anger Management: "Increases the time required for your rage to decay while out of combat by 30%" | warcraft.wiki.gg | Solid, and it means **the rate differs between our two clients** |
 | Redesigned in 2.0.1 to "Generates 1 rage per 3 seconds while in combat" | same | So nothing modifies out-of-combat decay on TBC |
 | Entire rage bar lost instantly when combat drops | Blizzard forums, no developer reply | Player reports only. Handled defensively by the plausibility guard |
 
-**Consequence for the code.** No constant can be right for both clients at once,
-so `Systems/BarSweep.lua` derives the interval from observation exactly as it does
-the regen cadence — seeded at 2.5 s, band 1.5–4.0 s, outliers rejected. The band
-is wider than the regen band's 1.5–3.0 specifically so a 30% talent stretch on a
-2.5 s base (3.25 s) is not thrown away as an outlier.
-
-The pre-decay delay is not modeled at all. The decay line does not draw until rage
-is observed falling, which is correct whatever the true delay is, and the delay is
-*measured* into `/duf profile` so it stops being unknown.
-
-**To fill in, from `/dufprobe rage`:**
+**MEASURED — `/dufprobe rage`, Anniversary client (2.5.6), druid in bear form,
+8 August 2026.** 56 entries, two full drains to zero, ten decay intervals sampled.
 
 | Question | Assumed | Observed |
 |---|---|---|
-| Does `UNIT_POWER_UPDATE` fire per decay tick? | Yes — the whole derivation rests on it | _(fill in)_ |
-| Decay interval, out of combat | ~2.5 s | _(fill in)_ |
-| Rage lost per tick | 2–3 | _(fill in)_ |
-| Delay from combat drop to first decay | Unknown, not modeled | _(fill in)_ |
-| Anything decaying *during* combat | No | _(fill in)_ |
-| Interval with vanilla Anger Management talented | ~3.25 s, or an amount change instead | _(fill in)_ |
+| Does `UNIT_POWER_UPDATE` fire per decay tick? | Yes — the whole derivation rests on it | **Yes.** Zero changes the 0.1 s sampler caught that the events had not already reported |
+| Decay interval, out of combat | ~2.5 s | **2.0 s.** Ten samples, 1.95–2.12 s, mean 2.04. `/duf profile` independently settled on 2.05 s |
+| Rage lost per tick | 2–3 | **Alternating 3 and 2**, mean 2.50 |
+| Delay from combat drop to first decay | Unknown, not modeled | **None.** 0.41 s and 1.16 s on two drops, both *under* one interval |
+| Anything decaying *during* combat | No | **No.** Seven in-combat decreases, all 10–15 rage, all ability spends (Maul, Demoralizing Roar) |
+| Interval with vanilla Anger Management talented | ~2.6 s at the observed base, or an amount change instead | _(still unmeasured — needs a Classic Era warrior)_ |
 
-**If the first row comes back "no"**, the derived interval is unsound and detection
-has to move into the sweep driver's own `OnUpdate` — one `UnitPower` read per frame
-while a decay line is up. Designed but deliberately not built, on the same footing
-as the `spellcast` trigger in `BarSweep.TRIGGERS`.
+Three of those change what the code should say.
+
+**1. The 1.25/sec figure was right and the plan dismissed it.** 2.5 rage per 2.0 s
+tick *is* 1.25 rage/sec — exactly what warcraft.wiki.gg gives. It reads as a retail
+number only because it is quoted per-second. The alternating 3, 2, 3, 2 is the
+giveaway: Classic stores rage at 10× internally, so 25 units a tick cannot divide
+evenly into displayed rage and surfaces as 3 then 2. The vanilla source had the
+amounts right and the interval wrong; the modern one had the rate right all along.
+
+**2. The seed moved from 2.5 s to 2.0 s.** Derivation makes the seed almost
+irrelevant, but "almost" is the first sweep of a session before anything has been
+observed, and that one may as well be right.
+
+**3. There is no pre-decay delay to model.** Both measured gaps are under one
+interval, which is what you get when a fixed server cadence keeps running and the
+combat drop simply lands somewhere inside it. Nothing documents a delay because
+there is nothing to document. `rageFirstDecay` is a phase offset, not a duration —
+`/duf profile` still reports it, as evidence of exactly this.
+
+The band stays at 1.5–4.0 s. It is now wider than anything measured, deliberately:
+the Anger Management case is still unmeasured, and it is the one client difference
+this feature is known to have.
+
+**Also observed in the same session, and it answers 0.2 above:** the shapeshift mana
+ticker reported 735 ticks and **0 corrections** — every mana value while shifted had
+already been delivered by an event. One session is not the "few sessions" §FR-2.5
+asks for before turning the fallback off, but it is the first real data point and it
+points at the events being reliable on this client.
 
 ---
 
