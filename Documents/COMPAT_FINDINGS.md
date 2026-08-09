@@ -407,10 +407,55 @@ because they misdirected the original diagnosis:
   arrow pairs" in the report are** — and the second pair is the TreeGroup's own
   scrollbar, which has the same template.
 
-Still open: *why* the height is zero. The candidates are a layout that never
-sized the window and a stale layout after a tab switch, and they need different
-fixes. `/dufprobe scroll` prints the ancestry with each frame's height and
-anchors to separate them.
+### RESOLVED — a tall inline group evicted the nested tree
+
+**Ancestry read 9 August 2026, both a fresh open and after a tab switch —
+identical, so it was never a stale layout.** Heights from the window inward:
+
+```
+AceGUI:Frame        h=433
+ TreeGroup          h=420
+  Frame             h=420
+   TreeGroup        h=400
+    TabGroup        h=373
+     Frame          h=320
+      TabGroup      h=306    <- last healthy frame
+       TreeGroup    h=0      TOPLEFT (0, -324.9)   <- collapses here
+        Frame       h=0
+         TreeGroup  h=0
+          ScrollFrame h=0
+           content     h=797
+```
+
+**A group with `childGroups` renders its child groups as a nested tree or tab
+widget, and AceGUI places that widget below whatever loose args the group also
+has.** `Config/Options_Text.lua` carried the tag reference as an
+`inline = true` group at `order = 0`, and `Tags:AllHelp()` is 22 lines — about
+325px. The unit's tab content is ~306px, so the nested tree was anchored 324.9px
+down inside 306px: its top landed 18.9px below its own bottom and the height
+clamped to zero. Every descendant inherited it, including the scroll frame,
+whose 797px of content then drew unclipped from y=332 downward.
+
+So the tag reference *was* implicated, but not in the way first guessed. It is
+not mis-measured — `content.height` was correct at 796.8 in both runs. It is
+simply tall enough to evict its sibling.
+
+**Fix:** the tag reference became its own tree node rather than an inline group,
+so it renders inside the scroll frame and costs the parent container nothing.
+`Tests/tests.lua` grows a tripwire that estimates the loose lines above any
+`childGroups` widget and fails past a budget; reintroducing `inline = true`
+trips it on all fourteen units.
+
+**Window height mattered but was never the fix.** At AceConfigDialog's default
+500px the tab content is ~373px, leaving the tree ~48px — tiny but non-zero, so
+a larger window hid the bug rather than avoiding it.
+
+**A note on which panel this was.** Both runs reported an empty
+`AceConfigDialog.OpenFrames`, because `Core/Core.lua:316` also registers through
+`AddToBlizOptions`, and those containers live in `AceConfigDialog.BlizOptions`
+keyed by path. Anything attributing an AceGUI container to this addon has to
+check both tables; `/dufprobe scroll` now does, and reports which path a
+container came through.
 
 **A note on the fix.** The scrollbar is a child of the scroll frame anchored
 outside its right edge (`AceGUIContainer-ScrollFrame.lua:177`), so

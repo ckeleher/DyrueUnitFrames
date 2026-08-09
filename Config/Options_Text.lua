@@ -421,8 +421,21 @@ function Options.BuildTexts(def)
 	rebuild = function()
 		wipeTable(args)
 
+		-- Plan 3: this must NOT be `inline = true`, and the reason is worth the
+		-- paragraph. An inline group renders in the parent's own container, above
+		-- the nested tree that `childGroups = "tree"` creates for the text
+		-- elements. AllHelp() is 22 lines, about 325px, and the unit's tab is only
+		-- ~306px tall, so the tree widget was anchored 324.9px down inside 306px:
+		-- its top landed below its own bottom and the height clamped to zero.
+		-- Everything inside inherited that, including the scroll frame, so 797px
+		-- of options drew unclipped over the panel border. As its own tree node
+		-- this content sits inside the scroll frame and costs the parent nothing.
+		-- Documents/COMPAT_FINDINGS.md has the measurements.
+		--
+		-- Ordered last so opening Text still lands on a text element; the
+		-- reference is one click away rather than in the way.
 		args.tagHelp = {
-			type = "group", order = 0, inline = true, name = L["Tag reference"],
+			type = "group", order = 90, name = L["Tag reference"],
 			args = {
 				body = {
 					type = "description", order = 1,
