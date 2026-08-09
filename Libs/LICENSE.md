@@ -20,7 +20,7 @@ name — do not edit it here.
 | AceConfigCmd-3.0 | 14 | Ace3 license |
 | AceConfigDialog-3.0 | 92 | Ace3 license |
 | AceConfigRegistry-3.0 | 22 | Ace3 license |
-| AceGUI-3.0 | 41 | Ace3 license |
+| AceGUI-3.0 | 41 (core; widgets version separately — see below) | Ace3 license |
 | AceGUI-3.0-SharedMediaWidgets | — | Public Domain / BSD (Yssaril) |
 | LibSharedMedia-3.0 | 12000001 | LGPL v2.1 / Ace3-compatible (Elkano) |
 
@@ -47,6 +47,23 @@ These copies were taken from a pinned, unmodified Ace3 distribution as shipped
 with a current Classic-flavour addon build. Verify the version column above
 against the `MAJOR, MINOR` line at the top of each library file before bumping
 any of them — that line is the authority, this table is a convenience.
+
+### AceGUI-3.0 widgets version independently of the core
+
+AceGUI-3.0 is the one entry above that is not a single file. Each widget under
+`AceGUI-3.0/widgets/` carries its **own** version in a
+`local Type, Version = "<Type>", <n>` line and moves on its own schedule, so the
+core's 41 says nothing about any of them. Checking 41 and concluding "we are
+current" is a mistake — Plan 3 nearly made it.
+
+Verified against upstream `WoWUIDev/Ace3` at `master` on 8 August 2026:
+
+| Widget | Version here | Upstream |
+|---|---|---|
+| `AceGUIContainer-ScrollFrame` | 26 | 26, byte-identical |
+
+Record a row here whenever a widget's version is checked against upstream, so
+the next person does not have to re-derive it.
 
 ## Not embedded, only detected
 
