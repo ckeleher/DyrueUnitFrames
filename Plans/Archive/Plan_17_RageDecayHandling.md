@@ -5,8 +5,8 @@ corrected against a live `/dufprobe rage` run. See *Implementation notes* and
 *Outcome* at the foot of this document.
 **Created:** 8 August 2026
 **Branch:** `Plan-17-rage-decay`
-**Builds on:** [Plan 2](Archive/Plan_2_PowerTickIndicators.md) and
-[Plan 10](Archive/Plan_10_FiveSecondRuleIndicator.md) — `Systems/BarSweep.lua`,
+**Builds on:** [Plan 2](Plan_2_PowerTickIndicators.md) and
+[Plan 10](Plan_10_FiveSecondRuleIndicator.md) — `Systems/BarSweep.lua`,
 its one driver and its providers table. This is the third provider.
 
 ---
