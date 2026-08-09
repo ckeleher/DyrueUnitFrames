@@ -1,8 +1,33 @@
 # Plan 20 — Aura Groups Overhang The Frame's Left Edge
 
-**Status:** Not started.
+**Status:** Implemented on `Plan-20-aura-group-overhang`, awaiting review.
 **Created:** 9 August 2026
 **Branch:** `Plan-20-aura-group-overhang`
+
+**The diagnosis was confirmed by measurement, not by eye.** The new assertions
+were run against the unchanged element first, and they read exactly what the
+arithmetic predicted:
+
+```
+aurabounds/leftmost own icon starts at the group frame's left edge: expected ~0, got -4
+aurabounds/bottom row own icon ends at the box's bottom edge:       expected ~-42, got -46
+aurabounds/growing down, the top row sits on the box's top edge:    expected ~0, got 4
+aurabounds/growing left, the own icon ends at the box's right edge: expected ~174, got 178
+```
+
+Four sides, four pixels, in the direction the overflow predicted.
+
+**Deviations from the plan as written:**
+
+* **One extra assertion, and it is load-bearing:** button one is checked to be
+  the *scaled* own aura before its edges are measured. If sorting ever stops
+  putting the own aura first, every edge assertion would be measuring a
+  base-size icon — which is flush with its cell either way, so the whole suite
+  would pass with the bug present.
+* **The unscaled-grid case asserts the box dimensions and the first cell's
+  edges**, not every cell centre as the plan's test list implied. `pad` enters
+  every cell through the same term, so the box size plus one cell pins it; six
+  more coordinates would restate the formula rather than test it.
 
 ---
 
