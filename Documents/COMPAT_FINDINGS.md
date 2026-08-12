@@ -17,8 +17,18 @@ on each client, and run:
 /dufprobe derived
 /dufprobe health
 /dufprobe portrait
+/dufprobe auraorder
+/dufprobe rage
+/dufprobe heals
+/dufprobe healcomm
+/dufprobe incoming
 /dufprobe scroll
 ```
+
+The probe's Lua is loaded at login, so **`/reload` before running a subcommand
+that was added since you last logged in** — otherwise it is not recognised, and
+until 11 August 2026 an unrecognised subcommand silently ran the full survey
+instead. That cost a 90-second raid run and looked exactly like success.
 
 Then replace the "Assumed" column with what you actually saw, and note the date
 and build. Where a finding contradicts `SPEC.md`, amend the spec — that is what
@@ -31,10 +41,10 @@ Phase 0 is for.
 | | Classic Era / Hardcore | TBC Anniversary |
 |---|---|---|
 | Expected TOC | `11509` | `20506` |
-| Observed TOC | `11509` — as expected | _(fill in)_ |
-| Observed build | `1.15.9` / `69109`, dated `Aug 3 2026` | _(fill in)_ |
-| Observed `WOW_PROJECT_ID` | `2` | _(fill in)_ |
-| Date tested | 8 August 2026 | _(fill in)_ |
+| Observed TOC | `11509` — as expected | `20506` — as expected |
+| Observed build | `1.15.9` / `69109`, dated `Aug 3 2026` | `2.5.6` / `69110`, dated `Aug 3 2026` |
+| Observed `WOW_PROJECT_ID` | `2` | `5` |
+| Date tested | 8 August 2026 | 11 August 2026 |
 
 ---
 
@@ -63,10 +73,11 @@ Phase 0 is for.
 | `GetAddOnMemoryUsage` vs `C_AddOns.*` | Both handled | | | `/duf profile` |
 | `FontString:GetStringWidth` returns the **unconstrained** width | **Yes — verified 7 August 2026** | | | `Elements/Text.lua` width modes (Plan 6). See the verified finding below |
 | `GetStringWidth` works on a **hidden** font string | Yes | | | Same. Text elements are measured during an update that may run while the frame is not shown. NOT verified — the check below used a font string on a shown parent |
-| `UnitGetIncomingHeals` | **Absent** — Cataclysm-era | | | Plan 11. If it is ever present, an `api` provider slots into `HealPrediction.PROVIDERS`. It has never covered HoTs or channels, so the derived path stays primary either way |
-| `UnitGetTotalAbsorbs` | **Absent** — Warlords-era | | | Plan 12's candidate 1. If present, most of that plan is deleted |
-| `UnitGetTotalHealAbsorbs` | **Absent** — Warlords-era | | | Not used. No Classic/TBC mechanic needs it |
-| `UNIT_HEAL_PREDICTION` | **Absent** | | | Would be the push event for the above |
+| `UnitGetIncomingHeals` | ~~**Absent** — Cataclysm-era~~ **WRONG** | | **PRESENT and working — verified 11 Aug 2026** | Plan 11 / 19. See the verified finding below: it returns other people's heals, about a second ahead. The assumption this row carried was the premise of Plan 11's whole design |
+| `UnitGetTotalAbsorbs` | ~~**Absent** — Warlords-era~~ **WRONG** | | **Present — verified 11 Aug 2026.** Never observed non-zero | Plan 12's candidate 1. Present, so most of that plan may be deletable — but see the UNPROVEN note below before deleting anything |
+| `UnitGetTotalHealAbsorbs` | ~~**Absent** — Warlords-era~~ **WRONG** | | **Present — verified 11 Aug 2026** | Still not used. No Classic/TBC mechanic needs it |
+| `UNIT_HEAL_PREDICTION` | ~~**Absent**~~ **WRONG** | | **Present and fires — verified 11 Aug 2026** | The push event for the above. 900 firings in 90 s, for `party*`, `raid*` and `targettarget`. Means no ticker is needed |
+| `UNIT_ABSORB_AMOUNT_CHANGED` | Not previously asked | | **Present — verified 11 Aug 2026** | Would be Plan 12's push event on the same terms |
 | `CombatLogGetCurrentEventInfo` | Present | | | `Compat.GetCombatLogEvent`. Every amount Plan 11 predicts is learned through it |
 | `UnitCastingInfo` / `UnitChannelInfo` | Present, milliseconds | | | `Compat.GetCastEndTime`. Only ever called for `"player"` |
 | `Texture:SetGradient` takes color **objects** | Present — 10.0 signature | | | Plan 16's overflow cap band, through `Compat.SetGradient`. Needs `CreateColor` too, which is assumed present wherever this is |
@@ -461,6 +472,157 @@ container came through.
 outside its right edge (`AceGUIContainer-ScrollFrame.lua:177`), so
 `SetClipsChildren(true)` on the scroll frame would clip the scrollbar away.
 Whatever the eventual fix, it is not that call on that frame.
+
+---
+
+## Plans 11, 12 and 19 — incoming heals
+
+**Four probe runs on TBC Anniversary 2.5.6 / 69110, 11 August 2026**, in 24- and
+25-man raids: two `/dufprobe heals`, one `/dufprobe healcomm`, one
+`/dufprobe incoming`. This section replaces four rows in the survey above that
+were assumptions rather than measurements, and one of them was load-bearing for
+an entire plan.
+
+### VERIFIED — `UnitGetIncomingHeals` is present, works, and includes other players' heals
+
+The single most consequential row in this file, and it was wrong.
+
+```
+5120 samples over 90s      688 non-zero      688 of those included other people
+peak: all=13223  mine=0  others=13223
+UNIT_HEAL_PREDICTION fired 900 times
+lead time: mean 1.20s, median 1.08s, max 7.77s, min 0.07s
+59 of 60 resolved observations were heals cast by somebody other than the player
+```
+
+Resolved observations name their casters — Kahunazz, Nbamilkboi, Aripriest,
+Richholyquan, Ancientdice — so this is other people's healing, arriving on the
+API, roughly a second before it lands.
+
+Four things follow:
+
+- **The direct-cast half of Plan 19 is an API call.** No combat log, no comms
+  library, no target attribution, no learned amounts.
+- **No ticker.** `UNIT_HEAL_PREDICTION` fires — 900 times in 90 s, for `party*`,
+  `raid*` and `targettarget` — so this is pushed and SPEC §5.7 needs no new
+  argument.
+- **Plan 11's premise is narrowed, not destroyed.** The value was non-zero in
+  only 13% of samples, in bursts, with lead times shaped like cast times rather
+  than a HoT's 12–15 s plateau. Consistent with the historical behaviour of this
+  API: direct casts only. The aura-read HoT path stays authoritative.
+- **These clients ship the modern shared codebase.** The same fact that took
+  `UNIT_COMBO_POINTS` away gives these back. "Expansion X introduced it" is not
+  evidence about an Anniversary client, and this file should stop treating it as
+  though it were.
+
+### UNPROVEN — the two-argument form
+
+`UnitGetIncomingHeals(unit, "player")` was called 5120 times without a single
+failure, and returned **0 every time**, while the player cast only two heals in
+the whole run. So the probe's own guard reported Q2 as unproven, which was
+correct behaviour: `others` is computed as `all - mine`, and a filtered form that
+silently ignored its argument would produce exactly this.
+
+**The conclusion above does not rest on that subtraction.** Two casts cannot
+produce 688 non-zero samples peaking at 13,223, and the observations name other
+casters directly. Magnitude and identity carry it independently.
+
+**To close it properly:** one run where the player casts several *cast-time*
+heals and `mine` is watched for a non-zero. Needed before "my heals versus
+theirs" is ever offered as a display distinction, since that feature would rest
+on the decomposition rather than on the total.
+
+### UNPROVEN — absorbs (Plan 12)
+
+`UnitGetTotalAbsorbs`, `UnitGetTotalHealAbsorbs` and
+`UNIT_ABSORB_AMOUNT_CHANGED` are all present. **Absorbs never read non-zero** in
+this run — peak 0 across 5120 samples. The sampled set is only
+`player`/`target`/`focus`/`party1-4`, so a run where nobody shielded those seven
+units proves nothing either way.
+
+Plan 12 should not be rewritten on the strength of presence alone. Re-run
+`/dufprobe incoming` with a priest shielding the party first.
+
+### VERIFIED — the combat log does not carry a cast's target
+
+Across both `heals` runs:
+
+```
+SPELL_CAST_START     368 lines, 0 with a destination
+SPELL_CAST_SUCCESS  1046 lines, 821 with a destination   (control)
+```
+
+The control is what makes this a finding rather than a bad sample. `destGUID`
+arrives as an **empty string** — not `nil`, not `0000000000000000` — so anything
+testing for the zeroed GUID would conclude the opposite.
+
+Moot now that the API works, but recorded because it is the answer to "why not
+just read the combat log", which is the first thing anyone will ask.
+
+### VERIFIED — other units' cast events and `UnitCastingInfo` do work
+
+`UNIT_SPELLCAST_START` and `_CHANNEL_START` fired for **20 distinct raid tokens**
+in one run and 19 in the other. `UnitCastingInfo` on those units was readable
+**25 times out of 25**, with millisecond start and end times at the same return
+positions `Compat.GetCastEndTime` already uses.
+
+`UNIT_SPELLCAST_SENT` remains player-only — it appeared under `player`, `raid4`
+and `targettarget` with the first two at an identical count, which is one player
+seen through three tokens. No other raider ever sent one.
+
+### VERIFIED — an aura's caster resolves at raid distance
+
+Four censuses across the two runs: 165–323 helpful auras, of which 1–4 had no
+resolvable `sourceUnit`, and **three of the four censuses caught auras whose
+caster resolved while that caster was out of range**. Every orphan was an
+hour-long raid buff (`Gift of the Wild`, `Prayer of Fortitude`,
+`Arcane Brilliance`), never a HoT. One run had zero orphaned durational auras.
+
+This is what makes the aura-read HoT path safe, and it is now the half of Plan 19
+that the API does *not* replace.
+
+### MEASURED — LibHealComm is effectively dead on this client
+
+`/dufprobe healcomm`, 25-man raid, 7625 combat log lines in 90 s. All four
+candidate prefixes registered:
+
+| Prefix | Messages | Senders |
+|---|---|---|
+| `LHC40` | 32 | **1** |
+| `LHC`, `HealComm`, `LibHealComm` | 0 | 0 |
+
+Twenty-three distinct heal sources, eighteen of them casting five or more heals,
+and **exactly one** was broadcasting. Traffic on `LHC40` and silence on the other
+three is what a correct-prefix run looks like, so the silence is real.
+
+The library itself is unusable anyway — its Classic branch stopped in September
+2022 against TOC 1.13.3 — but this closes the receive-only route too, and for a
+reason no engineering fixes: there is nobody to receive from.
+
+### UNTESTED — Classic Era
+
+Every measurement in this section is TBC Anniversary. **Nothing here has been
+checked on 1.15.9**, which is a different codebase generation, and the addon
+supports both. `/duf compat` answers it in one command and reports
+`hasIncomingHeals` directly.
+
+If the API is absent there, the design needs both paths — API where present,
+Plan 11's derived engine where not — selected on `Compat.hasIncomingHeals`, which
+is the seam Plan 11 built for exactly this.
+
+### The lesson, which is the same one as `UNIT_COMBO_POINTS`
+
+`/duf compat` has reported `hasIncomingHeals` since Plan 11 shipped, precisely so
+this assumption would be checkable. Nobody ran it for three days, and three
+probes went looking for the same answer in the combat log, in an addon comms
+protocol, and in a third-party library — all of them harder, all of them
+ultimately closed.
+
+**Check the cheap capability flag before building an investigation around its
+assumed value.** And note that the flag alone was still not enough:
+`hasIncomingHeals` is `_G.UnitGetIncomingHeals ~= nil`, which is presence, not
+function. It took a fourth probe to show that the function answers, that it
+answers about other people, and that it answers early enough to matter.
 
 ---
 
