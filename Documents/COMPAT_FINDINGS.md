@@ -140,13 +140,47 @@ config noise and an anchor target that cannot resolve.
 future patch is a setting change rather than a broken install". That is now a
 wrong probe on a current patch.
 
-**The proper fix needs a discriminator**, and none of the signals above is one.
-`/dufprobe secrets` now also reports whether `SlashCmdList["FOCUS"]` and
-`SLASH_FOCUS1` are registered — if the command is absent on Era and present on
-TBC, that is a load-time predicate. **Unmeasured; both clients need one more
-run.** If it does not discriminate either, the honest answer is to gate focus on
-the client version, and to amend SPEC's "feature-probe, never version-check" rule
-with this as the recorded exception.
+### VERIFIED — there is no feature probe for focus. Eight signals, all identical
+
+The slash command was the last candidate and it failed. Measured on both clients,
+11 August 2026:
+
+| Signal | Era | TBC |
+|---|---|---|
+| `PLAYER_FOCUS_CHANGED` valid | yes | yes |
+| `FocusFrame` global | yes | yes |
+| `FocusUnit()` | yes | yes |
+| `ClearFocus()` | yes | yes |
+| `FocusFrame` / `FocusFrameToT` Blizzard frames | yes | yes |
+| `SLASH_FOCUS1` | `/focus` | `/focus` |
+| `SlashCmdList["FOCUS"]` | **nil** | **nil** |
+| `/focus` actually works | **no** | **yes** |
+
+`/focus` is handled in the C client rather than registered from Lua — the same
+way `/target` is — so `SlashCmdList["FOCUS"]` being nil says nothing about
+whether focus works. It is still reported, because a future patch could move it
+into Lua and make it a discriminator after all.
+
+**Every load-time signal is identical across the two clients, and the behaviour
+is not.** So SPEC's *feature-probe, never version-check* rule cannot be satisfied
+here, and this is the recorded exception rather than an oversight — eight probes
+were tried before concluding it.
+
+**Recommended predicate:** the TOC version floor *and* the event, so a future
+client that drops focus entirely is still respected:
+
+```lua
+Compat.hasFocus = (tocVersion >= 20000) and Compat.HasEvent("PLAYER_FOCUS_CHANGED")
+```
+
+A floor rather than an equality: focus exists from TBC onwards, so this
+generalises to any later client without needing a new `WOW_PROJECT_ID` added to a
+list. `general.focusOverride` stays as the escape hatch it was always meant to
+be.
+
+**This is a behaviour change on Era** — the focus frame, its options and its
+anchor target all disappear there — so it belongs in its own plan with the SPEC
+amendment written out, not folded into something else.
 
 ### Both surveys, 11 August 2026 — the rest of what they answered
 

@@ -2660,9 +2660,14 @@ local function secretsProbe(label)
 	f.name = f.exists and UnitName("focus") or nil
 
 	-- Every signal above exists on BOTH clients while /focus only works on one,
-	-- so none of them can be the load-time predicate Compat needs. The slash
-	-- command is the next candidate: if it is registered on TBC and absent on
-	-- Era, that is a discriminator available before anything is focused.
+	-- so none of them can be the load-time predicate Compat needs.
+	--
+	-- The slash command was the next candidate and it FAILED, 11 August 2026:
+	-- SlashCmdList["FOCUS"] is nil on both clients while SLASH_FOCUS1 is
+	-- "/focus" on both. The command is handled in the C client rather than
+	-- registered from Lua, the same way /target is, so its absence says nothing
+	-- about whether focus works. Still reported, because a future patch could
+	-- move it into Lua and make it a discriminator after all.
 	f.slashHandler = (_G.SlashCmdList and _G.SlashCmdList["FOCUS"] ~= nil) or false
 	f.slashToken = _G.SLASH_FOCUS1
 	f.clearSlashHandler = (_G.SlashCmdList and _G.SlashCmdList["CLEARFOCUS"] ~= nil) or false
