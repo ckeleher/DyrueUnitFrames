@@ -2658,17 +2658,35 @@ local function secretsProbe(label)
 		f.name and ("- " .. tostring(f.name)) or "")
 	out("UnitExists('focustarget')", yn(f.targetExists))
 
+	-- §FR-8.5 makes OPPOSITE predictions on the two clients: focus exists on TBC
+	-- and not on Era. So the same observation is a contradiction on one and a
+	-- confirmation on the other, and a verdict written for Era would announce a
+	-- spec breach on TBC where there is none. Which client this is decides what
+	-- the finding means.
+	f.isEra = (tonumber(tocVersion) or 0) < 20000
+	record.client = f.isEra and "Classic Era" or "TBC"
+
 	if f.exists then
-		out("|cff40ff40Focus WORKS on this client.|r §FR-8.5 says it does not exist here;")
-		out("that is a feature gain, and the spec should be relaxed rather than the")
-		out("probe distrusted.")
+		if f.isEra then
+			out("|cff40ff40Focus WORKS on Classic Era.|r §FR-8.5 says it does not exist")
+			out("here, so that is a feature GAIN - relax the spec rather than distrust")
+			out("the probe. The addon is already building the frame; now it is warranted.")
+		else
+			out("|cff40ff40Focus works, exactly as §FR-8.5 expects on TBC.|r")
+			out("No news here - but this run is the positive control for the Era one:")
+			out("it shows the check above can detect a working focus at all.")
+		end
 	elseif f.eventValid then
 		out("|cffffcc00The event is valid but nothing is focused|r, which proves nothing")
 		out("either way - and the addon is already building a focus frame on the")
 		out("strength of that flag.")
 		out("|cffffcc00Target something, /focus it, then re-run:|r /dufprobe secrets focused")
+	elseif f.isEra then
+		out("|cff40ff40No focus event. §FR-8.5 holds as written on Era.|r")
 	else
-		out("|cff40ff40No focus event. §FR-8.5 holds as written.|r")
+		out("|cffff5555No focus event on TBC, where §FR-8.5 expects focus to EXIST.|r")
+		out("That inverts the spec on the other client. Suspect this probe or the")
+		out("install before rewriting anything.")
 	end
 
 	local runs = DyrueUnitFramesProbeDB.secretsRuns or {}
