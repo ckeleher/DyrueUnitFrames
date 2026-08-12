@@ -506,14 +506,42 @@ Four things follow:
 - **No ticker.** `UNIT_HEAL_PREDICTION` fires — 900 times in 90 s, for `party*`,
   `raid*` and `targettarget` — so this is pushed and SPEC §5.7 needs no new
   argument.
-- **Plan 11's premise is narrowed, not destroyed.** The value was non-zero in
-  only 13% of samples, in bursts, with lead times shaped like cast times rather
-  than a HoT's 12–15 s plateau. Consistent with the historical behaviour of this
-  API: direct casts only. The aura-read HoT path stays authoritative.
+- **Plan 11's premise is narrowed, not destroyed.** It covers direct casts only —
+  see the next finding, which tested that directly. The aura-read HoT path stays
+  authoritative.
 - **These clients ship the modern shared codebase.** The same fact that took
   `UNIT_COMBO_POINTS` away gives these back. "Expansion X introduced it" is not
   evidence about an Anniversary client, and this file should stop treating it as
   though it were.
+
+### VERIFIED — `UnitGetIncomingHeals` does **not** include HoTs
+
+**Direct test, 11 August 2026, 21:02.** Rejuvenation cast on the player, standing
+away from the raid group so nothing else was healing them:
+
+```
+1250 samples over 90 s      0 non-zero      peak 0
+```
+
+Nine hundred of those samples were the `player` unit itself, with a HoT ticking
+on it throughout, and the API returned zero every single time. (`playerHeals = 0`
+in the same record is consistent rather than contradictory: Rejuvenation emits
+`SPELL_PERIODIC_HEAL`, and that counter tallies `SPELL_HEAL`.)
+
+**Corroborated independently by the first run**, which did not depend on anyone
+remembering what they cast. `party1` was being healed by five or more healers in
+a 25-man, and `all` was zero in **87% of samples** — while the same raid's druids
+produced 86 and 64 periodic-heal events per 90 seconds. HoT ticks were landing
+constantly and the API never reflected them.
+
+**This is what makes the two halves of Plan 19 disjoint, and therefore summable.**
+The API supplies direct casts from anyone; the aura scan supplies HoTs from
+anyone; nothing is counted twice. Had this gone the other way, the aura path
+would have had to become a fallback instead of an addition.
+
+Worth recording what this deliberately did *not* rest on: "this API has always
+covered direct casts only" is the same shape of argument that produced the wrong
+**Absent — Cataclysm-era** row above. It was available and it was not used.
 
 ### UNPROVEN — the two-argument form
 

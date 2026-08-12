@@ -27,8 +27,14 @@ and 19 — incoming heals* (`762f9eb`).
 **Not started:** any of the implementation below. `Systems/`, `Elements/`,
 `Core/` and `Config/` are untouched on the branch.
 
-**Blocking nothing** — but see *Risks*, where two open measurements would each
-change a design decision, and one of them is cheap.
+**Ready to implement.** The measurement that could have changed the design — does
+the API also cover HoTs, which would have made the aura path double-count — was
+closed on 11 August: it does not, so the two halves are disjoint and summable.
+
+One question remains open and it does not block starting: **Classic Era is
+untested.** `/duf compat` on a 1.15.9 character answers it, and the design
+branches on `Compat.hasIncomingHeals` either way. A "no" there does not change
+what gets built, only how much the fallback branch matters.
 
 ---
 
@@ -65,11 +71,15 @@ routes were investigated. That is the process lesson and it is recorded in
 
 ### What is still not solved by the API
 
-**HoTs.** The value was non-zero in only 13% of samples, in bursts, with lead
-times shaped like cast times rather than a HoT's 12–15 s plateau — consistent
-with this API's historical direct-casts-only behaviour. So the HoT half of this
-plan survives intact and is still built from aura reads, which the probe also
-confirmed work at raid distance.
+**HoTs.** Tested directly: a Rejuvenation ticking on the player, away from the
+raid, produced **zero across all 900 player samples**. Corroborated by the raid
+run, where `party1` was zero in 87% of samples while that raid's druids were
+landing 86 and 64 periodic heals per 90 seconds.
+
+So the two halves are **disjoint and can be summed** — the API for direct casts
+from anyone, the aura scan for HoTs from anyone, nothing counted twice. The HoT
+half of this plan survives intact and is still built from aura reads, which the
+probe also confirmed resolve their caster at raid distance.
 
 The feature therefore splits the way it always did, but the *hard* half moved:
 
@@ -274,8 +284,8 @@ rebase.
 
 | Risk | Handling |
 |---|---|
-| **The API might include HoTs after all** — if it does, the aura path double-counts them | The top risk, and cheap to close: run `/dufprobe incoming` while a HoT ticks on you and nobody is casting. Non-zero means it covers HoTs and the aura path becomes a fallback rather than an addition. The 13%-of-samples burst pattern says it does not, which is evidence rather than proof |
-| **Classic Era is untested** | `/duf compat` on a 1.15.9 character answers it in one command. The design already branches on `Compat.hasIncomingHeals`, so a "no" costs nothing but keeps the derived path load-bearing |
+| ~~The API might include HoTs, so the aura path double-counts~~ | **Closed 11 August 2026.** Rejuvenation on the player, away from the raid: zero across 900 samples. The two halves are disjoint. This was the top risk and it is now a recorded finding |
+| **Classic Era is untested** | Now the only open question that can change the design. `/duf compat` on a 1.15.9 character answers it in one command. The design already branches on `Compat.hasIncomingHeals`, so a "no" costs nothing but keeps the derived path load-bearing |
 | **The two-argument form is unproven** | Not used. Nothing in this plan depends on separating your heals from other people's, and the merge-colours answer means nothing needs to |
 | **`UNIT_HEAL_PREDICTION` silently not registered** | The element keeps its existing event subscriptions as a floor, so absence costs a frame of latency rather than a dead feature. `/duf compat` reports it |
 | **API returns a value for a unit whose health is 0–100** | `Elements/HealPrediction.lua:301` already blanks on `HasRealHealthValues`. Unchanged |
