@@ -130,6 +130,18 @@ local API_PATHS = {
 	-- by assumption.
 	"GetSpellPowerCost",
 	"C_Spell.GetSpellPowerCost",
+	-- Plans 11, 12 and 19. COMPAT_FINDINGS recorded all three of these as absent
+	-- on expansion-era reasoning, and on Anniversary all three are present --
+	-- which turned out to make the difference between "derive it from the combat
+	-- log" and "call a function". The survey did not check them, so answering it
+	-- on a second client meant reading a chat window.
+	--
+	-- They belong here for the same reason everything else does: the patch-day
+	-- playbook re-runs the survey and diffs the result against the findings file,
+	-- and a row nobody measures is a row that goes quietly stale.
+	"UnitGetIncomingHeals",
+	"UnitGetTotalAbsorbs",
+	"UnitGetTotalHealAbsorbs",
 	"GetCreatureDifficultyColor",
 	"GetQuestDifficultyColor",
 	"PowerBarColor",
@@ -168,6 +180,9 @@ local EVENTS = {
 	"UNIT_PORTRAIT_UPDATE", "UNIT_MODEL_CHANGED", "UNIT_CLASSIFICATION_CHANGED",
 	"UNIT_NAME_UPDATE", "UNIT_LEVEL", "UNIT_CONNECTION", "UNIT_FACTION", "UNIT_FLAGS",
 	"UNIT_COMBO_POINTS", "UNIT_SPELLCAST_SUCCEEDED",
+	-- The push events for the three functions above (Plans 11, 12, 19). Their
+	-- presence decides whether reading those values costs a ticker.
+	"UNIT_HEAL_PREDICTION", "UNIT_ABSORB_AMOUNT_CHANGED",
 	"PLAYER_TARGET_CHANGED", "PLAYER_FOCUS_CHANGED", "PLAYER_FLAGS_CHANGED",
 	"UPDATE_SHAPESHIFT_FORM", "GROUP_ROSTER_UPDATE", "PARTY_LEADER_CHANGED",
 	"RAID_TARGET_UPDATE", "PLAYER_REGEN_ENABLED", "PLAYER_REGEN_DISABLED",
