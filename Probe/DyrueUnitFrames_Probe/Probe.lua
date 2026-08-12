@@ -33,6 +33,10 @@
 --                        this asks whether it works, whether it covers other
 --                        people's heals, and how far ahead of the landing heal
 --                        it says so. Also samples UnitGetTotalAbsorbs.
+--   /dufprobe secrets [label]
+--                        SPEC §1.3 and §FR-8.5. Are any values the text engine
+--                        reads actually secret, and does focus really work on
+--                        this client? Instant, no trace. Never sets focus.
 --   /dufprobe scroll [label]
 --                        options panel geometry (Plan 3). Chat gets a summary;
 --                        the full ancestry, anchors and overflow list go to
@@ -2484,6 +2488,200 @@ local function startIncomingTrace(seconds, label)
 end
 
 --------------------------------------------------------------------------------
+-- SPEC §1.3 and §FR-8.5 - two presence flags that are load-bearing
+--
+-- /duf compat on Classic Era 1.15.9 reported hasSecretValues = true and
+-- hasFocus = true. Both contradict the spec, and both are PRESENCE checks:
+--
+--   Compat.hasSecretValues = (_G.issecretvalue ~= nil) or (_G.canaccessvalue ~= nil)
+--   Compat.hasFocus        = C_EventUtils.IsEventValid("PLAYER_FOCUS_CHANGED")
+--
+-- On a client running the modern shared codebase, a function existing says
+-- almost nothing - which is the lesson four Plan 19 probes just paid for, in the
+-- other direction. So this asks what the flags are actually standing in for.
+--
+-- SECRET VALUES. §1.3's premise is that the text engine can read game values and
+-- format them. That breaks only if a value is genuinely secret, not if a
+-- function that could report one exists. So: call issecretvalue on the values
+-- the text engine really reads, across every unit available, and see whether ANY
+-- of them come back secret.
+--
+-- A LITERAL IS THE CONTROL, and it is not decoration. If issecretvalue(42)
+-- comes back true then the function does not mean what this probe assumes, and
+-- "nothing is secret" would be a misreading rather than a finding. Exactly the
+-- role SPELL_CAST_SUCCESS played for the combat-log question.
+--
+-- FOCUS. §FR-8.5 gates a whole frame on focus not existing on Era, and the flag
+-- now says it does. The three signals Compat probes are reported separately,
+-- because they can disagree: an event can be valid in shared code while the
+-- feature behind it is absent. The question that settles it is whether
+-- UnitExists("focus") is ever true, and that needs a focus set - so if there is
+-- none, this says so and asks for a re-run rather than guessing.
+--
+-- Nothing here sets or clears focus. Changing the player's focus target to
+-- measure it would be a probe editing the thing it is measuring, and it is the
+-- user's targeting, not ours.
+--------------------------------------------------------------------------------
+
+local SECRET_UNITS = { "player", "target", "focus", "pet", "party1" }
+
+--- The values Elements/Text.lua actually formats. Testing arbitrary API returns
+-- would answer a different, easier question.
+local SECRET_ACCESSORS = {
+	{ "UnitHealth", function(u) return UnitHealth(u) end },
+	{ "UnitHealthMax", function(u) return UnitHealthMax(u) end },
+	{ "UnitPower", function(u) return UnitPower(u) end },
+	{ "UnitPowerMax", function(u) return UnitPowerMax(u) end },
+	{ "UnitName", function(u) return UnitName(u) end },
+	{ "UnitLevel", function(u) return UnitLevel(u) end },
+	{ "UnitClass", function(u) return select(2, UnitClass(u)) end },
+	{ "UnitGUID", function(u) return UnitGUID(u) end },
+	{ "UnitIsDead", function(u) return UnitIsDead(u) end },
+	{ "UnitIsConnected", function(u) return UnitIsConnected(u) end },
+	{ "UnitGetIncomingHeals", function(u)
+		local fn = _G.UnitGetIncomingHeals
+		return fn and fn(u) or nil
+	end },
+	{ "aura.name", function(u) local n = readHelpfulAura(u, 1) return n end },
+	{ "aura.expirationTime", function(u)
+		local _, _, _, _, e = readHelpfulAura(u, 1) return e
+	end },
+}
+
+--- @return secret, inaccessible, errored -- each a boolean or nil for "not asked"
+local function classifyValue(value)
+	local secret, inaccessible
+	local isSecret = _G.issecretvalue
+	if isSecret then
+		local ok, result = pcall(isSecret, value)
+		if not ok then return nil, nil, true end
+		secret = result and true or false
+	end
+	local canAccess = _G.canaccessvalue
+	if canAccess then
+		local ok, result = pcall(canAccess, value)
+		if not ok then return secret, nil, true end
+		inaccessible = (result == false)
+	end
+	return secret, inaccessible, false
+end
+
+local function secretsProbe(label)
+	if label == "" then label = nil end
+
+	local version, build, buildDate, tocVersion = GetBuildInfo()
+	local record = {
+		timestamp = date("%Y-%m-%d %H:%M:%S"),
+		label = label,
+		version = version, build = build, buildDate = buildDate, tocVersion = tocVersion,
+		projectId = WOW_PROJECT_ID,
+		hasIsSecretValue = (_G.issecretvalue ~= nil),
+		hasCanAccessValue = (_G.canaccessvalue ~= nil),
+		checked = 0, secrets = {}, inaccessible = {}, errors = 0,
+		control = {},
+		focus = {},
+	}
+
+	header("Secret values (SPEC §1.3)")
+	out("issecretvalue present", yn(record.hasIsSecretValue),
+		" canaccessvalue present", yn(record.hasCanAccessValue))
+
+	if not (record.hasIsSecretValue or record.hasCanAccessValue) then
+		out("|cff40ff40Neither function exists. §1.3 holds outright.|r")
+	else
+		-- The control, first, so a bad reading of the API is caught before any
+		-- conclusion is drawn from the real values.
+		local controlsSane = true
+		for _, sample in ipairs({ 42, "a string", true }) do
+			local secret, inaccessible, errored = classifyValue(sample)
+			record.control[tostring(sample)] = {
+				secret = secret, inaccessible = inaccessible, errored = errored,
+			}
+			if secret or inaccessible or errored then controlsSane = false end
+		end
+		record.controlsSane = controlsSane
+		out("Control - plain literals reported as ordinary:", yn(controlsSane))
+
+		for _, unit in ipairs(SECRET_UNITS) do
+			if UnitExists(unit) then
+				for _, entry in ipairs(SECRET_ACCESSORS) do
+					local name, getter = entry[1], entry[2]
+					local ok, value = pcall(getter, unit)
+					if ok then
+						record.checked = record.checked + 1
+						local secret, inaccessible, errored = classifyValue(value)
+						if errored then record.errors = record.errors + 1 end
+						if secret then
+							record.secrets[#record.secrets + 1] = unit .. "." .. name
+						end
+						if inaccessible then
+							record.inaccessible[#record.inaccessible + 1] = unit .. "." .. name
+						end
+					end
+				end
+			end
+		end
+
+		out(record.checked, "value(s) checked;", #record.secrets, "secret,",
+			#record.inaccessible, "inaccessible,", record.errors, "call(s) errored")
+
+		if not controlsSane then
+			out("|cffff5555The control failed.|r A plain literal was reported as secret,")
+			out("inaccessible or errored, so these functions do not mean what this probe")
+			out("assumes. UNPROVEN - do not conclude anything from the count above.")
+		elseif #record.secrets == 0 and #record.inaccessible == 0 then
+			out("|cff40ff40Present but inert.|r Nothing the text engine reads is secret,")
+			out("so §1.3 holds in practice. Amend the row to say so rather than")
+			out("leaving it as a contradiction nobody has resolved.")
+		else
+			out("|cffff5555VALUES ARE ACTUALLY SECRET.|r §1.3's premise is broken and the")
+			out("text engine needs rethinking. Named in SavedVariables:")
+			for i = 1, math.min(#record.secrets, 6) do out("   ", record.secrets[i]) end
+		end
+	end
+
+	header("Focus (SPEC §FR-8.5)")
+
+	local f = record.focus
+	f.eventValid = eventExists("PLAYER_FOCUS_CHANGED")
+	f.focusFrameGlobal = (_G.FocusFrame ~= nil)
+	f.focusUnitGlobal = (_G.FocusUnit ~= nil)
+	f.clearFocusGlobal = (_G.ClearFocus ~= nil)
+	f.exists = UnitExists("focus") and true or false
+	f.targetExists = UnitExists("focustarget") and true or false
+	f.name = f.exists and UnitName("focus") or nil
+
+	out("PLAYER_FOCUS_CHANGED valid", yn(f.eventValid))
+	out("FocusFrame global", yn(f.focusFrameGlobal),
+		" FocusUnit()", yn(f.focusUnitGlobal), " ClearFocus()", yn(f.clearFocusGlobal))
+	out("UnitExists('focus') right now", yn(f.exists),
+		f.name and ("- " .. tostring(f.name)) or "")
+	out("UnitExists('focustarget')", yn(f.targetExists))
+
+	if f.exists then
+		out("|cff40ff40Focus WORKS on this client.|r §FR-8.5 says it does not exist here;")
+		out("that is a feature gain, and the spec should be relaxed rather than the")
+		out("probe distrusted.")
+	elseif f.eventValid then
+		out("|cffffcc00The event is valid but nothing is focused|r, which proves nothing")
+		out("either way - and the addon is already building a focus frame on the")
+		out("strength of that flag.")
+		out("|cffffcc00Target something, /focus it, then re-run:|r /dufprobe secrets focused")
+	else
+		out("|cff40ff40No focus event. §FR-8.5 holds as written.|r")
+	end
+
+	local runs = DyrueUnitFramesProbeDB.secretsRuns or {}
+	runs[#runs + 1] = record
+	while #runs > 10 do table.remove(runs, 1) end
+	DyrueUnitFramesProbeDB.secretsRuns = runs
+	DyrueUnitFramesProbeDB.secretsProbe = record
+
+	out(string.format("|cff40ff40Saved as run %d%s.|r |cffffcc00/reload|r to flush.",
+		#runs, label and (" labelled '" .. label .. "'") or ""))
+end
+
+--------------------------------------------------------------------------------
 -- Slash command
 --------------------------------------------------------------------------------
 
@@ -2509,6 +2707,8 @@ SlashCmdList.DUFPROBE = function(input)
 		startHealCommTrace(90, (input or ""):match("^%s*%S+%s+(.-)%s*$"))
 	elseif cmd == "incoming" then
 		startIncomingTrace(90, (input or ""):match("^%s*%S+%s+(.-)%s*$"))
+	elseif cmd == "secrets" then
+		secretsProbe((input or ""):match("^%s*%S+%s+(.-)%s*$"))
 	elseif cmd == "scroll" then
 		scrollProbe((input or ""):match("^%s*%S+%s+(.-)%s*$"))
 	elseif cmd == "portraitoff" then
@@ -2528,7 +2728,7 @@ SlashCmdList.DUFPROBE = function(input)
 		out("|cffff5555Unknown subcommand '" .. cmd .. "'.|r")
 		out("If you expected it to exist, the probe was updated on disk but this")
 		out("client is still running the copy it loaded at login - |cffffcc00/reload|r first.")
-		out("Known: |cffffcc00mana derived health portrait auraorder rage heals healcomm incoming scroll dump|r")
+		out("Known: |cffffcc00mana derived health portrait auraorder rage heals healcomm incoming secrets scroll dump|r")
 	else
 		survey()
 		out("Also run: |cffffcc00/dufprobe mana|r, |cffffcc00derived|r, |cffffcc00health|r, |cffffcc00portrait|r, |cffffcc00auraorder|r, |cffffcc00rage|r, |cffffcc00heals|r, |cffffcc00healcomm|r, |cffffcc00incoming|r, |cffffcc00scroll|r")
