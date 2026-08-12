@@ -52,7 +52,7 @@ Phase 0 is for.
 
 | Question | Assumed | Classic Era | TBC | Where it is used |
 |---|---|---|---|---|
-| `issecretvalue` / `canaccessvalue` exist | ~~**No** — SPEC §1.3~~ **WRONG** | **PRESENT — 11 Aug 2026** | | `Compat.hasSecretValues` is `true` on 1.15.9. This is a *presence* check; whether anything is actually secret is untested and is the question that matters. See the Classic Era survey below |
+| `issecretvalue` / `canaccessvalue` exist | ~~**No** — SPEC §1.3~~ **WRONG** | **Present but INERT — verified 11 Aug 2026** | **Present but INERT — verified 11 Aug 2026** | The functions exist on both clients and **nothing the text engine reads is secret** on either — 26 values apiece, zero secret, literal control sane. §1.3 holds in practice. See the verified finding below |
 | `C_UnitAuras.GetAuraDataByIndex` | Present (Midnight shared code) | | | `Compat.GetAura`; falls back to `UnitAura` automatically |
 | `C_UnitAuras.GetAuraDataByAuraInstanceID` | Present | | | Incremental aura path |
 | `UNIT_AURA` carries `updateInfo` | Probably | | | Used only to *skip* no-op updates; a full rescan is the normal path (see the note in `Elements/Auras.lua`) |
@@ -82,6 +82,88 @@ Phase 0 is for.
 | `UnitCastingInfo` / `UnitChannelInfo` | Present, milliseconds | | | `Compat.GetCastEndTime`. Only ever called for `"player"` |
 | `Texture:SetGradient` takes color **objects** | Present — 10.0 signature | | | Plan 16's overflow cap band, through `Compat.SetGradient`. Needs `CreateColor` too, which is assumed present wherever this is |
 | `Texture:SetGradientAlpha` (eight loose numbers) | **Absent** — replaced in 10.0 | | | The pre-10.0 form. Tried second and expected to fail; if it turns out to be the live one on either client, the wrapper already handles it and only this row changes |
+
+### VERIFIED — secret values exist on both clients and nothing is secret
+
+**`/dufprobe secrets`, both clients, 11 August 2026.** 13 values with one unit
+present, 26 with two, on each client:
+
+```
+issecretvalue present yes    canaccessvalue present yes
+Control - plain literals reported as ordinary: yes
+26 value(s) checked; 0 secret, 0 inaccessible, 0 call(s) errored
+```
+
+The values checked are the ones `Elements/Text.lua` actually formats — health,
+power, name, level, class, GUID, incoming heals, aura name and expiry — across
+every unit that existed. The literal control passed, so the reading is sound
+rather than a misinterpretation of what these functions mean.
+
+**SPEC §1.3 holds in practice on both clients.** The functions are part of the
+shared codebase and nothing is behind them here.
+
+**The survey's alarm was changed as a result.** It printed
+*"SECRET VALUES PRESENT - SPEC §1.3 no longer holds"* on presence alone, which
+means it fired on every run on every client and always meant nothing. It now says
+the functions are expected, that they were measured inert, and points at
+`/dufprobe secrets` for the question that matters. An alarm that is always on
+teaches people to ignore alarms.
+
+### VERIFIED — §FR-8.5 is right about Era, but `Compat.hasFocus` is wrong
+
+The spec's *claim* survives. Its *detection method* does not, and the addon is
+currently acting on the broken one.
+
+| | Classic Era 1.15.9 | TBC 2.5.6 |
+|---|---|---|
+| `PLAYER_FOCUS_CHANGED` valid | yes | yes |
+| `FocusFrame` / `FocusUnit()` / `ClearFocus()` globals | yes | yes |
+| `FocusFrame` Blizzard frame | yes | yes |
+| `/focus` on a target, then `UnitExists("focus")` | **no** | **yes — "Dyrawr"** |
+| `Compat.hasFocus` would be | **true (wrong)** | true (right) |
+
+**The TBC column is the positive control**, and it is what makes the Era column a
+finding rather than a broken probe: the same check detected a working focus one
+minute earlier on the other client.
+
+So on Classic Era every signal `Compat.hasFocus` probes is present in the shared
+codebase while `/focus` does nothing at all. `Compat.hasFocus` returns true, and
+on that basis the addon **builds a focus frame that can never populate, offers
+focus options, and offers `focus` as an anchor target** — a dangling anchor.
+
+**Severity is moderate, not urgent.** The frame uses `RegisterUnitWatch`, so a
+unit that never exists means a frame that never shows. The visible costs are
+config noise and an anchor target that cannot resolve.
+
+**Mitigation that exists today:** `general.focusOverride = "off"`, which
+`Core/Compat.lua` documents as being there precisely so "a wrong probe on a
+future patch is a setting change rather than a broken install". That is now a
+wrong probe on a current patch.
+
+**The proper fix needs a discriminator**, and none of the signals above is one.
+`/dufprobe secrets` now also reports whether `SlashCmdList["FOCUS"]` and
+`SLASH_FOCUS1` are registered — if the command is absent on Era and present on
+TBC, that is a load-time predicate. **Unmeasured; both clients need one more
+run.** If it does not discriminate either, the honest answer is to gate focus on
+the client version, and to amend SPEC's "feature-probe, never version-check" rule
+with this as the recorded exception.
+
+### Both surveys, 11 August 2026 — the rest of what they answered
+
+`/dufprobe` on each client. Beyond the rows already corrected above:
+
+| Finding | Era | TBC | Consequence |
+|---|---|---|---|
+| `DebuffTypeColor` | **absent** | present | `Compat.GetDebuffTypeColor` returns nil on Era, so aura type borders lose their colour there. It already fails closed; no crash, just a missing cue |
+| `UNIT_COMBO_POINTS` | absent | absent | Previously verified on TBC only. Now false on **both**, so the `UNIT_POWER_UPDATE` path is the only live one everywhere |
+| `UNIT_HEALTH_FREQUENT` | present | present | Against "probably removed". Harmless either way |
+| `GetSpellPowerCost` / `C_Spell.GetSpellPowerCost` | both present | both present | **Answers Plan 10's parked question.** The `spellcast` trigger for the five-second rule is buildable — it needed a mana-cost lookup and both exist |
+| `UnitPowerMax("player", ComboPoints)` | 5 | 5 | **Answers the open Plan 9 question.** Read on a druid, so it reports a real capacity for a class with no combo points — an always-visible combo bar without a class check is possible |
+| `EditModeManagerFrame` / `C_EditMode` | present | present | §5.6's first blank, on both clients. Whether Edit Mode can hide `PlayerFrame`/`TargetFrame` is still a manual check |
+| `PartyMemberFrame1` | absent | absent | `PartyFrame` and `CompactPartyFrame` are present instead. Worth checking `Compat.blizzardFrames` still names something real |
+| `CastingBarFrame` | absent | absent | `PlayerCastingBarFrame` is the live name |
+| `UnitIsTapped` | absent | absent | `UnitIsTapDenied` present; the wrapper already prefers it |
+| `C_AddOns.GetAddOnMemoryUsage` | absent | absent | The global form is present. `/duf profile` already handles both |
 
 ### Classic Era capability dump — 11 August 2026, 1.15.9 / 69109
 

@@ -220,10 +220,18 @@ local function survey()
 
 	-- SPEC §1.3: these must NOT exist in Classic. If either appears, the text
 	-- engine's assumptions are void and the spec needs amending immediately.
+	-- This used to shout that §1.3 no longer held, on presence alone. It is
+	-- present on BOTH clients and nothing is actually secret on either --
+	-- measured 11 August 2026, /dufprobe secrets, 26 values apiece. So the alarm
+	-- fired every single run and meant nothing, which is the fastest way to
+	-- teach someone to ignore an alarm.
 	if record.api["issecretvalue"] or record.api["canaccessvalue"] then
-		out("|cffff5555SECRET VALUES PRESENT - SPEC §1.3 no longer holds.|r")
+		out("|cffffcc00Secret-value functions present|r - expected on these clients, and")
+		out("not itself a problem. Measured inert on both as of 11 Aug 2026.")
+		out("|cffffcc00/dufprobe secrets|r asks the question that matters: is anything the")
+		out("text engine reads ACTUALLY secret?")
 	else
-		out("|cff40ff40No secret values. SPEC §1.3 holds: text engine is viable.|r")
+		out("|cff40ff40No secret values. SPEC §1.3 holds outright.|r")
 	end
 
 	record.manaEnum = Enum and Enum.PowerType and Enum.PowerType.Mana
@@ -2651,9 +2659,19 @@ local function secretsProbe(label)
 	f.targetExists = UnitExists("focustarget") and true or false
 	f.name = f.exists and UnitName("focus") or nil
 
+	-- Every signal above exists on BOTH clients while /focus only works on one,
+	-- so none of them can be the load-time predicate Compat needs. The slash
+	-- command is the next candidate: if it is registered on TBC and absent on
+	-- Era, that is a discriminator available before anything is focused.
+	f.slashHandler = (_G.SlashCmdList and _G.SlashCmdList["FOCUS"] ~= nil) or false
+	f.slashToken = _G.SLASH_FOCUS1
+	f.clearSlashHandler = (_G.SlashCmdList and _G.SlashCmdList["CLEARFOCUS"] ~= nil) or false
+
 	out("PLAYER_FOCUS_CHANGED valid", yn(f.eventValid))
 	out("FocusFrame global", yn(f.focusFrameGlobal),
 		" FocusUnit()", yn(f.focusUnitGlobal), " ClearFocus()", yn(f.clearFocusGlobal))
+	out("/focus registered", yn(f.slashHandler),
+		" token", tostring(f.slashToken), " /clearfocus", yn(f.clearSlashHandler))
 	out("UnitExists('focus') right now", yn(f.exists),
 		f.name and ("- " .. tostring(f.name)) or "")
 	out("UnitExists('focustarget')", yn(f.targetExists))
@@ -2675,6 +2693,20 @@ local function secretsProbe(label)
 			out("|cff40ff40Focus works, exactly as §FR-8.5 expects on TBC.|r")
 			out("No news here - but this run is the positive control for the Era one:")
 			out("it shows the check above can detect a working focus at all.")
+		end
+	elseif f.eventValid and label then
+		-- A labelled re-run means the user was asked to focus something and did.
+		-- Still nothing focused is therefore a RESULT, not a missing measurement:
+		-- /focus does not work on this client, whatever the flags say.
+		out("|cffff5555You focused something and 'focus' still does not exist.|r")
+		if f.isEra then
+			out("So §FR-8.5 is RIGHT about Era - focus does not work here - but")
+			out("Compat.hasFocus is wrong, because every signal it probes exists in the")
+			out("shared codebase anyway. The addon is building a focus frame that can")
+			out("never populate, and offering focus as an anchor target.")
+			out("Mitigation today: |cffffcc00general.focusOverride = \"off\"|r.")
+		else
+			out("On TBC that inverts §FR-8.5. Suspect the install before the spec.")
 		end
 	elseif f.eventValid then
 		out("|cffffcc00The event is valid but nothing is focused|r, which proves nothing")
