@@ -33,13 +33,21 @@ Then:
 python Tests/run_tests.py
 ```
 
-Three passes run, each building a fresh runtime:
+Five passes run, each building a fresh runtime:
 
 | Pass | Simulates | Verifies |
 |---|---|---|
-| 1 | TBC Anniversary — focus present, `C_UnitAuras` present | The full suite: ~270 assertions |
+| 1 | TBC Anniversary — focus present, `C_UnitAuras` present, `UnitGetIncomingHeals` present | The full suite: ~1040 assertions |
 | 2 | Classic Era — no focus anywhere | SPEC §FR-8.5 / AC 14: no focus frame is created, no focus options are built, focus is not offered as an anchor target, and nothing else is disturbed |
 | 3 | A client with only the legacy `UnitAura` signature | Risk R3: `Compat.GetAura` produces identical results on either API |
+| 4 | A client that still has `UNIT_COMBO_POINTS` | The event is used and filtered against `player`, where it exists |
+| 5 | A client with no `UnitGetIncomingHeals` | Plan 11's derived heal prediction, which is the fallback on a client without the API. Runs the whole suite again — the derived assertions only execute here |
+
+Passes 1 and 5 both run the entire suite, because Plan 19 split heal
+prediction across two sources and each is a different client rather than a
+different setting. A pass that only poked the function at runtime would not
+work: the listener decides at start-up whether to subscribe to the ten
+`UNIT_SPELLCAST_*` events, so the path has to be absent from load.
 
 ## What is covered
 

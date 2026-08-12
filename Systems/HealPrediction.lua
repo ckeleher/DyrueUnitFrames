@@ -1,18 +1,35 @@
 -- Systems/HealPrediction.lua
 --
--- Plan 11 — incoming heal prediction, and the module that owns every derived
--- value behind it. Elements/HealPrediction.lua only draws.
+-- Plans 11 and 19 — incoming heal prediction. Elements/HealPrediction.lua only
+-- draws.
 --
 --------------------------------------------------------------------------------
--- THE PREMISE
+-- THE PREMISE, AND HOW IT CHANGED
 --
--- There is no incoming-heal API on these clients. UnitGetIncomingHeals arrived
--- in Cataclysm, UnitGetTotalAbsorbs in Warlords, and where a Classic client has
--- ever exposed incoming heals it covered direct casts only -- no HoTs, no
--- channels, which is two thirds of what this feature is.
+-- Plan 11 was built on "there is no incoming-heal API on these clients", and
+-- derived every number from the combat log instead. That premise was wrong.
+-- UnitGetIncomingHeals is present on both clients, works, and includes OTHER
+-- PLAYERS' heals with about a second of lead time (COMPAT_FINDINGS, 11 Aug
+-- 2026). The expansion-era reasoning behind the assumption is the same mistake
+-- that lost UNIT_COMBO_POINTS: these clients run modern shared code.
 --
--- So this module does not READ its data. It DERIVES it, and every decision
--- below follows from that.
+-- So the module now has two halves with two different sources, and they are
+-- SUMMED rather than chosen between:
+--
+--   DIRECT casts, from anyone   -> UnitGetIncomingHeals, pushed by
+--                                  UNIT_HEAL_PREDICTION. Nothing derived.
+--   HoTs, from anyone           -> read off the unit's auras, sized by amounts
+--                                  learned from the combat log. All of Plan 11's
+--                                  machinery, still earning its place.
+--
+-- The API does not cover HoTs -- measured, not assumed: a Rejuvenation ticking
+-- on the player read zero across 900 samples. That disjointness is what makes
+-- summing them correct, and if it ever stops being true this file double-counts.
+--
+-- Plan 11's derived direct-cast path is KEPT as the fallback for any client
+-- without the API. Compat.GetIncomingHeals returns nil rather than 0 there,
+-- which is the branch. The two are never added together: the API total already
+-- includes the player's own casts.
 --
 --------------------------------------------------------------------------------
 -- WHY THERE IS NO SPELL DATABASE
@@ -64,6 +81,11 @@ ns.HealPrediction = HealPrediction
 local UnitGUID, UnitExists, UnitName = UnitGUID, UnitExists, UnitName
 local GetTime = GetTime
 local ceil = math.ceil
+
+--- True when the game will tell us about incoming direct heals itself. Read
+-- once at load: the function does not appear mid-session, and this decides
+-- which events the listener subscribes to.
+local API_DIRECT = Compat.hasIncomingHeals and true or false
 
 --- Shared with Systems/BarSweep deliberately: both are blending a noisy
 -- observation into a running estimate, and two different constants would be two
@@ -141,11 +163,85 @@ function HealPrediction:LearnedCount()
 end
 
 --------------------------------------------------------------------------------
+-- Other people's HoTs (Plan 19)
+--
+-- The API covers direct casts only, so a group member's Rejuvenation is still
+-- something this module has to size itself. Two structures do it.
+--
+-- ROSTER is a GUID set rebuilt on GROUP_ROSTER_UPDATE. It is the combat-log
+-- guard: Plan 11's first line was one comparison against the player's own GUID,
+-- and this replaces it with one hash lookup against a table that holds exactly
+-- one entry when you are solo. The hot path keeps its shape -- what changes is
+-- the contents of a table, not the cost of the noisiest event in the game.
+--
+-- SESSION holds per-caster tick amounts and is NEVER PERSISTED. It is observed
+-- data keyed by another player's GUID: saving it would grow without bound across
+-- every group you ever join, and it is stale the moment they change gear.
+-- Relearning costs one tick. Written only for roster GUIDs and pruned when they
+-- leave, so it is bounded by group size.
+--------------------------------------------------------------------------------
+
+local roster = {}
+
+local function newSession()
+	return {
+		periodic = {},   -- casterGUID -> spellID -> amount
+		mean = {},       -- spellID -> amount, blended across every caster seen
+	}
+end
+
+local session = newSession()
+
+--- Rebuild the roster GUID set, and drop session data for anyone who left.
+--
+-- Pruning is a side effect of a rebuild that is already happening, which is why
+-- there is no separate sweep to test or forget to call.
+local function rebuildRoster()
+	local next_ = {}
+
+	-- Read straight from the game rather than from `state`, which is declared
+	-- below this and would be captured as a nil global if named here.
+	local playerGUID = UnitGUID("player")
+	if playerGUID then next_[playerGUID] = true end
+
+	local total = (GetNumGroupMembers and GetNumGroupMembers()) or 0
+	local inRaid = IsInRaid and IsInRaid()
+	for i = 1, (inRaid and total or (total - 1)) do
+		local guid = UnitGUID((inRaid and "raid" or "party") .. i)
+		if guid then next_[guid] = true end
+	end
+
+	roster = next_
+
+	for guid in pairs(session.periodic) do
+		if not roster[guid] then session.periodic[guid] = nil end
+	end
+end
+
+--- Per-tick amount for `spellID` cast by `casterGUID`.
+--
+-- Read order, and each step is a real fallback rather than a guess dressed up:
+--   1. what THIS caster's ticks have measured,
+--   2. the cross-caster mean for the spell -- a different priest's Renew is
+--      still a Renew, and one real observation blends the estimate away,
+--   3. nothing. Predict zero, which is Plan 11's documented honest failure
+--      applied unchanged to a wider set of casters.
+local function periodicAmount(casterGUID, spellID)
+	local byCaster = casterGUID and session.periodic[casterGUID]
+	local amount = byCaster and byCaster[spellID]
+	if amount then return amount end
+	return session.mean[spellID]
+end
+
+--------------------------------------------------------------------------------
 -- State
 --
 -- `current` is a single record rather than a list, and that is correct rather
 -- than a simplification: the player has one cast bar. Two heals cannot be in
 -- flight at once.
+--
+-- It is only ever populated on a client WITHOUT UnitGetIncomingHeals. Where the
+-- API exists the spellcast events are never registered at all.
 --------------------------------------------------------------------------------
 
 local state = {
@@ -189,33 +285,41 @@ local function resolveTargetName(name)
 end
 
 --------------------------------------------------------------------------------
--- Providers
+-- Which direct-cast path is live
 --
--- Shaped like BarSweep.PROVIDERS and BarSweep.TRIGGERS: a named table of
--- strategies, so adding one is a table entry and not a reshape.
+-- Plan 11 described this as a table of interchangeable strategies and predicted
+-- a second entry would arrive as a user setting. Neither happened, and the
+-- reason is worth keeping: THE CHOICE IS NOT THE USER'S. Whether the game
+-- reports other people's heals is a property of the client, so a dropdown
+-- offering to restrict the source would be a lie on the client where it cannot
+-- be restricted, and a redundant control on the one where it never needed to be.
 --
--- One entry today. The second is `healcomm`, which would see heals cast by
--- other group members running a LibHealComm addon; it is a separate plan and a
--- separate dependency decision. NO DROPDOWN IS BUILT WHILE THERE IS ONE ENTRY
--- -- the precedent Plan 10 set for the five-second-rule trigger, for the same
--- reason: a control with a single value is noise.
---
--- If the Compat probes ever come back positive, an `api` provider slots in
--- here too -- and would still need `own` for the HoT half, which that API has
--- never covered.
+-- These entries are therefore descriptive, not selectable. `/duf compat` and
+-- `/duf profile` report which one is live, which is the question anyone actually
+-- has. Same reasoning Plan 10 used to withhold a one-value dropdown -- a control
+-- whose value is decided elsewhere is noise.
 --------------------------------------------------------------------------------
 
 HealPrediction.PROVIDERS = {
+	api = {
+		label = L["Everyone's heals, from the game"],
+		desc = L["UnitGetIncomingHeals reports direct heals from anyone, pushed by UNIT_HEAL_PREDICTION. HoTs are not in it and are read off the unit's auras instead."],
+	},
 	own = {
 		label = L["My casts only"],
-		desc = L["Heals you cast yourself. Other people's heals are not broadcast by these clients, so nothing else is knowable without a comms library."],
+		desc = L["The fallback for a client with no incoming-heal API: heals you cast yourself, sized from your own combat log."],
 	},
 }
 
 HealPrediction.DEFAULT_PROVIDER = "own"
 
+--- Which path this client is on. Not a setting.
+function HealPrediction:DirectProvider()
+	return API_DIRECT and "api" or "own"
+end
+
 function HealPrediction:ProviderNames()
-	return { "own" }
+	return { "api", "own" }
 end
 
 --------------------------------------------------------------------------------
@@ -234,7 +338,22 @@ end
 function HealPrediction:IncomingForGUID(guid, unit, now)
 	now = now or GetTime()
 
-	local direct = 0
+	local direct
+
+	-- The API where the client has it. It already includes the player's own
+	-- casts, so the derived path below is an ALTERNATIVE, never an addend --
+	-- summing them would double-count every heal you cast, which looks entirely
+	-- plausible on screen and is the easiest defect in this file to ship.
+	--
+	-- nil, not 0, is what "no such API" returns, and a unit token is needed to
+	-- ask at all: IncomingForGUID can be called with a bare GUID.
+	if unit then direct = Compat.GetIncomingHeals(unit) end
+	if direct then
+		local hotOnly = unit and self:HotTotal(unit, now) or 0
+		return direct, hotOnly
+	end
+
+	direct = 0
 	local current = state.current
 
 	if current then
@@ -266,17 +385,25 @@ function HealPrediction:IncomingForGUID(guid, unit, now)
 	return direct, hot
 end
 
---- Healing still to come from the player's own HoTs on `unit`.
+--- Healing still to come from HoTs on `unit`, cast by anyone in the group.
 --
 -- A HoT is not tracked by remembering that we cast it -- it is READ OFF THE
 -- UNIT every time. That is deliberate: the aura is the authoritative record of
 -- whether it is still there and when it expires, so a refresh, an early
 -- dispel, a death or a zone change all resolve themselves with no bookkeeping
 -- and no way for our copy to drift out of agreement with the game's.
+--
+-- Plan 19 widened this from the player's own HoTs to the group's, and the whole
+-- of the detection change is that `aura.castByPlayer` became a roster test.
+-- `aura.source` is a UNIT TOKEN and is nil when the caster has no token, which
+-- is precisely the non-group case -- so group-only scoping falls out of the data
+-- rather than needing a second test. Verified to survive raid distance:
+-- COMPAT_FINDINGS, "an aura's caster resolves at raid distance".
 function HealPrediction:HotTotal(unit, now)
-	-- Nothing periodic learned yet means nothing can match; skip the scan
-	-- entirely rather than walking forty aura slots to find that out.
-	if next(learned.periodic) == nil then return 0 end
+	-- Nothing learned anywhere means nothing can match; skip the scan entirely
+	-- rather than walking forty aura slots to find that out. Both stores have to
+	-- be empty now, not just the player's.
+	if next(learned.periodic) == nil and next(session.mean) == nil then return 0 end
 
 	now = now or GetTime()
 	local total = 0
@@ -286,13 +413,25 @@ function HealPrediction:HotTotal(unit, now)
 		if not aura then break end
 
 		local spellID = aura.spellId
-		local per = spellID and learned.periodic[spellID]
-
 		-- expirationTime of 0 means no duration, which a HoT never has.
-		if per and aura.castByPlayer and aura.expirationTime and aura.expirationTime > now then
-			local interval = learned.interval[spellID] or DEFAULT_TICK
-			local ticks = ceil((aura.expirationTime - now) / interval)
-			if ticks > 0 then total = total + ticks * per end
+		if spellID and aura.expirationTime and aura.expirationTime > now then
+			local casterGUID
+			if aura.castByPlayer then
+				casterGUID = state.playerGUID
+			elseif aura.source then
+				casterGUID = UnitGUID(aura.source)
+			end
+
+			if casterGUID and roster[casterGUID] then
+				local per = (casterGUID == state.playerGUID
+					and learned.periodic[spellID])
+					or periodicAmount(casterGUID, spellID)
+				if per then
+					local interval = learned.interval[spellID] or DEFAULT_TICK
+					local ticks = ceil((aura.expirationTime - now) / interval)
+					if ticks > 0 then total = total + ticks * per end
+				end
+			end
 		end
 	end
 
@@ -311,7 +450,9 @@ end
 -- that Greater Heal heals for forty, and it would do it most reliably on
 -- exactly the targets a healer is watching. What is being learned is the SIZE
 -- OF THE HEAL, and the size of the heal is what it did plus what it wasted.
-function HealPrediction:NoteHeal(spellID, amount, overhealing, critical, periodic)
+-- @param casterGUID  nil means the player, which keeps every existing caller
+--        and every Plan 11 test working unchanged.
+function HealPrediction:NoteHeal(spellID, amount, overhealing, critical, periodic, casterGUID)
 	if not spellID then return end
 
 	-- Crits are discarded, not scaled down. A crit is drawn from a different
@@ -322,7 +463,27 @@ function HealPrediction:NoteHeal(spellID, amount, overhealing, critical, periodi
 	local total = (amount or 0) + (overhealing or 0)
 	if total <= 0 then return end
 
-	blend(periodic and learned.periodic or learned.direct, spellID, total)
+	if not casterGUID or casterGUID == state.playerGUID then
+		blend(periodic and learned.periodic or learned.direct, spellID, total)
+		-- The player's own periodic amounts seed the cross-caster mean too. It
+		-- is a first guess for a healer nobody has watched yet, and one real
+		-- observation of theirs blends it away.
+		if periodic then blend(session.mean, spellID, total) end
+		return
+	end
+
+	-- Somebody else's. Direct amounts are not learned for other casters at all:
+	-- the API reports those, so a store of them would be dead weight that also
+	-- has to be kept correct.
+	if not periodic then return end
+
+	local byCaster = session.periodic[casterGUID]
+	if not byCaster then
+		byCaster = {}
+		session.periodic[casterGUID] = byCaster
+	end
+	blend(byCaster, spellID, total)
+	blend(session.mean, spellID, total)
 end
 
 --- Observe the gap between two consecutive ticks of the same HoT.
@@ -330,14 +491,21 @@ end
 -- Guarded on the tick having been on the SAME target: two Rejuvenations
 -- ticking on two party members interleave, and the gap between one target's
 -- tick and another's is not a tick interval at all.
-function HealPrediction:NoteTick(spellID, guid, now)
+--
+-- Plan 19 opened the same trap sideways. TWO DRUIDS' REJUVENATIONS ON ONE
+-- TARGET also interleave, and that gap is not an interval either, so the caster
+-- has to match as well. The interval itself stays global per spell -- Classic
+-- has no meaningful haste, so a Rejuvenation ticks every three seconds for
+-- everybody. What changed is that the samples feeding it stopped being noise.
+function HealPrediction:NoteTick(spellID, guid, now, casterGUID)
 	if not spellID or not guid then return end
 	now = now or GetTime()
 
 	local previous = state.lastTick[spellID]
-	state.lastTick[spellID] = { guid = guid, at = now }
+	state.lastTick[spellID] = { guid = guid, at = now, caster = casterGUID }
 
 	if not previous or previous.guid ~= guid then return end
+	if previous.caster ~= casterGUID then return end
 
 	local sample = now - previous.at
 	-- Out of band is a MISSED observation, not evidence of a strange cadence --
@@ -358,9 +526,15 @@ end
 --- Every combat-log line in the game arrives here while this is listening, so
 -- the shape of this function is a performance decision, not a style one:
 --
---   * one comparison against a hoisted local before anything else happens,
+--   * one hash lookup against a hoisted local before anything else happens,
 --   * no table built per line, no string operation on the discard path,
 --   * positional unpacking straight into locals, which allocates nothing.
+--
+-- Plan 11's first line was one comparison against the player's GUID. Plan 19
+-- made it a lookup in the roster set, which is the same order of work and the
+-- same absence of allocation -- and in a group of one the set holds exactly one
+-- entry, so the solo case did not get slower either. What widened is the
+-- CONTENTS of a table, not the cost of the noisiest event in the game.
 --
 -- The base payload is eleven fields; SPELL_HEAL and SPELL_PERIODIC_HEAL then
 -- carry spellId, spellName, spellSchool, amount, overhealing, absorbed,
@@ -369,13 +543,17 @@ function HealPrediction:OnCombatLog()
 	local _, subevent, _, sourceGUID, _, _, _, destGUID, _, _, _,
 		spellID, _, _, amount, overhealing, _, critical = Compat.GetCombatLogEvent()
 
-	if not state.playerGUID or sourceGUID ~= state.playerGUID then return end
+	if not sourceGUID or not roster[sourceGUID] then return end
 
 	if subevent == "SPELL_HEAL" then
-		self:NoteHeal(spellID, amount, overhealing, critical, false)
+		-- With the API live this is the player's own direct amounts only, and
+		-- they are no longer read by anything. Kept because the moment the API
+		-- is absent they are the whole direct prediction, and because learning
+		-- costs nothing on a line already being parsed.
+		self:NoteHeal(spellID, amount, overhealing, critical, false, sourceGUID)
 	elseif subevent == "SPELL_PERIODIC_HEAL" then
-		self:NoteHeal(spellID, amount, overhealing, critical, true)
-		self:NoteTick(spellID, destGUID)
+		self:NoteHeal(spellID, amount, overhealing, critical, true, sourceGUID)
+		self:NoteTick(spellID, destGUID, nil, sourceGUID)
 		-- A tick landed, so one fewer is still to come. The bar has to be told:
 		-- this is the event that replaces the ticker a HoT would otherwise need.
 		self:Refresh(destGUID)
@@ -505,6 +683,9 @@ local function onListenerEvent(_, event, a, b, c, d)
 		HealPrediction:OnCombatLog()
 	elseif event == "PLAYER_ENTERING_WORLD" or event == "PLAYER_LOGIN" then
 		state.playerGUID = UnitGUID("player")
+		rebuildRoster()
+	elseif event == "GROUP_ROSTER_UPDATE" then
+		rebuildRoster()
 	elseif event == "UNIT_SPELLCAST_SENT" then
 		-- SENT alone puts the target where the others put the castGUID:
 		-- (unit, target, castGUID, spellID).
@@ -527,8 +708,19 @@ local function start()
 
 	Compat.RegisterEvent(listener, "COMBAT_LOG_EVENT_UNFILTERED")
 	Compat.RegisterEvent(listener, "PLAYER_ENTERING_WORLD")
-	for i = 1, #SPELLCAST_EVENTS do
-		Compat.RegisterUnitEvent(listener, SPELLCAST_EVENTS[i], "player")
+	-- The roster is both the combat-log guard and the HoT scope test, so it has
+	-- to be current before either is consulted.
+	Compat.RegisterEvent(listener, "GROUP_ROSTER_UPDATE")
+	rebuildRoster()
+
+	-- Ten subscriptions that exist ONLY to reconstruct a number the game will
+	-- hand over on a client that has UnitGetIncomingHeals. Where it does, they
+	-- are not registered at all -- the cheapest possible version of Plan 11's
+	-- direct-cast machinery is not running it.
+	if not API_DIRECT then
+		for i = 1, #SPELLCAST_EVENTS do
+			Compat.RegisterUnitEvent(listener, SPELLCAST_EVENTS[i], "player")
+		end
 	end
 
 	listening = true
@@ -566,13 +758,37 @@ function HealPrediction:AttachedCount()
 	return n
 end
 
+--- How many other casters this session has learned HoT amounts for, and how
+-- many spells across all of them. Reported so the session store's size is
+-- observable rather than asserted to be bounded.
+function HealPrediction:SessionCount()
+	local casters, spells = 0, 0
+	for _, byCaster in pairs(session.periodic) do
+		casters = casters + 1
+		for _ in pairs(byCaster) do spells = spells + 1 end
+	end
+	return casters, spells
+end
+
+function HealPrediction:RosterCount()
+	local n = 0
+	for _ in pairs(roster) do n = n + 1 end
+	return n
+end
+
 --- One line for /duf profile.
+--
+-- Reports WHICH DIRECT PATH IS LIVE, because that is now a property of the
+-- client rather than a setting, and "why am I not seeing other people's heals"
+-- has exactly one useful answer.
 function HealPrediction:Describe()
 	local direct, periodic = self:LearnedCount()
+	local casters = self:SessionCount()
 	return string.format(
-		listening and L["listening, %d frame(s), %d direct and %d periodic spell(s) learned"]
-			or L["not listening (%d frames, %d direct and %d periodic spell(s) learned)"],
-		self:AttachedCount(), direct, periodic)
+		listening and L["listening, %d frame(s), %s direct, %d/%d spell(s) learned, %d other caster(s), roster %d"]
+			or L["not listening (%d frames, %s direct, %d/%d spell(s) learned, %d other caster(s), roster %d)"],
+		self:AttachedCount(), self:DirectProvider(), direct, periodic,
+		casters, self:RosterCount())
 end
 
 --- Drop every derived value. Used by the test suite; there is no in-game path
@@ -586,6 +802,8 @@ function HealPrediction:Reset()
 	for frame in pairs(attached) do attached[frame] = nil end
 	stop()
 	learned = newStore()
+	session = newSession()
+	roster = {}
 end
 
 ns.HealPrediction = HealPrediction
