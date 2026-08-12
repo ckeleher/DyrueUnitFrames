@@ -63,6 +63,28 @@ local function yn(value)
 	return "|cffff5555no|r"
 end
 
+--- Put a trace's record into SavedVariables the moment it STARTS.
+--
+-- The mana and rage traces below have always done this. The Plan 19 traces did
+-- not: they built a record, ran for ninety seconds and wrote at the end, so a
+-- /reload before the timer fired discarded the entire run and left nothing
+-- behind to say it had ever happened. Ninety seconds of a raid is not a cheap
+-- thing to lose to a keystroke.
+--
+-- `completed` is the point of the exercise. A partial record read as a finished
+-- one is worse than no record, so it starts false and is set true only by the
+-- trace's own timer. Anything reading these runs must check it.
+local function registerRun(key, record)
+	record.completed = false
+	local runs = DyrueUnitFramesProbeDB[key .. "Runs"] or {}
+	runs[#runs + 1] = record
+	while #runs > 10 do table.remove(runs, 1) end
+	DyrueUnitFramesProbeDB[key .. "Runs"] = runs
+	-- The same table, not a copy, so everything the trace records lands here.
+	DyrueUnitFramesProbeDB[key .. "Trace"] = record
+	return runs
+end
+
 --------------------------------------------------------------------------------
 -- Static survey (task 0.1)
 --------------------------------------------------------------------------------
@@ -1547,6 +1569,8 @@ local function startHealTrace(seconds, label)
 		record.eventsValid[event] = eventExists(event)
 	end
 
+	local runs = registerRun("heals", record)
+
 	-- The roster is both the group census and the "is this line worth reading"
 	-- test that Plan 19's combat-log guard will use, so it is built the same way
 	-- here: a GUID set, rebuilt on roster change rather than walked per line.
@@ -1719,11 +1743,7 @@ local function startHealTrace(seconds, label)
 
 		record.censusAfter = auraCensus()
 
-		local runs = DyrueUnitFramesProbeDB.healsRuns or {}
-		runs[#runs + 1] = record
-		while #runs > 10 do table.remove(runs, 1) end
-		DyrueUnitFramesProbeDB.healsRuns = runs
-		DyrueUnitFramesProbeDB.healsTrace = record
+		record.completed = true
 
 		header("Heal sourcing trace finished")
 		out(record.lines, "combat log line(s) in", seconds .. "s",
@@ -1937,6 +1957,8 @@ local function startHealCommTrace(seconds, label)
 		record.registrationFailed = true
 	end
 
+	local runs = registerRun("healcomm", record)
+
 	local function onAddonMessage(prefix, text, channel, sender)
 		local entry = record.prefixes[prefix]
 		if not entry then return end
@@ -2041,11 +2063,7 @@ local function startHealCommTrace(seconds, label)
 		record.sendersNotHealing = sendersNotHealing
 		record.healerThreshold = HEALER_THRESHOLD
 
-		local runs = DyrueUnitFramesProbeDB.healcommRuns or {}
-		runs[#runs + 1] = record
-		while #runs > 10 do table.remove(runs, 1) end
-		DyrueUnitFramesProbeDB.healcommRuns = runs
-		DyrueUnitFramesProbeDB.healcommTrace = record
+		record.completed = true
 
 		header("LibHealComm listener finished")
 		out(record.lines, "combat log line(s);", record.healerCount,
@@ -2228,6 +2246,8 @@ local function startIncomingTrace(seconds, label)
 		return
 	end
 
+	local runs = registerRun("incoming", record)
+
 	-- Question 2's whole apparatus, and it is deliberately this small. Sampling
 	-- both forms in the same instant means "are other people included" needs no
 	-- inference about timing or ordering: the difference IS the answer.
@@ -2342,11 +2362,7 @@ local function startIncomingTrace(seconds, label)
 		for _ in pairs(record.pending) do record.unresolved = record.unresolved + 1 end
 		record.pending = nil
 
-		local runs = DyrueUnitFramesProbeDB.incomingRuns or {}
-		runs[#runs + 1] = record
-		while #runs > 10 do table.remove(runs, 1) end
-		DyrueUnitFramesProbeDB.incomingRuns = runs
-		DyrueUnitFramesProbeDB.incomingTrace = record
+		record.completed = true
 
 		header("Incoming heals API - results")
 		out(record.samples, "sample(s);", record.nonZero, "non-zero;",
@@ -2487,6 +2503,17 @@ SlashCmdList.DUFPROBE = function(input)
 		local record = DyrueUnitFramesProbeDB.survey
 		if not record then out("No survey yet; run /dufprobe first.") return end
 		out("Survey from", record.timestamp, "toc", record.tocVersion)
+	elseif cmd ~= "" then
+		-- An unrecognised subcommand used to fall through to the full survey,
+		-- which made a REAL failure indistinguishable from success: the addon is
+		-- updated on disk, the client is still running the copy it loaded at
+		-- login, the new subcommand does not exist yet, and what the user sees is
+		-- a wall of plausible output from a different probe entirely. That is
+		-- exactly how a /dufprobe incoming run came back as an API survey.
+		out("|cffff5555Unknown subcommand '" .. cmd .. "'.|r")
+		out("If you expected it to exist, the probe was updated on disk but this")
+		out("client is still running the copy it loaded at login - |cffffcc00/reload|r first.")
+		out("Known: |cffffcc00mana derived health portrait auraorder rage heals healcomm incoming scroll dump|r")
 	else
 		survey()
 		out("Also run: |cffffcc00/dufprobe mana|r, |cffffcc00derived|r, |cffffcc00health|r, |cffffcc00portrait|r, |cffffcc00auraorder|r, |cffffcc00rage|r, |cffffcc00heals|r, |cffffcc00healcomm|r, |cffffcc00incoming|r, |cffffcc00scroll|r")
