@@ -52,7 +52,7 @@ Phase 0 is for.
 
 | Question | Assumed | Classic Era | TBC | Where it is used |
 |---|---|---|---|---|
-| `issecretvalue` / `canaccessvalue` exist | **No** — SPEC §1.3 | | | If either exists, the text engine's premise is gone. `Compat.hasSecretValues` reports it and the first-run message warns loudly. |
+| `issecretvalue` / `canaccessvalue` exist | ~~**No** — SPEC §1.3~~ **WRONG** | **PRESENT — 11 Aug 2026** | | `Compat.hasSecretValues` is `true` on 1.15.9. This is a *presence* check; whether anything is actually secret is untested and is the question that matters. See the Classic Era survey below |
 | `C_UnitAuras.GetAuraDataByIndex` | Present (Midnight shared code) | | | `Compat.GetAura`; falls back to `UnitAura` automatically |
 | `C_UnitAuras.GetAuraDataByAuraInstanceID` | Present | | | Incremental aura path |
 | `UNIT_AURA` carries `updateInfo` | Probably | | | Used only to *skip* no-op updates; a full rescan is the normal path (see the note in `Elements/Auras.lua`) |
@@ -65,7 +65,7 @@ Phase 0 is for.
 | `SecureUnitButtonTemplate` | Present | | | Every frame. If this is ever gone the addon cannot work and says so plainly |
 | `RegisterUnitWatch` | Present | | | Show/hide for conditional units |
 | `frame:RegisterUnitEvent` | Present | | | Per-unit registration (SPEC §5.7) |
-| `UNIT_HEALTH_FREQUENT` | **Probably removed** | | | Not required. `Compat.HasEvent` skips anything invalid rather than erroring |
+| `UNIT_HEALTH_FREQUENT` | ~~**Probably removed**~~ **WRONG** | **Present — 11 Aug 2026** | | Not required either way. `Compat.HasEvent` skips anything invalid rather than erroring |
 | `UNIT_COMBO_POINTS` | Present | | **ABSENT — verified 2 Aug 2026** | Combo bar. See the verified finding below; the live path is `UNIT_POWER_UPDATE` for `"player"` |
 | `GetComboPoints` | Present | | **Present — verified 2 Aug 2026** | `Compat.GetComboPoints`. Only the event went, not the reader |
 | `GetPetHappiness` | Present (Classic/TBC only) | | | `[happiness]` tag |
@@ -82,6 +82,63 @@ Phase 0 is for.
 | `UnitCastingInfo` / `UnitChannelInfo` | Present, milliseconds | | | `Compat.GetCastEndTime`. Only ever called for `"player"` |
 | `Texture:SetGradient` takes color **objects** | Present — 10.0 signature | | | Plan 16's overflow cap band, through `Compat.SetGradient`. Needs `CreateColor` too, which is assumed present wherever this is |
 | `Texture:SetGradientAlpha` (eight loose numbers) | **Absent** — replaced in 10.0 | | | The pre-10.0 form. Tried second and expected to fail; if it turns out to be the live one on either client, the wrapper already handles it and only this row changes |
+
+### Classic Era capability dump — 11 August 2026, 1.15.9 / 69109
+
+`/duf compat` on a live Classic Era character. Recorded whole, because four of
+these lines contradict rows above and one of them is a spec premise.
+
+```
+flavor = vanilla            gameVersion = 1.15.9        gameBuild = 69109
+tocVersion = 11509          MANA = 0                    RAGE = 1
+hasIncomingHeals = true     hasTotalAbsorbs = true      hasHealAbsorbs = true
+hasUnitHealPrediction = true
+hasSecretValues = true      hasUnitHealthFrequent = true
+hasFocus = true             hasPlayerFocusChanged = true
+hasEditMode = true          hasPetHappiness = true
+hasUnitComboPoints = false  hasGetComboPoints = true    maxComboPoints = 5
+hasSetGradient = true       hasSetGradientAlpha = false
+hasUnitAurasAPI = true      hasAuraInstanceLookup = true
+```
+
+**Confirmed as assumed:** the power enums, `maxComboPoints`, the gradient pair,
+the aura API pair, and `hasUnitComboPoints = false` — previously verified on TBC
+only and now false on both clients.
+
+**Four contradictions, in order of how much they matter.** Every one is a
+*presence* flag, and this file has just spent four probes establishing that
+presence is not function. None of them should be acted on before a functional
+check.
+
+1. **`hasSecretValues = true`.** SPEC §1.3 asserts these do not exist on Classic
+   and the row above says "if either exists, the text engine's premise is gone."
+   `Compat.hasSecretValues` is `(_G.issecretvalue ~= nil) or (_G.canaccessvalue ~= nil)`
+   — the functions are present. **Whether any value is actually secret is
+   untested**, and that is the question the spec cares about. To close it: call
+   `issecretvalue` on real values (`UnitHealth`, `UnitName`, `UnitPower`) and see
+   whether anything comes back true. If nothing does, §1.3 holds in practice and
+   the row becomes "present but inert".
+
+2. **`hasFocus = true` on Classic Era.** SPEC §FR-8.5 states focus does not exist
+   here, and the entire focus-gating design rests on it. The probe is
+   `C_EventUtils.IsEventValid("PLAYER_FOCUS_CHANGED")`, which is validity in the
+   shared codebase rather than evidence that `/focus` works. **This is live
+   behaviour**: with the flag true, the addon builds a focus frame and offers
+   focus options on Era. To close it: `/focus` a target and check
+   `UnitExists("focus")`. A yes is a feature *gain* — §FR-8.5 can be relaxed. A
+   no means a frame is being created that can never populate.
+
+3. **`hasEditMode = true`.** Answers the first blank in §5.6 below. Edit Mode
+   exists on 1.15.9. Whether it can hide `PlayerFrame` and `TargetFrame` is still
+   the open question, and §5.6 ranks that above the addon hiding them itself.
+
+4. **`hasUnitHealthFrequent = true`**, against "probably removed". Harmless — the
+   code handles either — but it was a guess and it was wrong.
+
+**And the answer this dump was fetched for:** all four heal and absorb APIs are
+present on Era too, so Plan 19's derived fallback branch may never run on either
+client. Still untested functionally here; only TBC has had `/dufprobe incoming`
+pointed at it.
 
 ### VERIFIED — `GetStringWidth` ignores `SetWidth`
 
