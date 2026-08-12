@@ -21,6 +21,12 @@
 --                        all. Run it in a party or raid, mid-fight; runs
 --                        accumulate in DyrueUnitFramesProbeDB.healsRuns, so
 --                        label them and /reload once at the end.
+--   /dufprobe healcomm [label]
+--                        90-second LibHealComm listener (Plan 19). Counts how
+--                        many of the raid's healers still broadcast on the LHC40
+--                        wire format, which is what decides whether a
+--                        receive-only reader is worth designing. Receive-only:
+--                        it never transmits.
 --   /dufprobe scroll [label]
 --                        options panel geometry (Plan 3). Chat gets a summary;
 --                        the full ancestry, anchors and overflow list go to
@@ -1805,6 +1811,293 @@ local function startHealTrace(seconds, label)
 end
 
 --------------------------------------------------------------------------------
+-- Plan 19 - is anyone still broadcasting on LibHealComm?
+--
+-- /dufprobe heals answered the direct-cast question and the answer was no: 368
+-- SPELL_CAST_START lines across two raids, none carrying a destination, against
+-- a SPELL_CAST_SUCCESS control that carried one four times in five. The combat
+-- log does not know who a cast in flight is aimed at.
+--
+-- What it also showed is that everything ELSE is exact. UNIT_SPELLCAST_START
+-- fires for raid tokens, UnitCastingInfo reads back for them 25 times out of 25,
+-- and the amounts are already learned. The gap is one field wide: the target.
+--
+-- LibHealComm-4.0 fills exactly that field, and vendoring it is not viable --
+-- its Classic branch stopped in September 2022 against TOC 1.13.3, two years
+-- before Classic Era 1.15 and before Anniversary existed at all. But the library
+-- is only one half of what it is. The other half is a WIRE FORMAT that every
+-- VuhDo, HealBot, Grid2 and ElvUI user in the raid may still be transmitting on,
+-- and receiving that needs no spell database and nothing that can go stale.
+--
+-- Whether that is worth designing depends on a number nobody can supply from a
+-- forum post: HOW MANY HEALERS IN YOUR RAID ARE ACTUALLY BROADCASTING. So this
+-- counts them.
+--
+-- Two properties this deliberately has:
+--
+--   * IT IS RECEIVE-ONLY. Nothing here ever calls SendAddonMessage. Injecting
+--     malformed LHC40 traffic would break heal prediction for every person in
+--     the raid running an addon that reads it, which is not a cost a probe gets
+--     to impose on other people.
+--   * IT REGISTERS SEVERAL PREFIXES. "LHC40" is the real one, confirmed against
+--     published forks of the library. The others are kept because a probe that
+--     registers ONE prefix and sees nothing cannot tell "nobody is broadcasting"
+--     from "wrong prefix", and those two answers point in opposite directions.
+--
+-- The verdict turns on the OVERLAP, not on the raw message count: of the healers
+-- seen healing in the combat log, how many also transmitted. Ten thousand
+-- messages from two people is a worse answer than fifty from twelve.
+--------------------------------------------------------------------------------
+
+local healcommTracer = CreateFrame("Frame")
+local healcommRunning = false
+
+local HEALCOMM_PREFIXES = { "LHC40", "HealComm", "LHC", "LibHealComm" }
+
+--- Heal events in the window before a source counts as "a healer". Filters out
+-- the incidental: a warlock's health funnel, a healthstone, a paladin's one
+-- panic Flash of Light. Deliberately low -- the question is who CAN heal, not
+-- who topped the meters.
+local HEALER_THRESHOLD = 5
+
+--- Names arrive as "Name" from the combat log and "Name-Realm" from the addon
+-- channel, so both sides get flattened before they are compared. Without this
+-- every cross-realm sender would look like a healer who was not broadcasting,
+-- which is the exact direction that would produce a false negative.
+local function shortName(name)
+	if not name then return nil end
+	return name:match("^([^-]+)") or name
+end
+
+local function registerPrefix(prefix)
+	local fn = (C_ChatInfo and C_ChatInfo.RegisterAddonMessagePrefix)
+		or _G.RegisterAddonMessagePrefix
+	if not fn then return nil end
+	local ok, result = pcall(fn, prefix)
+	if not ok then return false end
+	-- C_ChatInfo returns a boolean; the older global returned nothing at all,
+	-- so "no error" is the only success signal available there.
+	if result == nil then return true end
+	return result and true or false
+end
+
+local function startHealCommTrace(seconds, label)
+	if healcommRunning then
+		out("|cffffcc00A healcomm trace is already running.|r Wait for it to finish.")
+		return
+	end
+
+	seconds = seconds or 90
+	if label == "" then label = nil end
+
+	local started = GetTime()
+	local version, build, buildDate, tocVersion = GetBuildInfo()
+
+	local record = {
+		timestamp = date("%Y-%m-%d %H:%M:%S"),
+		label = label,
+		version = version, build = build, buildDate = buildDate, tocVersion = tocVersion,
+		projectId = WOW_PROJECT_ID,
+		seconds = seconds,
+		playerName = shortName(UnitName("player")),
+		rosterSize = (GetNumGroupMembers and GetNumGroupMembers()) or 0,
+		inRaid = (IsInRaid and IsInRaid()) and true or false,
+		prefixes = {},
+		healers = {},
+		healerCount = 0,
+		lines = 0,
+	}
+
+	header("LibHealComm listener (Plan 19)")
+
+	local anyRegistered = false
+	for _, prefix in ipairs(HEALCOMM_PREFIXES) do
+		local registered = registerPrefix(prefix)
+		if registered then anyRegistered = true end
+		record.prefixes[prefix] = {
+			registered = registered,
+			messages = 0,
+			senders = {},
+			senderCount = 0,
+			channels = {},
+			samples = {},
+		}
+		out(" ", prefix, "registered", yn(registered))
+	end
+
+	if not anyRegistered then
+		out("|cffff5555No addon message prefix could be registered.|r Nothing to")
+		out("listen on; the receive-only route cannot be evaluated on this client.")
+		record.registrationFailed = true
+	end
+
+	local function onAddonMessage(prefix, text, channel, sender)
+		local entry = record.prefixes[prefix]
+		if not entry then return end
+
+		entry.messages = entry.messages + 1
+
+		local from = shortName(sender) or "?"
+		if not entry.senders[from] then
+			entry.senders[from] = 0
+			entry.senderCount = entry.senderCount + 1
+		end
+		entry.senders[from] = entry.senders[from] + 1
+
+		local where = channel or "?"
+		entry.channels[where] = (entry.channels[where] or 0) + 1
+
+		-- A few truncated samples, to judge later what parsing the format would
+		-- actually cost. Capped and clipped: this is other people's raid traffic
+		-- and there is no reason to keep a transcript of it.
+		if #entry.samples < 8 then
+			entry.samples[#entry.samples + 1] = {
+				t = GetTime() - started,
+				from = from,
+				channel = where,
+				text = tostring(text or ""):sub(1, 120),
+			}
+		end
+	end
+
+	local function onCombatLog()
+		local info = CombatLogGetCurrentEventInfo
+		if not info then return end
+		local _, subevent, _, _, sourceName = info()
+
+		record.lines = record.lines + 1
+		if subevent ~= "SPELL_HEAL" and subevent ~= "SPELL_PERIODIC_HEAL" then return end
+
+		local name = shortName(sourceName)
+		if not name then return end
+
+		if not record.healers[name] then
+			record.healers[name] = 0
+			record.healerCount = record.healerCount + 1
+		end
+		record.healers[name] = record.healers[name] + 1
+	end
+
+	pcall(healcommTracer.RegisterEvent, healcommTracer, "CHAT_MSG_ADDON")
+	pcall(healcommTracer.RegisterEvent, healcommTracer, "COMBAT_LOG_EVENT_UNFILTERED")
+
+	healcommTracer:SetScript("OnEvent", function(_, event, a, b, c, d)
+		if event == "CHAT_MSG_ADDON" then
+			onAddonMessage(a, b, c, d)
+		else
+			onCombatLog()
+		end
+	end)
+
+	healcommRunning = true
+
+	out("Listening for " .. seconds .. "s. Group size:", record.rosterSize,
+		record.inRaid and "(raid)" or "(party)")
+	out("|cffffcc00Run it mid-fight, with the raid's healers actually healing.|r")
+	out("Receive-only - this never transmits anything.")
+
+	C_Timer.After(seconds, function()
+		healcommTracer:UnregisterAllEvents()
+		healcommTracer:SetScript("OnEvent", nil)
+		healcommRunning = false
+
+		-- The overlap, which is the whole question. Three sets rather than one
+		-- ratio: healers who transmitted, healers who did not, and senders never
+		-- seen healing (a healer who happened not to cast in the window, or an
+		-- addon broadcasting for someone who is not healing at all).
+		local lhc = record.prefixes["LHC40"]
+		local anySender = {}
+		for _, entry in pairs(record.prefixes) do
+			for name in pairs(entry.senders) do anySender[name] = true end
+		end
+
+		local broadcasting, silent, sendersNotHealing = {}, {}, {}
+		for name, count in pairs(record.healers) do
+			if count >= HEALER_THRESHOLD then
+				if anySender[name] then
+					broadcasting[#broadcasting + 1] = name
+				else
+					silent[#silent + 1] = name
+				end
+			end
+		end
+		for name in pairs(anySender) do
+			if (record.healers[name] or 0) < HEALER_THRESHOLD then
+				sendersNotHealing[#sendersNotHealing + 1] = name
+			end
+		end
+		table.sort(broadcasting)
+		table.sort(silent)
+		table.sort(sendersNotHealing)
+
+		record.broadcastingHealers = broadcasting
+		record.silentHealers = silent
+		record.sendersNotHealing = sendersNotHealing
+		record.healerThreshold = HEALER_THRESHOLD
+
+		local runs = DyrueUnitFramesProbeDB.healcommRuns or {}
+		runs[#runs + 1] = record
+		while #runs > 10 do table.remove(runs, 1) end
+		DyrueUnitFramesProbeDB.healcommRuns = runs
+		DyrueUnitFramesProbeDB.healcommTrace = record
+
+		header("LibHealComm listener finished")
+		out(record.lines, "combat log line(s);", record.healerCount,
+			"distinct heal source(s), of which", #broadcasting + #silent,
+			"cast at least", HEALER_THRESHOLD, "heal(s)")
+
+		header("Traffic by prefix")
+		local totalMessages = 0
+		for _, prefix in ipairs(HEALCOMM_PREFIXES) do
+			local entry = record.prefixes[prefix]
+			totalMessages = totalMessages + entry.messages
+			local channels = {}
+			for where, n in pairs(entry.channels) do channels[#channels + 1] = where .. "=" .. n end
+			table.sort(channels)
+			out(" ", prefix, entry.messages, "message(s) from", entry.senderCount, "sender(s)",
+				#channels > 0 and ("[" .. table.concat(channels, " ") .. "]") or "")
+		end
+
+		header("The number this run exists for")
+		out("Healers broadcasting:", #broadcasting,
+			#broadcasting > 0 and ("(" .. table.concat(broadcasting, ", ") .. ")") or "")
+		out("Healers NOT broadcasting:", #silent,
+			#silent > 0 and ("(" .. table.concat(silent, ", ") .. ")") or "")
+		if #sendersNotHealing > 0 then
+			out("Broadcasting but not seen healing:", #sendersNotHealing,
+				"(" .. table.concat(sendersNotHealing, ", ") .. ")")
+		end
+
+		local observed = #broadcasting + #silent
+		if record.registrationFailed then
+			out("|cffff5555Registration failed, so zero traffic means nothing.|r")
+		elseif totalMessages == 0 and observed == 0 then
+			out("|cffffcc00Nothing heard and nobody healed.|r Inconclusive - this run")
+			out("measured neither side. Re-run it during a real fight.")
+		elseif totalMessages == 0 then
+			out("|cffff5555Not one message, across", observed, "healer(s) who were")
+			out("actively healing.|r Nobody in this group is transmitting on any prefix")
+			out("tried, so a receive-only implementation would show an empty bar.")
+			out("The direct-cast half is dead on this client unless the prefix is wrong -")
+			out("check the registration lines above before concluding.")
+		elseif #broadcasting == 0 then
+			out("|cffffcc00Traffic exists but none of it is from the healers.|r Worth")
+			out("looking at the samples in SavedVariables before drawing a conclusion.")
+		else
+			out(string.format("|cff40ff40%d of %d active healers are broadcasting (%.0f%%).|r",
+				#broadcasting, observed, observed > 0 and (100 * #broadcasting / observed) or 0))
+			out("A receive-only reader would cover that share of the raid's direct heals,")
+			out("with no spell database and nothing to go stale. Sample messages are in")
+			out("SavedVariables - the format decides what parsing them costs.")
+		end
+
+		out(string.format("|cff40ff40Saved as run %d%s.|r", #runs,
+			label and (" labelled '" .. label .. "'") or ""))
+		out("|cffffcc00/reload once|r when you are done to flush it to disk.")
+	end)
+end
+
+--------------------------------------------------------------------------------
 -- Slash command
 --------------------------------------------------------------------------------
 
@@ -1826,6 +2119,8 @@ SlashCmdList.DUFPROBE = function(input)
 		startRageTrace(90)
 	elseif cmd == "heals" then
 		startHealTrace(90, (input or ""):match("^%s*%S+%s+(.-)%s*$"))
+	elseif cmd == "healcomm" then
+		startHealCommTrace(90, (input or ""):match("^%s*%S+%s+(.-)%s*$"))
 	elseif cmd == "scroll" then
 		scrollProbe((input or ""):match("^%s*%S+%s+(.-)%s*$"))
 	elseif cmd == "portraitoff" then
@@ -1837,7 +2132,7 @@ SlashCmdList.DUFPROBE = function(input)
 		out("Survey from", record.timestamp, "toc", record.tocVersion)
 	else
 		survey()
-		out("Also run: |cffffcc00/dufprobe mana|r, |cffffcc00derived|r, |cffffcc00health|r, |cffffcc00portrait|r, |cffffcc00auraorder|r, |cffffcc00rage|r, |cffffcc00heals|r, |cffffcc00scroll|r")
+		out("Also run: |cffffcc00/dufprobe mana|r, |cffffcc00derived|r, |cffffcc00health|r, |cffffcc00portrait|r, |cffffcc00auraorder|r, |cffffcc00rage|r, |cffffcc00heals|r, |cffffcc00healcomm|r, |cffffcc00scroll|r")
 	end
 end
 
