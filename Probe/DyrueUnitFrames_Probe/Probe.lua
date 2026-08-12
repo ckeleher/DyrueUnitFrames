@@ -27,6 +27,12 @@
 --                        wire format, which is what decides whether a
 --                        receive-only reader is worth designing. Receive-only:
 --                        it never transmits.
+--   /dufprobe incoming [label]
+--                        90-second UnitGetIncomingHeals trace (Plans 11/12/19).
+--                        /duf compat says the function EXISTS on Anniversary;
+--                        this asks whether it works, whether it covers other
+--                        people's heals, and how far ahead of the landing heal
+--                        it says so. Also samples UnitGetTotalAbsorbs.
 --   /dufprobe scroll [label]
 --                        options panel geometry (Plan 3). Chat gets a summary;
 --                        the full ancestry, anchors and overflow list go to
@@ -2098,6 +2104,355 @@ local function startHealCommTrace(seconds, label)
 end
 
 --------------------------------------------------------------------------------
+-- Plan 19 / Plan 11 / Plan 12 - does UnitGetIncomingHeals actually WORK?
+--
+-- /duf compat reported hasIncomingHeals = true on Anniversary 2.5.6. That flag
+-- is `_G.UnitGetIncomingHeals ~= nil` and nothing more, so what it establishes
+-- is that the FUNCTION EXISTS. These clients run the modern shared codebase, in
+-- which a function can be present and inert.
+--
+-- This file already records the mirror-image case: UNIT_COMBO_POINTS was gone
+-- while GetComboPoints kept working, and Plan 9 shipped subscribed to nothing
+-- because presence was read as capability. So the flag being true is a reason to
+-- measure, not a reason to believe.
+--
+-- Five questions, in the order they change what gets built:
+--
+--   1. Does it ever return non-zero AT ALL, in a raid, with people healing? A
+--      function that always answers 0 is absent with extra steps.
+--   2. Does it include OTHER PEOPLE'S heals, or only the player's? Answered
+--      without any guesswork by sampling both forms at once: the one-argument
+--      call is every incoming heal, the two-argument call filtered to "player"
+--      is ours alone. If all > mine at any instant, other people are in there,
+--      and Plan 19's entire blocker is gone.
+--   3. HOW EARLY does it go non-zero? A value that appears at the moment the
+--      heal lands predicts nothing. The lead time is the feature.
+--   4. Is it PUSHED (UNIT_HEAL_PREDICTION) or must it be polled? Decides
+--      whether reading it costs a ticker, which SPEC 5.7 has opinions about.
+--   5. Does UnitGetTotalAbsorbs work too? Same shape of question, and a yes
+--      deletes most of Plan 12.
+--
+-- The correlation this run exists for: every non-zero reading is held until a
+-- heal actually lands on that unit, then predicted-versus-actual and the lead
+-- time are both recorded. That turns "the API exists" into "the API is worth
+-- building on", which are very different claims.
+--------------------------------------------------------------------------------
+
+local incomingTracer = CreateFrame("Frame")
+local incomingRunning = false
+
+--- Sampled at 10 Hz for 90 seconds. Kept to the units this addon can actually
+-- draw, plus the player, who is the one most likely to be healed by somebody
+-- else. Forty raid tokens at this rate would be 400 calls a second for a
+-- question that eight units answer.
+local INCOMING_UNITS = {
+	"player", "target", "focus",
+	"party1", "party2", "party3", "party4",
+}
+
+local INCOMING_SAMPLE = 0.1
+
+local function callNumber(fnName, unit, healer)
+	local fn = _G[fnName]
+	if not fn then return nil end
+	local ok, value
+	if healer then
+		ok, value = pcall(fn, unit, healer)
+	else
+		ok, value = pcall(fn, unit)
+	end
+	if not ok then return nil end
+	return tonumber(value) or 0
+end
+
+local function startIncomingTrace(seconds, label)
+	if incomingRunning then
+		out("|cffffcc00An incoming trace is already running.|r Wait for it to finish.")
+		return
+	end
+
+	seconds = seconds or 90
+	if label == "" then label = nil end
+
+	local started = GetTime()
+	local version, build, buildDate, tocVersion = GetBuildInfo()
+
+	local record = {
+		timestamp = date("%Y-%m-%d %H:%M:%S"),
+		label = label,
+		version = version, build = build, buildDate = buildDate, tocVersion = tocVersion,
+		projectId = WOW_PROJECT_ID,
+		seconds = seconds,
+		playerGUID = UnitGUID("player"),
+		rosterSize = (GetNumGroupMembers and GetNumGroupMembers()) or 0,
+		inRaid = (IsInRaid and IsInRaid()) and true or false,
+
+		present = {
+			UnitGetIncomingHeals = (_G.UnitGetIncomingHeals ~= nil),
+			UnitGetTotalAbsorbs = (_G.UnitGetTotalAbsorbs ~= nil),
+			UnitGetTotalHealAbsorbs = (_G.UnitGetTotalHealAbsorbs ~= nil),
+			UNIT_HEAL_PREDICTION = eventExists("UNIT_HEAL_PREDICTION"),
+			UNIT_ABSORB_AMOUNT_CHANGED = eventExists("UNIT_ABSORB_AMOUNT_CHANGED"),
+		},
+
+		samples = 0,
+		nonZero = 0,               -- samples where all-incoming was above zero
+		nonZeroOthers = 0,         -- ... and exceeded the player's own contribution
+		maxAll = 0,
+		maxMine = 0,
+		maxOthers = 0,
+		-- The filtered form is the entire basis for "are other people included",
+		-- so whether it WORKS is tracked separately from what it returns. A form
+		-- that errors would otherwise read as `mine = 0`, making every heal in
+		-- the game look like somebody else's -- a false positive on the one
+		-- question this run exists to answer.
+		twoArgOk = 0,
+		twoArgFailed = 0,
+		playerHeals = 0,
+		absorbNonZero = 0,
+		maxAbsorb = 0,
+		predictionEvents = 0,
+		predictionUnits = {},
+		observations = {},         -- resolved predicted-vs-actual pairs
+		pending = {},              -- unit -> first sighting, awaiting a landing
+		unresolved = 0,
+	}
+
+	header("Incoming heals API (Plans 11, 12, 19)")
+	for name, present in pairs(record.present) do
+		out(" ", name, yn(present))
+	end
+
+	if not record.present.UnitGetIncomingHeals then
+		out("|cffff5555UnitGetIncomingHeals is not present after all.|r Nothing to trace.")
+		return
+	end
+
+	-- Question 2's whole apparatus, and it is deliberately this small. Sampling
+	-- both forms in the same instant means "are other people included" needs no
+	-- inference about timing or ordering: the difference IS the answer.
+	local function sampleUnit(unit)
+		if not UnitExists(unit) then return end
+
+		local all = callNumber("UnitGetIncomingHeals", unit)
+		if not all then return end
+
+		local mine = callNumber("UnitGetIncomingHeals", unit, "player")
+		local others
+		if mine == nil then
+			record.twoArgFailed = record.twoArgFailed + 1
+		else
+			record.twoArgOk = record.twoArgOk + 1
+			others = all - mine
+			if others < 0 then others = 0 end
+		end
+
+		record.samples = record.samples + 1
+		if all > record.maxAll then record.maxAll = all end
+		if mine and mine > record.maxMine then record.maxMine = mine end
+		if others and others > record.maxOthers then record.maxOthers = others end
+
+		local absorb = callNumber("UnitGetTotalAbsorbs", unit)
+		if absorb and absorb > 0 then
+			record.absorbNonZero = record.absorbNonZero + 1
+			if absorb > record.maxAbsorb then record.maxAbsorb = absorb end
+		end
+
+		if all <= 0 then return end
+
+		record.nonZero = record.nonZero + 1
+		if others and others > 0 then record.nonZeroOthers = record.nonZeroOthers + 1 end
+
+		-- Question 3. The FIRST sighting is what the lead time is measured from,
+		-- so a unit already pending is left alone rather than refreshed.
+		local guid = UnitGUID(unit)
+		if guid and not record.pending[guid] then
+			record.pending[guid] = {
+				unit = unit, at = GetTime(), all = all, mine = mine, others = others,
+			}
+		end
+	end
+
+	local sampler = C_Timer.NewTicker(INCOMING_SAMPLE, function()
+		for i = 1, #INCOMING_UNITS do sampleUnit(INCOMING_UNITS[i]) end
+	end)
+
+	local function onCombatLog()
+		local info = CombatLogGetCurrentEventInfo
+		if not info then return end
+		local _, subevent, _, sourceGUID, sourceName, _, _, destGUID, _, _, _,
+			spellID, spellName, _, amount, overhealing = info()
+
+		if subevent ~= "SPELL_HEAL" then return end
+		if sourceGUID == record.playerGUID then record.playerHeals = record.playerHeals + 1 end
+		if not destGUID then return end
+
+		local waiting = record.pending[destGUID]
+		if not waiting then return end
+		record.pending[destGUID] = nil
+
+		-- Predicted-versus-actual. `amount + overhealing` is the size of the
+		-- heal for the same reason Plan 11 learns from the sum: a heal landing
+		-- on a nearly-full target reports almost nothing, and comparing the
+		-- prediction against that would make a correct API look wrong.
+		local landed = (amount or 0) + (overhealing or 0)
+		if #record.observations < 60 then
+			record.observations[#record.observations + 1] = {
+				unit = waiting.unit,
+				lead = GetTime() - waiting.at,
+				predictedAll = waiting.all,
+				predictedMine = waiting.mine,
+				predictedOthers = waiting.others,
+				landed = landed,
+				fromPlayer = (sourceGUID == record.playerGUID),
+				source = sourceName,
+				spellID = spellID, spell = spellName,
+			}
+		end
+	end
+
+	pcall(incomingTracer.RegisterEvent, incomingTracer, "COMBAT_LOG_EVENT_UNFILTERED")
+	if record.present.UNIT_HEAL_PREDICTION then
+		pcall(incomingTracer.RegisterEvent, incomingTracer, "UNIT_HEAL_PREDICTION")
+	end
+
+	incomingTracer:SetScript("OnEvent", function(_, event, unit)
+		if event == "COMBAT_LOG_EVENT_UNFILTERED" then
+			onCombatLog()
+		elseif event == "UNIT_HEAL_PREDICTION" then
+			record.predictionEvents = record.predictionEvents + 1
+			local key = unit or "?"
+			record.predictionUnits[key] = (record.predictionUnits[key] or 0) + 1
+		end
+	end)
+
+	incomingRunning = true
+
+	out("Sampling " .. #INCOMING_UNITS .. " unit(s) at " .. INCOMING_SAMPLE ..
+		"s for " .. seconds .. "s. Group:", record.rosterSize,
+		record.inRaid and "(raid)" or "(party)")
+	out("|cffffcc00Get healed by other people.|r Stand in the damage if that is what it takes.")
+
+	C_Timer.After(seconds, function()
+		sampler:Cancel()
+		incomingTracer:UnregisterAllEvents()
+		incomingTracer:SetScript("OnEvent", nil)
+		incomingRunning = false
+
+		for _ in pairs(record.pending) do record.unresolved = record.unresolved + 1 end
+		record.pending = nil
+
+		local runs = DyrueUnitFramesProbeDB.incomingRuns or {}
+		runs[#runs + 1] = record
+		while #runs > 10 do table.remove(runs, 1) end
+		DyrueUnitFramesProbeDB.incomingRuns = runs
+		DyrueUnitFramesProbeDB.incomingTrace = record
+
+		header("Incoming heals API - results")
+		out(record.samples, "sample(s);", record.nonZero, "non-zero;",
+			record.nonZeroOthers, "where somebody else's heal was included")
+		out("Peak values - all:", record.maxAll, " mine:", record.maxMine,
+			" others:", record.maxOthers)
+
+		------------------------------------------------------------- Q1 and Q2
+		if record.samples == 0 then
+			out("|cffffcc00Nothing sampled.|r No units existed to read. Inconclusive.")
+		elseif record.nonZero == 0 then
+			out("|cffff5555Never once non-zero|r across", record.samples, "sample(s).")
+			out("The function is present and inert - absent with extra steps. Plan 11's")
+			out("derived path stays the only one, and COMPAT_FINDINGS should say so.")
+		elseif record.twoArgOk == 0 then
+			out("|cffffcc00The value is real, but the filtered form never worked|r (",
+				record.twoArgFailed, "failed call(s)).")
+			out("Ours cannot be separated from theirs, so Q2 is UNPROVEN either way.")
+			out("Do not read the totals below as evidence about other people.")
+		elseif record.nonZeroOthers == 0 then
+			out("|cffffcc00Non-zero, but never more than the player's own heals.|r")
+			out("It reports OUR casts only, which Plan 11 already predicts perfectly")
+			out("well. Plan 19's blocker is untouched.")
+		elseif record.maxMine == 0 and record.playerHeals > 0 then
+			-- The false positive this run is most exposed to. The player healed,
+			-- those heals were counted somewhere, and the filtered form still
+			-- attributed nothing to them -- so the filter is not filtering, and
+			-- "everything is somebody else's" is an artifact rather than a
+			-- finding. Reported as suspicion rather than as either answer.
+			out("|cffff5555Suspicious: you cast", record.playerHeals, "heal(s) and the")
+			out("filtered form never attributed one of them to you.|r The second")
+			out("argument is probably not a unit token on this client, so 'all of it")
+			out("is other people' is an artifact. Q2 UNPROVEN - re-run and check the")
+			out("observations in SavedVariables against who actually cast them.")
+		else
+			out("|cff40ff40OTHER PEOPLE'S HEALS ARE INCLUDED.|r Peak from others:",
+				record.maxOthers)
+			out("This is the answer Plan 19 spent three probes failing to find by other")
+			out("means. The combat log, LibHealComm and HealEngine are all moot.")
+		end
+
+		--------------------------------------------------------------------- Q3
+		local n, leadSum, leadMax = 0, 0, 0
+		local fromOthers, ratioSum, ratioN = 0, 0, 0
+		for i = 1, #record.observations do
+			local o = record.observations[i]
+			n = n + 1
+			leadSum = leadSum + o.lead
+			if o.lead > leadMax then leadMax = o.lead end
+			if not o.fromPlayer then fromOthers = fromOthers + 1 end
+			if o.landed > 0 and o.predictedAll > 0 then
+				ratioSum = ratioSum + (o.predictedAll / o.landed)
+				ratioN = ratioN + 1
+			end
+		end
+
+		header("Q3 - lead time, which is the whole feature")
+		if n == 0 then
+			out("|cffffcc00No prediction was ever followed by a landing heal.|r")
+			out("Either nothing was sampled or the value appears only as the heal lands.")
+		else
+			out(string.format("%d resolved observation(s); lead mean %.2fs, max %.2fs",
+				n, leadSum / n, leadMax))
+			out(fromOthers, "of them were heals cast by somebody other than you")
+			if ratioN > 0 then
+				out(string.format("Predicted / actual: %.2f on average (1.00 is exact)",
+					ratioSum / ratioN))
+			end
+			if leadMax < 0.3 then
+				out("|cffff5555The value never appears more than a moment before the heal.|r")
+				out("Nothing to predict with - this is a report, not a prediction.")
+			else
+				out("|cff40ff40Real lead time.|r There is a window to draw in.")
+			end
+		end
+		out("Predictions that never resolved into a landing heal:", record.unresolved)
+
+		--------------------------------------------------------------------- Q4
+		header("Q4 - pushed or polled?")
+		out("UNIT_HEAL_PREDICTION valid:", yn(record.present.UNIT_HEAL_PREDICTION),
+			" fired:", record.predictionEvents, "time(s)")
+		if record.present.UNIT_HEAL_PREDICTION and record.predictionEvents > 0 then
+			out("|cff40ff40Pushed.|r No ticker needed; SPEC 5.7 stays intact.")
+		elseif record.nonZero > 0 then
+			out("|cffffcc00Values change but no event fires|r - reading this would cost a")
+			out("ticker, which is a SPEC 5.7 argument that has to be made explicitly.")
+		end
+
+		--------------------------------------------------------------------- Q5
+		header("Q5 - absorbs (Plan 12)")
+		out("UnitGetTotalAbsorbs present:", yn(record.present.UnitGetTotalAbsorbs),
+			" non-zero samples:", record.absorbNonZero, " peak:", record.maxAbsorb)
+		if record.present.UnitGetTotalAbsorbs and record.absorbNonZero > 0 then
+			out("|cff40ff40Absorbs are readable.|r Most of Plan 12 can be deleted.")
+		elseif record.present.UnitGetTotalAbsorbs then
+			out("|cffffcc00Present but never non-zero here.|r Needs a run with shields")
+			out("actually on people before this means anything.")
+		end
+
+		out(string.format("|cff40ff40Saved as run %d%s.|r", #runs,
+			label and (" labelled '" .. label .. "'") or ""))
+		out("|cffffcc00/reload once|r when you are done to flush it to disk.")
+	end)
+end
+
+--------------------------------------------------------------------------------
 -- Slash command
 --------------------------------------------------------------------------------
 
@@ -2121,6 +2476,8 @@ SlashCmdList.DUFPROBE = function(input)
 		startHealTrace(90, (input or ""):match("^%s*%S+%s+(.-)%s*$"))
 	elseif cmd == "healcomm" then
 		startHealCommTrace(90, (input or ""):match("^%s*%S+%s+(.-)%s*$"))
+	elseif cmd == "incoming" then
+		startIncomingTrace(90, (input or ""):match("^%s*%S+%s+(.-)%s*$"))
 	elseif cmd == "scroll" then
 		scrollProbe((input or ""):match("^%s*%S+%s+(.-)%s*$"))
 	elseif cmd == "portraitoff" then
@@ -2132,7 +2489,7 @@ SlashCmdList.DUFPROBE = function(input)
 		out("Survey from", record.timestamp, "toc", record.tocVersion)
 	else
 		survey()
-		out("Also run: |cffffcc00/dufprobe mana|r, |cffffcc00derived|r, |cffffcc00health|r, |cffffcc00portrait|r, |cffffcc00auraorder|r, |cffffcc00rage|r, |cffffcc00heals|r, |cffffcc00healcomm|r, |cffffcc00scroll|r")
+		out("Also run: |cffffcc00/dufprobe mana|r, |cffffcc00derived|r, |cffffcc00health|r, |cffffcc00portrait|r, |cffffcc00auraorder|r, |cffffcc00rage|r, |cffffcc00heals|r, |cffffcc00healcomm|r, |cffffcc00incoming|r, |cffffcc00scroll|r")
 	end
 end
 
