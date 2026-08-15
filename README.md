@@ -95,13 +95,18 @@ settings, and `Style: solid square` is there for the day a Blizzard patch moves
 the artwork.
 
 Ships on for the **player** (resting, in combat) and for the **pet**
-(happiness).
+(happiness only — see below).
 
 The two ship in different places, on purpose. The player's row sits **on the
 health bar**, raised to clear the name text. The pet's sits **just outside the
 frame's right edge** and grows away from it: a 150×32 pet frame is already full
 of name and health text, and anchoring to the frame rather than to a bar means
 the row cannot disappear because you turned the health bar off.
+
+**Combat ships off on the pet.** A pet is in combat whenever you are, so there
+the marker mostly repeats the player's own a few pixels lower. It is still
+offered — a pet off tanking something is a case where the answer genuinely
+differs — and when you turn it on it sits *after* happiness rather than before.
 
 **Hunter pet happiness** is three separate states — happy, content, unhappy —
 rather than one. They are mutually exclusive, so happiness still spends exactly

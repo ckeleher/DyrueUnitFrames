@@ -39,8 +39,19 @@ local element = {
 --------------------------------------------------------------------------------
 -- The states
 --
--- `order` fixes resting-before-combat as requested while leaving it changeable.
--- Kept sorted at file scope so Update never sorts.
+-- `order` fixes the slot sequence while leaving it changeable. Kept sorted at
+-- file scope so Update never sorts.
+--
+-- Combat is LAST rather than second (Plan 24). It is the only state that
+-- appears on more than one unit, so it is the only one whose position has to
+-- work everywhere, and after is the right answer on both frames that have it:
+--
+--   player   resting, combat      -- unchanged; there is nothing between them
+--   pet      happiness, combat    -- as requested
+--
+-- One global sequence rather than a per-unit one. That works because the states
+-- either side of combat are single-unit -- resting is player-only and happiness
+-- is pet-only -- so ordering them all on one axis cannot produce a conflict.
 --
 -- Two optional fields decide where a state can appear AT ALL, as opposed to
 -- when it is active:
@@ -69,7 +80,7 @@ local STATES = {
 	},
 	{
 		key = "combat",
-		order = 2,
+		order = 5,
 		label = L["In combat"],
 		-- UnitAffectingCombat works for any unit, so this is meaningful on the
 		-- target and on party members too.
@@ -94,7 +105,7 @@ local STATES = {
 	-- express.
 	{
 		key = "happy",
-		order = 3,
+		order = 2,
 		label = L["Pet: happy"],
 		requires = "hasPetHappiness",
 		units = { pet = true },
@@ -102,7 +113,7 @@ local STATES = {
 	},
 	{
 		key = "content",
-		order = 4,
+		order = 3,
 		label = L["Pet: content"],
 		requires = "hasPetHappiness",
 		units = { pet = true },
@@ -110,7 +121,7 @@ local STATES = {
 	},
 	{
 		key = "unhappy",
-		order = 5,
+		order = 4,
 		label = L["Pet: unhappy"],
 		requires = "hasPetHappiness",
 		units = { pet = true },

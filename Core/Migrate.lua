@@ -465,6 +465,14 @@ local function petIndicatorRow(profile)
 	-- in a moment later, so the two agree either way.
 	for key, value in pairs(PET_ROW_PLACEMENT) do row[key] = value end
 
+	-- And combat off, for the same reason the pet ships that way: it repeats the
+	-- player's own indicator, since a pet is in combat whenever you are. Safe to
+	-- force because we only reach here on a row that was never shown -- a state
+	-- inside an invisible row cannot have been judged, whatever value it holds.
+	if type(row.states) == "table" and type(row.states.combat) == "table" then
+		row.states.combat.enabled = false
+	end
+
 	return profile
 end
 

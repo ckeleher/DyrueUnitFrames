@@ -698,6 +698,13 @@ local function buildUnits()
 		-- first icon matches the gap between icons. y = 0 centres it on the edge
 		-- -- the schema's y = 5 exists to lift the row off the player frame's
 		-- name text and means nothing once the row is outside the frame.
+		--
+		-- Combat ships OFF here alone. A pet is in combat whenever you are, so
+		-- on this frame the marker is the least informative thing the row can
+		-- show -- it repeats the player's own indicator a few pixels lower. It
+		-- stays offered rather than removed, because a hunter whose pet is off
+		-- tanking something is a case where the answer is genuinely not the same
+		-- as the player's; it is just not the common one.
 		indicators = {
 			enabled = true,
 			anchorTo = "frame",
@@ -705,6 +712,7 @@ local function buildUnits()
 			relativePoint = "RIGHT",
 			x = 2,
 			y = 0,
+			states = { combat = { enabled = false } },
 		},
 	})
 

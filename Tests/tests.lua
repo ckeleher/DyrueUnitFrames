@@ -752,11 +752,30 @@ local function testMigration()
 	equal("migrate/with the spacing gap", placed.x, 2)
 	equal("migrate/vertically centred", placed.y, 0)
 
+	-- Combat comes off with it. A real v16 profile carries the states table with
+	-- combat on, inherited from the schema default -- and a state inside a row
+	-- that has never been shown cannot have been judged, whatever it holds.
+	local withStates = { schemaVersion = 16, units = { pet = { indicators = {
+		enabled = false, anchorTo = "health", y = 5,
+		states = { combat = { enabled = true }, resting = { enabled = true } },
+	} } } }
+	Migrate:Run(withStates, {})
+	equal("migrate/the pet's combat marker comes off with the move",
+		withStates.units.pet.indicators.states.combat.enabled, false)
+
 	-- Somebody who moved the row looked at it, and a row you looked at and left
 	-- off stays off. This is the assertion that keeps the step honest.
 	local moved = migratedPetRow({ y = -30 })
 	equal("migrate/a repositioned pet row is left off", moved.enabled, false)
 	equal("migrate/and is not re-placed either", moved.anchorTo, "health")
+
+	local movedWithStates = { schemaVersion = 16, units = { pet = { indicators = {
+		enabled = false, anchorTo = "health", y = -30,
+		states = { combat = { enabled = true } },
+	} } } }
+	Migrate:Run(movedWithStates, {})
+	equal("migrate/nor is its combat marker touched",
+		movedWithStates.units.pet.indicators.states.combat.enabled, true)
 	equal("migrate/a resized one too",
 		migratedPetRow({ size = 32 }).enabled, false)
 	equal("migrate/and a re-anchored one",
@@ -2815,17 +2834,34 @@ local function testPetHappiness()
 		equal("happiness/taking slot one", indicatorSlot(case.icon, cfg), 0)
 	end
 
-	-- Combat is available on the pet as well, so the two coexist -- happiness
-	-- spends one slot, not three.
+	-- Combat ships OFF on the pet: it repeats the player's own indicator, since
+	-- a pet is in combat whenever you are.
+	equal("happiness/combat ships off on the pet",
+		ns:UnitConfig("pet").indicators.states.combat.enabled, false)
+	equal("happiness/but is still on for the player",
+		ns:UnitConfig("player").indicators.states.combat.enabled, true)
+
 	stub.petHappiness = 3
 	stub.units.pet.inCombat = true
 	pet:FullUpdate()
-	check("happiness/combat and happiness show together",
+	check("happiness/an in-combat pet shows no combat marker by default",
+		not el.icons.combat:IsShown())
+	equal("happiness/and happiness still holds slot one",
+		indicatorSlot(happy, cfg), 0)
+
+	-- Turned on, combat sits AFTER happiness rather than before it.
+	local petOpts = ns.Options.table.args.units.args.pet.args.indicators.args
+	petOpts.enabled_combat.set(nil, true)
+	pet:FullUpdate()
+	check("happiness/combat and happiness show together once it is on",
 		el.icons.combat:IsShown() and happy:IsShown())
-	equal("happiness/combat takes slot one", indicatorSlot(el.icons.combat, cfg), 0)
-	equal("happiness/happiness takes slot two",
-		indicatorSlot(happy, cfg), cfg.size + cfg.spacing)
+	equal("happiness/happiness takes slot one", indicatorSlot(happy, cfg), 0)
+	equal("happiness/combat follows it in slot two",
+		indicatorSlot(el.icons.combat, cfg), cfg.size + cfg.spacing)
+	petOpts.enabled_combat.set(nil, false)
+
 	stub.units.pet.inCombat = nil
+	pet:FullUpdate()
 
 	-- Resting is player-only and must not have been built here either.
 	check("happiness/resting is not built on the pet", el.icons.resting == nil)
