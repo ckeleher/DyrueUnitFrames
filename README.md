@@ -85,6 +85,34 @@ where it is.
 
 ---
 
+## State indicators
+
+A small row of markers for unit state, anchored to whichever bar you point it
+at. Only the states currently **active** take a slot, so a lone marker always
+sits at the start of the row rather than leaving a gap where the others would
+be. Size, spacing, growth direction, opacity and a per-state tint are all
+settings, and `Style: solid square` is there for the day a Blizzard patch moves
+the artwork.
+
+Ships on for the **player** (resting, in combat) and for the **pet** (happiness).
+
+**Hunter pet happiness** is three separate states — happy, content, unhappy —
+rather than one. They are mutually exclusive, so happiness still spends exactly
+one slot; what the split buys is a switch per level. Turning *happy* off and
+leaving the other two on means **you are only marked when something is wrong**.
+
+It appears only where it can mean something. On a warlock's voidwalker there is
+no happiness, and nothing is shown — the check is `HasPetUI`'s hunter-pet
+return, the same one Blizzard's own pet frame uses. There is no happiness
+readout for other people's pets, and cannot be: `GetPetHappiness` takes no unit
+argument and only ever answers about your own. On a client without the mechanic
+at all, the states and their options are simply absent.
+
+The same information is available as text, if you would rather have a word than
+a face — see the `[happiness]` tag below.
+
+---
+
 ## Positioning
 
 Three ways in, one stored value:
@@ -122,7 +150,7 @@ the absolute ones (`[hp:cur:short]` → `1.2k`)
 `[mana:perc]`
 
 **Status** — `[status]` `[afk]` `[dnd]` `[pvp]` `[leader]` `[raidtarget]`
-`[happiness]`
+`[happiness]` (hunter pet only, and empty on anything else)
 
 ### Empty-tag collapse
 

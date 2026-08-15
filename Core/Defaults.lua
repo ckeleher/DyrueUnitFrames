@@ -28,8 +28,9 @@ local type, pairs, ipairs, next = type, pairs, ipairs, next
 -- off the combo bar added in Plan 9; 14 quiets the aura overlays (Plan 13);
 -- 15 gives every text element a width mode and puts the names on "fit"
 -- (Plan 6); 16 renames the portrait placements and moves the default to the
--- new "column" (Plan 7).
-Defaults.SCHEMA_VERSION = 16
+-- new "column" (Plan 7); 17 turns the pet's indicator row on, because Plan 24
+-- put hunter pet happiness in it and the row has shipped off since 1.0.
+Defaults.SCHEMA_VERSION = 17
 
 --------------------------------------------------------------------------------
 -- Table helpers
@@ -468,9 +469,33 @@ local function unit(overrides)
 			alpha = 1,
 			growth = "RIGHT",          -- RIGHT | LEFT | UP | DOWN
 			style = "icon",            -- icon | square
+			-- Present on every unit for schema uniformity, the same reasoning
+			-- the comment on `mana` gives. Which of them can actually appear on
+			-- a given frame is Elements/Indicators.lua's `available`, not a
+			-- question the stored schema answers.
+			--
+			-- Plan 24. The happiness three ship COLORED where resting and combat
+			-- ship white, and the departure is deliberate on two counts:
+			--
+			--   * White leaves Blizzard's art unmodified, which is right when
+			--     the art is self-explanatory. The three happiness faces differ
+			--     only by expression, and at 20px that is genuinely hard to read
+			--     at a glance -- which is the entire job of the row.
+			--   * Under `style = "square"` -- Plan 1's fallback for art that has
+			--     moved -- white would render three IDENTICAL squares. They are
+			--     mutually exclusive and share a slot, so the fallback would
+			--     convey nothing at all. The tints are what keep it a fallback
+			--     rather than decoration.
+			--
+			-- Gentle rather than primary, because a vertex color multiplies:
+			-- pure green against the happy face would zero its red and blue and
+			-- flatten the detail out of it.
 			states = {
 				resting = { enabled = true, color = color(1, 1, 1) },
 				combat = { enabled = true, color = color(1, 1, 1) },
+				happy = { enabled = true, color = color(0.4, 1.0, 0.4) },
+				content = { enabled = true, color = color(1.0, 0.9, 0.4) },
+				unhappy = { enabled = true, color = color(1.0, 0.4, 0.4) },
 			},
 		},
 
@@ -651,6 +676,12 @@ local function buildUnits()
 		anchor = { to = "player", point = "TOPLEFT", relativePoint = "BOTTOMLEFT", x = 0, y = -6 },
 		power = { height = 8 },
 		texts = fullTexts("[hp:perc]%"),
+		-- Plan 24. The second unit to ship the indicator row on, and for the
+		-- opposite reason to the player's: the player's row is state you already
+		-- know and want confirmed, the pet's is happiness, which is invisible
+		-- otherwise and decays without telling you. On a non-hunter the states
+		-- are not available, so the row builds empty and shows nothing.
+		indicators = { enabled = true },
 	})
 
 	u.focus = unit({
