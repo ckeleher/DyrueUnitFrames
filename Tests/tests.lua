@@ -742,10 +742,21 @@ local function testMigration()
 	equal("migrate/an untouched pet row is turned on",
 		migratedPetRow().enabled, true)
 
+	-- ...and placed. Turning it on and moving it off the health bar are one
+	-- judgement about the same inherited default: a profile that never chose a
+	-- position never chose the health bar either.
+	local placed = migratedPetRow()
+	equal("migrate/and anchored to the frame", placed.anchorTo, "frame")
+	equal("migrate/off its right edge", placed.relativePoint, "RIGHT")
+	equal("migrate/by its own left edge", placed.point, "LEFT")
+	equal("migrate/with the spacing gap", placed.x, 2)
+	equal("migrate/vertically centred", placed.y, 0)
+
 	-- Somebody who moved the row looked at it, and a row you looked at and left
 	-- off stays off. This is the assertion that keeps the step honest.
-	equal("migrate/a repositioned pet row is left off",
-		migratedPetRow({ y = -30 }).enabled, false)
+	local moved = migratedPetRow({ y = -30 })
+	equal("migrate/a repositioned pet row is left off", moved.enabled, false)
+	equal("migrate/and is not re-placed either", moved.anchorTo, "health")
 	equal("migrate/a resized one too",
 		migratedPetRow({ size = 32 }).enabled, false)
 	equal("migrate/and a re-anchored one",
@@ -763,6 +774,8 @@ local function testMigration()
 	Migrate:Run(sparse, {})
 	equal("migrate/a sparse pet row still turns on",
 		sparse.units.pet.indicators.enabled, true)
+	equal("migrate/and is placed the same way",
+		sparse.units.pet.indicators.relativePoint, "RIGHT")
 
 	-- Idempotent, and specifically not re-firing on a row the user has since
 	-- turned back off.
@@ -2760,6 +2773,16 @@ local function testPetHappiness()
 
 	equal("happiness/the pet's indicator row ships on", cfg.enabled, true)
 
+	-- Outside the frame's right edge, not on the health bar where the schema
+	-- default and the player's row put it. The 150x32 pet frame already carries
+	-- a name and a health percentage and has no clear space to tune into.
+	equal("happiness/anchored to the frame itself", cfg.anchorTo, "frame")
+	equal("happiness/by its left edge", cfg.point, "LEFT")
+	equal("happiness/to the frame's right edge", cfg.relativePoint, "RIGHT")
+	equal("happiness/gapped by its own spacing", cfg.x, cfg.spacing)
+	equal("happiness/and vertically centred", cfg.y, 0)
+	equal("happiness/growing away from the frame", cfg.growth, "RIGHT")
+
 	local el = pet.elements.indicators
 	check("happiness/element built on the pet", el ~= nil)
 	if not el then return end
@@ -2806,6 +2829,29 @@ local function testPetHappiness()
 
 	-- Resting is player-only and must not have been built here either.
 	check("happiness/resting is not built on the pet", el.icons.resting == nil)
+
+	--------------------------------------------------------------------------
+	-- Anchored to the frame, not to a bar
+	--
+	-- `frame` is the one anchor target that is always available. The player's
+	-- row hides when the bar it is anchored to is turned off -- correct there,
+	-- and the wrong answer for a row whose whole job is to report a value that
+	-- has nothing to do with health. This is the reason for choosing `frame`
+	-- over `health`, so it is pinned rather than left implied by the default.
+	--------------------------------------------------------------------------
+
+	ns:UnitConfig("pet").health.enabled = false
+	ns:BumpSerial()
+	ns:RefreshUnit("pet")
+	ns.CombatQueue:Flush()
+	pet:FullUpdate()
+	check("happiness/survives the health bar being turned off", happy:IsShown())
+
+	ns:UnitConfig("pet").health.enabled = true
+	ns:BumpSerial()
+	ns:RefreshUnit("pet")
+	ns.CombatQueue:Flush()
+	pet:FullUpdate()
 
 	--------------------------------------------------------------------------
 	-- "Only mark the pet when something is wrong"

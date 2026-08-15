@@ -424,6 +424,8 @@ end
 -- "this profile predates the key" -- which is the common case here, since an
 -- ancient profile's indicator block holds four keys and the current one holds
 -- ten.
+-- What a profile that has never touched the row carries: the schema default,
+-- which puts the row on the health bar because that is where the PLAYER's is.
 local SHIPPED_PET_ROW = {
 	anchorTo = "health",
 	point = "TOPLEFT", relativePoint = "TOPLEFT",
@@ -432,12 +434,23 @@ local SHIPPED_PET_ROW = {
 	growth = "RIGHT", style = "icon",
 }
 
+-- Where Plan 24 puts it instead: outside the frame's right edge, clear of the
+-- name and health text that the 150x32 pet frame is already full of. Turning
+-- the row on and placing it are the same judgement about the same inherited
+-- default, so they are one step rather than two -- a profile that has never
+-- chosen a position has not chosen the health bar either.
+local PET_ROW_PLACEMENT = {
+	anchorTo = "frame",
+	point = "LEFT", relativePoint = "RIGHT",
+	x = 2, y = 0,
+}
+
 local function petIndicatorRow(profile)
 	local row = profile.units and profile.units.pet and profile.units.pet.indicators
 	if type(row) ~= "table" then return profile end
 
 	-- nil means the key predates the setting and EnsureProfile is about to fill
-	-- it with the current pet default, which is now `true`. Nothing to do.
+	-- it with the current pet default, which is now on and placed. Nothing to do.
 	if row.enabled ~= false then return profile end
 
 	for key, shipped in pairs(SHIPPED_PET_ROW) do
@@ -446,6 +459,12 @@ local function petIndicatorRow(profile)
 	end
 
 	row.enabled = true
+
+	-- Written unconditionally rather than only over keys that are present: for
+	-- an absent key this lands on exactly what EnsureProfile would have filled
+	-- in a moment later, so the two agree either way.
+	for key, value in pairs(PET_ROW_PLACEMENT) do row[key] = value end
+
 	return profile
 end
 

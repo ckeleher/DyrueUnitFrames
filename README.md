@@ -94,7 +94,14 @@ be. Size, spacing, growth direction, opacity and a per-state tint are all
 settings, and `Style: solid square` is there for the day a Blizzard patch moves
 the artwork.
 
-Ships on for the **player** (resting, in combat) and for the **pet** (happiness).
+Ships on for the **player** (resting, in combat) and for the **pet**
+(happiness).
+
+The two ship in different places, on purpose. The player's row sits **on the
+health bar**, raised to clear the name text. The pet's sits **just outside the
+frame's right edge** and grows away from it: a 150×32 pet frame is already full
+of name and health text, and anchoring to the frame rather than to a bar means
+the row cannot disappear because you turned the health bar off.
 
 **Hunter pet happiness** is three separate states — happy, content, unhappy —
 rather than one. They are mutually exclusive, so happiness still spends exactly

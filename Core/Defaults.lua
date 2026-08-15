@@ -681,7 +681,31 @@ local function buildUnits()
 		-- know and want confirmed, the pet's is happiness, which is invisible
 		-- otherwise and decays without telling you. On a non-hunter the states
 		-- are not available, so the row builds empty and shows nothing.
-		indicators = { enabled = true },
+		--
+		-- Placed OUTSIDE the frame's right edge rather than on the health bar,
+		-- which is where the schema default puts it. The pet frame is 150x32 and
+		-- already carries a name and a health percentage; the player's row can
+		-- sit on the bar because it was tuned to clear that frame's text, and at
+		-- pet size there is no clear space left to tune it into. Outside the
+		-- edge the row cannot collide with anything the frame draws, and it
+		-- grows further right, away from the frame, as states are added.
+		--
+		-- `frame` rather than `health` on purpose: frame.content is the button's
+		-- own rect, and it is the one anchor target that is ALWAYS available, so
+		-- the row cannot vanish because somebody turned the health bar off.
+		--
+		-- x = 2 is the row's own `spacing`, so the gap between the frame and the
+		-- first icon matches the gap between icons. y = 0 centres it on the edge
+		-- -- the schema's y = 5 exists to lift the row off the player frame's
+		-- name text and means nothing once the row is outside the frame.
+		indicators = {
+			enabled = true,
+			anchorTo = "frame",
+			point = "LEFT",
+			relativePoint = "RIGHT",
+			x = 2,
+			y = 0,
+		},
 	})
 
 	u.focus = unit({
