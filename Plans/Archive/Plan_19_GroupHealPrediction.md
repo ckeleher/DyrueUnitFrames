@@ -1,12 +1,56 @@
 # Plan 19 — Group Heal Prediction
 
-**Status:** In progress on `Plan-19-group-heal-prediction`. **Extends Plan 11.**
+**Status:** Implemented on `Plan-19-group-heal-prediction-api`, merged in PR #19
+as `ce6e5ec`. Verified working in a live raid. **Extends Plan 11.**
 **Design rewritten 11 August 2026** after the probe results below. The original
 design — deriving other people's heals from the combat log — is preserved in
 *What was measured and closed*, because three separate routes were investigated
 and all three are dead, and the next person should not re-open them.
 **Created:** 9 August 2026
-**Branch:** `Plan-19-group-heal-prediction`
+**Branch:** `Plan-19-group-heal-prediction-api`. The plan names
+`Plan-19-group-heal-prediction` throughout; that branch only ever carried the
+probes, and once those were cherry-picked to `main` it held nothing unique, so
+the implementation started fresh from `main`.
+
+**The design held.** The API-plus-aura split, the disjointness that lets the two
+be summed, the fallback branch, the roster guard, no schema change and no user
+setting all shipped as written. What follows is where the *implementation* went
+somewhere the plan did not predict.
+
+**Deviations from the plan as written:**
+
+* **The derived path cannot be toggled at runtime, and the plan assumed the
+  tests could.** The listener decides at start-up whether to subscribe to the ten
+  `UNIT_SPELLCAST_*` events, so on a client with the API those events never
+  arrive and nilling `UnitGetIncomingHeals` mid-run cannot bring them back. The
+  plan's "a new suite pass modelling a client without the API" turned out to be
+  mandatory rather than thorough. Recorded in the test comments so the shortcut
+  is not retried.
+* **The stub modelled a client that does not exist, in the direction the plan did
+  not expect.** The plan quoted this project's own lesson about a stub modelling
+  a *more* capable client than the real one. The actual defect was the inverse:
+  `UnitGetIncomingHeals` was absent from the stub while both live clients have
+  it. The lesson generalises both ways and the plan only stated one.
+* **That inversion had hidden a second gap.** The element's *gating* assertions
+  were written against the derived path, so they had never been exercised on
+  either real client. They were rewritten to set up their prediction through
+  whichever path is live — a change to existing tests, where the plan's Tests
+  section only described additions.
+* **`NoteHeal` gained a `casterGUID` parameter**, with nil meaning the player, so
+  every Plan 11 caller and assertion keeps working unchanged. Not in the design.
+* **`Tests/run_tests.py` and `Tests/README.md` were touched and are not in the
+  Files table.** The README still claimed three passes; there are now five.
+* **`stub.isRegistered`, `SessionCount` and `RosterCount` are new**, and exist to
+  make the two performance claims assertable rather than described — "the
+  spellcast events are not subscribed" and "the session store is bounded".
+
+**Still outstanding**, and deliberately out of scope here:
+
+* The two-argument `UnitGetIncomingHeals(unit, healer)` form is **unproven** —
+  zero on all 5120 calls while the player was healing. Nothing uses it, and a
+  "my heals versus theirs" display would rest entirely on it.
+* Absorbs are present but were never observed non-zero. Plan 12's question.
+* Classic Era has the API but has not been exercised in a live fight.
 
 ---
 
@@ -24,8 +68,8 @@ and all three are dead, and the next person should not re-open them.
 Findings are written up in `Documents/COMPAT_FINDINGS.md` under *Plans 11, 12
 and 19 — incoming heals* (`762f9eb`).
 
-**Not started:** any of the implementation below. `Systems/`, `Elements/`,
-`Core/` and `Config/` are untouched on the branch.
+**Implemented and merged**, `ce6e5ec`. Five suite passes green: 1043 with the
+API, 1035 without.
 
 **Ready to implement.** The measurement that could have changed the design — does
 the API also cover HoTs, which would have made the aura path double-count — was
