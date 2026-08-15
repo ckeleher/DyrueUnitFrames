@@ -2258,6 +2258,121 @@ local function testAuraOrderStability()
 end
 
 --------------------------------------------------------------------------------
+-- 19d. Aura grid bounds (Plan 20)
+--
+-- The suite asserted that own auras are SCALED and that icons land at distinct
+-- positions, and nothing about where the grid sits inside its own frame. So a
+-- 1.4x icon in the first column reaching four pixels past the group frame --
+-- and therefore past the unit frame the group is anchored flush to -- was
+-- invisible to it, and shipped.
+--
+-- These assertions are on the outer edges: whatever the group frame is anchored
+-- to, its box must bound every icon it can draw.
+--------------------------------------------------------------------------------
+
+local function testAuraGridBounds()
+	local target = ns.frames.target
+	local cfg = ns:UnitConfig("target").auras.buffs
+
+	local saved = {}
+	for _, key in ipairs({ "size", "perRow", "rows", "spacingX", "spacingY",
+		"growthX", "growthY", "ownSizeMultiplier", "sort", "maxShown" }) do
+		saved[key] = cfg[key]
+	end
+
+	local function refresh()
+		ns:BumpSerial()
+		ns:RefreshUnit("target")
+	end
+
+	-- Button 1 is the fixture's own aura -- "Blessing", cast by the player --
+	-- because own_time sorts own first. Everything below is measured from the
+	-- group frame's TOPLEFT, which is what applyButton anchors cells against.
+	local function ownIcon()
+		local group = target.elements.auras.buffs
+		local button = group.buttons[1]
+		local _, relative, relativePoint, x, y = button:GetPoint(1)
+		local w, h = button:GetWidth(), button:GetHeight()
+		return {
+			relative = relative, relativePoint = relativePoint,
+			w = w,
+			left = x - w / 2, right = x + w / 2,
+			top = y + h / 2, bottom = y - h / 2,
+			boxW = group.frame:GetWidth(), boxH = group.frame:GetHeight(),
+		}
+	end
+
+	cfg.size, cfg.perRow, cfg.rows = 20, 8, 2
+	cfg.spacingX, cfg.spacingY = 2, 2
+	cfg.sort, cfg.maxShown = "own_time", 32
+	cfg.ownSizeMultiplier = 1.4
+	cfg.growthX, cfg.growthY = "RIGHT", "UP"
+	refresh()
+
+	local icon = ownIcon()
+
+	-- If this ever stops holding, every edge assertion below is measuring a
+	-- base-size icon and would pass with the bug present.
+	equal("aurabounds/button one is the scaled own aura", icon.w, 20 * 1.4)
+	check("aurabounds/cells are anchored to the group frame's top left",
+		icon.relative == target.elements.auras.buffs.frame
+			and icon.relativePoint == "TOPLEFT")
+
+	-- The regression. This read -4 before Plan 20.
+	near("aurabounds/leftmost own icon starts at the group frame's left edge",
+		icon.left, 0)
+
+	-- growthY = UP puts the first icon on the bottom row, so the bottom edge is
+	-- the one that used to escape -- into the combo bar, on the player frame.
+	near("aurabounds/bottom row own icon ends at the box's bottom edge",
+		icon.bottom, -icon.boxH)
+
+	cfg.growthY = "DOWN"
+	refresh()
+	near("aurabounds/growing down, the top row sits on the box's top edge",
+		ownIcon().top, 0)
+
+	cfg.growthX = "LEFT"
+	refresh()
+	icon = ownIcon()
+	near("aurabounds/growing left, the own icon ends at the box's right edge",
+		icon.right, icon.boxW)
+
+	--------------------------------------------------------------------------
+	-- Nothing moves when there is no overflow to allow for
+	--------------------------------------------------------------------------
+
+	cfg.growthX, cfg.growthY = "RIGHT", "DOWN"
+	cfg.perRow, cfg.rows = 3, 2
+	cfg.ownSizeMultiplier = 1
+	refresh()
+
+	local plain = ownIcon()
+	equal("aurabounds/an unscaled grid is the plain grid width",
+		plain.boxW, 3 * 20 + 2 * 2)
+	equal("aurabounds/and the plain grid height", plain.boxH, 2 * 20 + 1 * 2)
+	near("aurabounds/an unscaled icon still fills its cell", plain.left, 0)
+	near("aurabounds/and still starts at the top", plain.top, 0)
+
+	-- Below what the options slider allows, but reachable by import or a hand
+	-- edit. A negative pad would pull the grid inward -- the same bug mirrored.
+	cfg.ownSizeMultiplier = 0.5
+	refresh()
+	local shrunk = ownIcon()
+	equal("aurabounds/a sub-1 multiplier does not shrink the box",
+		shrunk.boxW, 3 * 20 + 2 * 2)
+	near("aurabounds/nor pull the grid inward", shrunk.left, (20 - 10) / 2)
+
+	--------------------------------------------------------------------------
+	-- Restore the world for the suites that come after
+	--------------------------------------------------------------------------
+
+	for key, value in pairs(saved) do cfg[key] = value end
+	refresh()
+	equal("aurabounds/fixture restored", #target.elements.auras.buffs.list, 2)
+end
+
+--------------------------------------------------------------------------------
 -- 20. AC 13: derived identity updates on UNIT_TARGET
 --------------------------------------------------------------------------------
 
@@ -5679,6 +5794,7 @@ local suites = {
 	{ "aura-filtering", testAuraFiltering },
 	{ "aura-text-placement", testAuraTextPlacement },
 	{ "aura-order-stability", testAuraOrderStability },
+	{ "aura-grid-bounds", testAuraGridBounds },
 	{ "derived-identity", testDerivedIdentity },
 	{ "tools-and-modes", testToolsAndModes },
 	{ "slash-commands", testSlashCommands },
