@@ -308,8 +308,73 @@ def pass_four():
     return not problems and clean
 
 
+def pass_five():
+    """A client with no UnitGetIncomingHeals — Plan 11's derived fallback.
+
+    Both live clients HAVE the API, so the stub has it and pass 1 exercises the
+    API path. This is the other side, and it has to be a whole client rather
+    than a mid-run poke: the listener decides at start time whether to subscribe
+    to the ten UNIT_SPELLCAST_* events, so on a client with the API those events
+    never arrive and hiding the function afterwards cannot bring them back.
+
+    Same shape as pass 3 and the legacy aura API. It runs the entire suite, so
+    every derived-path assertion Plan 11 wrote is covered here rather than
+    deleted.
+    """
+    print("=== pass 5: no UnitGetIncomingHeals (Plan 11 fallback) ===")
+    lua = build("""
+        _G.UnitGetIncomingHeals = nil
+        _G.__stub.validEvents["UNIT_HEAL_PREDICTION"] = nil
+    """)
+
+    with open(os.path.join(HERE, "tests.lua"), encoding="utf-8") as fh:
+        run = lua.execute(fh.read())
+    results = run()
+
+    passed, failed = int(results["passed"]), int(results["failed"])
+    if failed:
+        print("  FAILURES:")
+        failures = results["failures"]
+        for i in range(1, len(failures) + 1):
+            print("    - %s" % failures[i])
+
+    checks = lua.execute("""
+        local ns, stub = _G.__ns, _G.__stub
+        local out = {}
+        out.provider = ns.HealPrediction:DirectProvider()
+        out.apiFlag = ns.Compat.hasIncomingHeals and 1 or 0
+        out.reads = ns.Compat.GetIncomingHeals("player") == nil and 1 or 0
+        -- The derived machinery must be subscribed here, which is the mirror of
+        -- pass 1 asserting it is not.
+        ns.HealPrediction:SetActive(ns.frames.player, true)
+        out.spellcast = stub.isRegistered("UNIT_SPELLCAST_SENT") and 1 or 0
+        return out
+    """)
+
+    problems = []
+    if checks["provider"] != "own":
+        problems.append("direct provider should be 'own', got %s" % checks["provider"])
+    if checks["apiFlag"] != 0:
+        problems.append("Compat.hasIncomingHeals should be false")
+    if checks["reads"] != 1:
+        problems.append("GetIncomingHeals must return nil, not 0, with no API")
+    if checks["spellcast"] != 1:
+        problems.append("the derived spellcast events were not subscribed")
+
+    # No report() here, unlike passes 2-4. This pass runs the whole of
+    # tests.lua, and that suite deliberately drives the circuit breaker and a
+    # missing migration path, so error output is expected rather than a signal.
+    # pass_one has the same shape and for the same reason.
+    if problems:
+        for p in problems:
+            print("  FAIL: %s" % p)
+    elif failed == 0:
+        print("  %d passed; derived fallback live, spellcast events subscribed" % passed)
+    return not problems and failed == 0
+
+
 def main():
-    passes = [pass_one(), pass_two(), pass_three(), pass_four()]
+    passes = [pass_one(), pass_two(), pass_three(), pass_four(), pass_five()]
     print()
     if all(passes):
         print("ALL PASSES GREEN")

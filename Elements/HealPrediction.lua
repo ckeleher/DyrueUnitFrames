@@ -48,6 +48,16 @@ local element = {
 	order = 11,
 	configKey = "healPrediction",
 	events = {
+		-- Plan 19. The game's own push for UnitGetIncomingHeals, and the reason
+		-- reading it costs no ticker.
+		--
+		-- Declared ALONGSIDE the events below rather than instead of them.
+		-- Compat.RegisterUnitEvent silently skips anything HasEvent rejects, so
+		-- a client without this would leave the element subscribed to nothing --
+		-- which is exactly how Plan 9's combo bar shipped dead. The health
+		-- events are the floor: absent the push, a landing heal still redraws
+		-- via UNIT_HEALTH, one frame later than ideal rather than never.
+		UNIT_HEAL_PREDICTION = true,
 		-- The fill moved, so where the prediction starts moved with it.
 		UNIT_HEALTH = true,
 		UNIT_MAXHEALTH = true,

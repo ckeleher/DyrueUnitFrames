@@ -5183,45 +5183,68 @@ local function testHealPrediction()
 
 	----------------------------------------------------------------------------
 	-- Prediction lifecycle
+	--
+	-- This block asserts the DERIVED direct prediction, which only runs on a
+	-- client with no UnitGetIncomingHeals. Both live clients have it, so the
+	-- stub has it, so these assertions belong to the fallback client instead.
+	--
+	-- They cannot be forced by nilling the function mid-run, and finding that
+	-- out is worth recording: the listener decides at START time whether to
+	-- subscribe to the ten UNIT_SPELLCAST_* events at all, so on a client with
+	-- the API those events never arrive and no amount of hiding the function
+	-- afterwards brings them back. The path has to be absent from load.
+	--
+	-- Hence PASS 5, which builds without it. Same shape as pass 3 and the legacy
+	-- aura API: the alternative path gets a whole client, not a poke.
 	----------------------------------------------------------------------------
 
-	stub.time = 100
-	stub.casting = { endTime = 102 }
+	local derivedPath = (HealPrediction:DirectProvider() == "own")
 
-	-- SENT is the only event carrying the target, and it carries a NAME.
-	stub.fire("UNIT_SPELLCAST_SENT", "player", "Dyrue", "cast-1", 5000)
-	stub.fire("UNIT_SPELLCAST_START", "player", "cast-1", 5000)
+	if derivedPath then
+		stub.time = 100
+		stub.casting = { endTime = 102 }
 
-	local direct = HealPrediction:IncomingHeal("player")
-	near("heal/a started cast predicts its learned amount", direct, 650)
+		-- SENT is the only event carrying the target, and it carries a NAME.
+		stub.fire("UNIT_SPELLCAST_SENT", "player", "Dyrue", "cast-1", 5000)
+		stub.fire("UNIT_SPELLCAST_START", "player", "cast-1", 5000)
 
-	local elsewhere = HealPrediction:IncomingHeal("party1")
-	equal("heal/and predicts nothing for anyone else", elsewhere, 0)
+		local direct = HealPrediction:IncomingHeal("player")
+		near("heal/a started cast predicts its learned amount", direct, 650)
 
-	stub.fire("UNIT_SPELLCAST_SUCCEEDED", "player", "cast-1", 5000)
-	equal("heal/a completed cast stops predicting",
-		HealPrediction:IncomingHeal("player"), 0)
+		local elsewhere = HealPrediction:IncomingHeal("party1")
+		equal("heal/and predicts nothing for anyone else", elsewhere, 0)
 
-	stub.fire("UNIT_SPELLCAST_SENT", "player", "Dyrue", "cast-2", 5000)
-	stub.fire("UNIT_SPELLCAST_START", "player", "cast-2", 5000)
-	stub.fire("UNIT_SPELLCAST_INTERRUPTED", "player", "cast-2", 5000)
-	equal("heal/an interrupted cast stops predicting",
-		HealPrediction:IncomingHeal("player"), 0)
+		stub.fire("UNIT_SPELLCAST_SUCCEEDED", "player", "cast-1", 5000)
+		equal("heal/a completed cast stops predicting",
+			HealPrediction:IncomingHeal("player"), 0)
 
-	-- The documented first-cast behavior, asserted so it stays deliberate.
-	stub.fire("UNIT_SPELLCAST_SENT", "player", "Dyrue", "cast-3", 9999)
-	stub.fire("UNIT_SPELLCAST_START", "player", "cast-3", 9999)
-	equal("heal/an unlearned spell predicts nothing",
-		HealPrediction:IncomingHeal("player"), 0)
+		stub.fire("UNIT_SPELLCAST_SENT", "player", "Dyrue", "cast-2", 5000)
+		stub.fire("UNIT_SPELLCAST_START", "player", "cast-2", 5000)
+		stub.fire("UNIT_SPELLCAST_INTERRUPTED", "player", "cast-2", 5000)
+		equal("heal/an interrupted cast stops predicting",
+			HealPrediction:IncomingHeal("player"), 0)
 
-	-- Lazy expiry: this is what pins the no-ticker design. Nothing has run
-	-- between the cast starting and the clock moving past its end.
-	stub.fire("UNIT_SPELLCAST_SENT", "player", "Dyrue", "cast-4", 5000)
-	stub.fire("UNIT_SPELLCAST_START", "player", "cast-4", 5000)
-	near("heal/predicting mid-cast", HealPrediction:IncomingHeal("player"), 650)
-	stub.time = 104
-	equal("heal/a stale prediction expires on read",
-		HealPrediction:IncomingHeal("player"), 0)
+		-- The documented first-cast behavior, asserted so it stays deliberate.
+		stub.fire("UNIT_SPELLCAST_SENT", "player", "Dyrue", "cast-3", 9999)
+		stub.fire("UNIT_SPELLCAST_START", "player", "cast-3", 9999)
+		equal("heal/an unlearned spell predicts nothing",
+			HealPrediction:IncomingHeal("player"), 0)
+
+		-- Lazy expiry: this is what pins the no-ticker design. Nothing has run
+		-- between the cast starting and the clock moving past its end.
+		stub.fire("UNIT_SPELLCAST_SENT", "player", "Dyrue", "cast-4", 5000)
+		stub.fire("UNIT_SPELLCAST_START", "player", "cast-4", 5000)
+		near("heal/predicting mid-cast", HealPrediction:IncomingHeal("player"), 650)
+		stub.time = 104
+		equal("heal/a stale prediction expires on read",
+			HealPrediction:IncomingHeal("player"), 0)
+	else
+		-- The mirror assertion, and the one that pins the performance claim:
+		-- where the game reports incoming heals, the ten spellcast events that
+		-- existed only to reconstruct them are not subscribed at all.
+		equal("heal/api: the derived cast machinery is not subscribed",
+			stub.isRegistered("UNIT_SPELLCAST_SENT"), false)
+	end
 
 	----------------------------------------------------------------------------
 	-- HoTs
@@ -5430,24 +5453,39 @@ local function testHealPrediction()
 
 	----------------------------------------------------------------------------
 	-- Gating
+	--
+	-- These rules are about the ELEMENT refusing to draw, not about where the
+	-- number came from, so the prediction is set up through whichever path this
+	-- client actually has. Writing them against the derived path alone would
+	-- have left the gating untested on both real clients.
 	----------------------------------------------------------------------------
 
 	stub.time = 100
-	stub.fire("UNIT_SPELLCAST_SENT", "player", "Onyxia", "cast-5", 5000)
-	stub.fire("UNIT_SPELLCAST_START", "player", "cast-5", 5000)
+
+	local gateSeq = 0
+	local function predictFor(unitToken, unitName)
+		if derivedPath then
+			gateSeq = gateSeq + 1
+			stub.casting = { endTime = stub.time + 2 }
+			stub.fire("UNIT_SPELLCAST_SENT", "player", unitName, "gate-" .. gateSeq, 5000)
+			stub.fire("UNIT_SPELLCAST_START", "player", "gate-" .. gateSeq, 5000)
+		else
+			stub.incoming[unitToken] = 650
+		end
+	end
 
 	-- SPEC §FR-4.7. The system knows the number; the element refuses to draw it,
 	-- because a boss reports health on a 0-100 scale and there is no max health
 	-- to turn an absolute heal into a fraction of.
 	local targetFrame = ns.frames.target
 	local targetEl = targetFrame.elements.healPrediction
+	predictFor("target", "Onyxia")
 	check("heal/the amount is known for a percent-health unit",
 		HealPrediction:IncomingHeal("target") > 0)
 	targetFrame:UpdateElement("healPrediction")
 	equal("heal/but nothing is drawn on one", targetEl.direct:IsShown(), false)
 
-	stub.fire("UNIT_SPELLCAST_SENT", "player", "Dyrue", "cast-6", 5000)
-	stub.fire("UNIT_SPELLCAST_START", "player", "cast-6", 5000)
+	predictFor("player", "Dyrue")
 	player:UpdateElement("healPrediction")
 	equal("heal/draws on a unit with real health values", el.direct:IsShown(), true)
 
@@ -5481,7 +5519,133 @@ local function testHealPrediction()
 	equal("heal/created no ticker", stub.activeTickers(), tickersBefore)
 
 	----------------------------------------------------------------------------
+	-- Plan 19 — the API takes the direct half, the auras keep the HoT half
+	----------------------------------------------------------------------------
 
+	if not derivedPath then
+	HealPrediction:Reset()
+	HealPrediction:BindStore(ns.db.char.heals)
+	store = HealPrediction:Store()
+	for k in pairs(store.direct) do store.direct[k] = nil end
+	for k in pairs(store.periodic) do store.periodic[k] = nil end
+	for k in pairs(store.interval) do store.interval[k] = nil end
+	HealPrediction:SetActive(ns.frames.player, true)
+	stub.time = 200
+
+	--- The single most important assertion in this section. The API total
+	-- already includes the player's own casts, so if the derived path were added
+	-- on top rather than replaced by it, every heal you cast would be counted
+	-- twice -- entirely plausible on screen and invisible in review.
+	stub.incoming.player = 1234
+	stub.healLine("SPELL_HEAL", "player-1", "player-1", 5000, 500, 0, false)
+	stub.casting = { endTime = 202 }
+	stub.fire("UNIT_SPELLCAST_SENT", "player", "Dyrue", "cast-api", 5000)
+	stub.fire("UNIT_SPELLCAST_START", "player", "cast-api", 5000)
+	local apiDirect = HealPrediction:IncomingHeal("player")
+	equal("heal/api: the API value is used verbatim", apiDirect, 1234)
+	check("heal/api: the derived cast is NOT added on top", apiDirect == 1234)
+
+	stub.incoming.player = 0
+	equal("heal/api: zero from the API is zero, not a fallback",
+		HealPrediction:IncomingHeal("player"), 0)
+	stub.casting = nil
+
+	-- The roster is the combat-log guard. Solo it holds exactly one entry, so
+	-- the widened scope costs the solo player nothing -- the §6 claim.
+	equal("heal/api: roster holds only the player when solo",
+		HealPrediction:RosterCount(), 1)
+
+	local outsider = "player-outside"
+	stub.healLine("SPELL_PERIODIC_HEAL", outsider, "player-1", 6100, 90, 0, false)
+	local casters = HealPrediction:SessionCount()
+	equal("heal/api: a non-group caster teaches nothing", casters, 0)
+
+	-- Put a healer in the party and the same line is learned, keyed to them.
+	stub.groupSize = 2
+	stub.inGroup = true
+	stub.setUnit("party1", {
+		name = "Healbot", class = "PRIEST", className = "Priest", level = 60,
+		isPlayer = true, health = 3000, healthMax = 3000, inParty = true,
+		reaction = 5, guid = "player-2",
+	})
+	stub.fire("GROUP_ROSTER_UPDATE")
+	equal("heal/api: roster picks up a party member",
+		HealPrediction:RosterCount(), 2)
+
+	stub.healLine("SPELL_PERIODIC_HEAL", "player-2", "player-1", 6100, 100, 0, false)
+	casters = HealPrediction:SessionCount()
+	equal("heal/api: a group caster's tick is learned", casters, 1)
+
+	-- Two casters of one spell must not blend into each other.
+	stub.groupSize = 3
+	stub.setUnit("party2", {
+		name = "Treebot", class = "DRUID", className = "Druid", level = 60,
+		isPlayer = true, health = 3000, healthMax = 3000, inParty = true,
+		reaction = 5, guid = "player-3",
+	})
+	stub.fire("GROUP_ROSTER_UPDATE")
+	stub.healLine("SPELL_PERIODIC_HEAL", "player-3", "player-1", 6100, 400, 0, false)
+	casters = HealPrediction:SessionCount()
+	equal("heal/api: two casters learn separately", casters, 2)
+
+	-- A caster leaving the group is pruned on the next rebuild rather than by a
+	-- sweep nobody would remember to call.
+	stub.groupSize = 2
+	stub.setUnit("party2", nil)
+	stub.fire("GROUP_ROSTER_UPDATE")
+	casters = HealPrediction:SessionCount()
+	equal("heal/api: a departed caster is pruned", casters, 1)
+
+	-- Interleaved ticks of one spell from two casters on one target are not an
+	-- interval. This is the sideways version of Plan 11's same-target guard.
+	stub.groupSize = 3
+	stub.setUnit("party2", {
+		name = "Treebot", class = "DRUID", className = "Druid", level = 60,
+		isPlayer = true, health = 3000, healthMax = 3000, inParty = true,
+		reaction = 5, guid = "player-3",
+	})
+	stub.fire("GROUP_ROSTER_UPDATE")
+	store.interval[6200] = nil
+	stub.time = 300
+	stub.healLine("SPELL_PERIODIC_HEAL", "player-2", "player-1", 6200, 100, 0, false)
+	stub.time = 301
+	stub.healLine("SPELL_PERIODIC_HEAL", "player-3", "player-1", 6200, 100, 0, false)
+	equal("heal/api: two casters interleaving teach no interval",
+		store.interval[6200], nil)
+	stub.time = 304
+	stub.healLine("SPELL_PERIODIC_HEAL", "player-3", "player-1", 6200, 100, 0, false)
+	check("heal/api: the same caster twice does teach one",
+		store.interval[6200] ~= nil)
+
+	-- HoT scope: an aura whose caster resolves into the roster counts; one with
+	-- no resolvable caster never does, which is the non-group case.
+	stub.time = 400
+	stub.units.player.auras = { HELPFUL = {
+		{ name = "Renew", spellId = 6100, duration = 12, expirationTime = 412,
+		  sourceUnit = "party1", isHelpful = true },
+		{ name = "Stranger", spellId = 6100, duration = 12, expirationTime = 412,
+		  sourceUnit = nil, isHelpful = true },
+	} }
+	local hotFromGroup = select(2, HealPrediction:IncomingHeal("player"))
+	check("heal/api: a group member's HoT is predicted", hotFromGroup > 0)
+
+	stub.units.player.auras = { HELPFUL = {
+		{ name = "Stranger", spellId = 6100, duration = 12, expirationTime = 412,
+		  sourceUnit = nil, isHelpful = true },
+	} }
+	equal("heal/api: a HoT with no resolvable caster is not",
+		select(2, HealPrediction:IncomingHeal("player")), 0)
+
+	equal("heal/api: /duf profile names the live direct path",
+		HealPrediction:DirectProvider(), "api")
+	end
+
+	----------------------------------------------------------------------------
+
+	stub.groupSize = 0
+	stub.inGroup = false
+	stub.setUnit("party2", nil)
+	stub.incoming.player = nil
 	stub.units.player.auras = savedAuras
 	stub.casting = nil
 	stub.time = savedTime

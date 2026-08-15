@@ -368,6 +368,9 @@ for _, e in ipairs({
 	"UNIT_SPELLCAST_CHANNEL_START", "UNIT_SPELLCAST_CHANNEL_UPDATE",
 	"UNIT_SPELLCAST_CHANNEL_STOP",
 	"COMBAT_LOG_EVENT_UNFILTERED",
+	-- Plan 19. Present on both live clients, verified 11 August 2026, and the
+	-- reason reading UnitGetIncomingHeals costs no ticker.
+	"UNIT_HEAL_PREDICTION",
 }) do
 	stub.validEvents[e] = true
 end
@@ -396,6 +399,18 @@ function _G.CreateColor(r, g, b, a)
 	}
 end
 
+--- Is ANY frame subscribed to `event`?
+--
+-- Plan 19 asserts that ten UNIT_SPELLCAST_* subscriptions are absent on a client
+-- whose API makes them unnecessary, and "nothing is listening" is only
+-- answerable across every frame rather than on one known object.
+function stub.isRegistered(event)
+	for _, f in ipairs(stub.frames or {}) do
+		if f.__events[event] ~= nil then return true end
+	end
+	return false
+end
+
 --- Fire an event at every frame registered for it, honouring unit filters.
 function stub.fire(event, ...)
 	local a = ...
@@ -421,6 +436,33 @@ end
 -- in place, which is exactly the contract the real one has: the payload belongs
 -- to the event currently being dispatched and is not available outside it.
 --------------------------------------------------------------------------------
+
+--------------------------------------------------------------------------------
+-- Incoming heals (Plan 19)
+--
+-- PRESENT BY DEFAULT, because it is present on both live clients. The stub used
+-- to model a client without it, which is a client that does not exist -- and
+-- this file's own note about UNIT_COMBO_POINTS says what that does to a suite:
+-- it turns it into a rubber stamp. Pass 5 removes it to exercise the fallback,
+-- the same way pass 3 removes C_UnitAuras.
+--
+-- Set stub.incoming[unit] to a number to make the game report incoming healing
+-- on that unit. Absent means zero, which is what the real API returns for a unit
+-- nobody is healing -- NOT nil, which means "this client has no such function".
+--------------------------------------------------------------------------------
+
+stub.incoming = {}
+
+function _G.UnitGetIncomingHeals(unitToken, healer)
+	if healer then
+		-- The filtered form. Measured unproven on the live client (it returned
+		-- zero on every call while the player was healing), so nothing in the
+		-- addon uses it -- but modelling it as always-zero here would let a
+		-- future caller quietly depend on a shape that is not verified.
+		return 0
+	end
+	return stub.incoming[unitToken] or 0
+end
 
 stub.combatLog = nil
 
@@ -579,6 +621,11 @@ function _G.UnitAffectingCombat(u)
 end
 function _G.IsInGroup() return stub.inGroup end
 function _G.IsInRaid() return stub.inRaid end
+
+--- Plan 19. Counts the player, the way the real one does: in a party the tokens
+-- run party1..n-1, in a raid raid1..n.
+stub.groupSize = 0
+function _G.GetNumGroupMembers() return stub.groupSize end
 function _G.IsShiftKeyDown() return false end
 function _G.GetTime() return stub.time end
 

@@ -187,7 +187,7 @@ local function healPredictionArgs(unitKey, apply)
 		breaker = Options.BreakerNotice(unitKey, "healPrediction", 0.5),
 		note = {
 			type = "description", order = 1,
-			name = L["Shows healing that is on its way, as a segment after the current health. These clients have no incoming-heal API, so the amounts are learned from your own casts: a spell predicts nothing until you have cast it once, and only your own heals are visible at all."],
+			name = L["Shows healing that is on its way, as a segment after the current health. Direct heals from anyone in your group come from the game itself. HoTs do not: their size is learned by watching them tick, so a HoT predicts nothing until you have seen that healer cast it once."],
 		},
 		enabled = {
 			type = "toggle", order = 2, name = L["Enable"],

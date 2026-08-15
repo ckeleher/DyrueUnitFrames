@@ -212,21 +212,29 @@ function Compat.GetComboPoints(unit)
 end
 
 --------------------------------------------------------------------------------
--- Heal prediction (Plan 11)
+-- Heal prediction (Plans 11 and 19)
 --
--- UnitGetIncomingHeals arrived in Cataclysm and UnitGetTotalAbsorbs in
--- Warlords, so neither is expected on 1.15.9 or 2.5.6 and Systems/HealPrediction
--- derives its own numbers instead of reading them.
+-- This block used to say UnitGetIncomingHeals arrived in Cataclysm and
+-- UnitGetTotalAbsorbs in Warlords, so neither was expected here. BOTH ARE
+-- PRESENT ON BOTH CLIENTS -- verified 11 August 2026, and the incoming-heals one
+-- verified working in a live raid: it returns other players' heals with roughly
+-- a second of lead time, and UNIT_HEAL_PREDICTION pushes the changes.
 --
--- They are probed anyway rather than assumed absent, for two reasons. The
--- shared-code clients have backported things before -- FEATURE-PROBE, NEVER
--- VERSION-CHECK is the rule this whole file exists to enforce -- and if either
--- one ever turns up, /duf compat is where it surfaces and the PROVIDERS table
--- in the system is the seam an API-backed provider slots into.
+-- The expansion-era reasoning was the mistake. These clients run the modern
+-- shared codebase, so which expansion introduced a function says nothing about
+-- whether it is here -- exactly the way UNIT_COMBO_POINTS went missing. That is
+-- what FEATURE-PROBE, NEVER VERSION-CHECK is for, and probing this pair is the
+-- only reason the error was recoverable at all.
 --
--- Note what is NOT claimed here: even where a Classic client has exposed
--- incoming heals, it covered direct casts only. HoTs and channels have never
--- been in it, so the derived path stays the primary one either way.
+-- What the API does NOT cover is HoTs. Measured directly: a Rejuvenation
+-- ticking on the player returned zero across 900 samples. So Plan 11's derived
+-- machinery keeps the HoT half and the API takes the direct half, and the two
+-- are summed rather than chosen between. See COMPAT_FINDINGS, "Plans 11, 12 and
+-- 19 -- incoming heals".
+--
+-- GetIncomingHeals still returns nil rather than 0 where the function is
+-- missing, because that distinction is what lets Systems/HealPrediction fall
+-- back to deriving the number on a client that lacks it.
 --------------------------------------------------------------------------------
 
 Compat.hasIncomingHeals = (_G.UnitGetIncomingHeals ~= nil)
