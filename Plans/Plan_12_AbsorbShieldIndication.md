@@ -1,8 +1,27 @@
 # Plan 12 — Absorb Shield Indication
 
-**Status:** Not started. **Depends on Plan 11.**
+**Status:** Not started. **Rewritten 11 August 2026** around evidence this plan
+predicted it might get. **Depends on Plan 11** (merged) and informed by
+**Plan 19** (merged, `ce6e5ec`).
 **Created:** 3 August 2026
 **Branch:** `Plan-12-absorb-shields`
+
+> **This plan's own *Diagnose before designing* section called it.** It listed
+> `UnitGetTotalAbsorbs` existing after all as candidate 1, said "everything below
+> is deleted" if it held, and noted the answer might be in hand before the plan
+> started. It was. `UnitGetTotalAbsorbs` **is present on both clients**, along
+> with `UnitGetTotalHealAbsorbs` and a valid `UNIT_ABSORB_AMOUNT_CHANGED` event —
+> verified 11 August 2026.
+>
+> **But it has never been seen return a non-zero value**, because the run that
+> found it sampled seven units nobody had shielded. Present is not working; Plan
+> 19 spent four probes establishing that distinction and this plan is not going
+> to discard it.
+>
+> So candidate 1 is promoted from "worth checking" to "one measurement away",
+> the estimate below is probably wrong by a factor of five in your favour, and
+> **nothing gets deleted until a shield has been on a bar while the probe was
+> running.**
 
 ---
 
@@ -28,18 +47,22 @@ plan**. This document covers only the shielding third.
 Heal prediction and absorb display look like one feature — both are a coloured
 segment after the health fill — and they are not.
 
-A predicted heal is a number the game will shortly make true, and it is wrong
-for at most a second or two. **An absorb shield is a number the game will never
-tell you.** There is no `UnitGetTotalAbsorbs` on these clients, no
-`SPELL_ABSORBED` subevent (that arrived in Legion), and — the part that actually
-bites — nothing anywhere reports *how much of a shield is left*. A Power Word:
-Shield that has eaten 90% of its capacity looks identical, through every API
-this client has, to one cast a moment ago.
+**The original argument, kept because it is what the fallback rests on:** a
+predicted heal is a number the game will shortly make true, and it is wrong for
+at most a second or two. An absorb shield, with no API, is a number the game
+never tells you — no `SPELL_ABSORBED` subevent (that arrived in Legion), and
+nothing reporting how much of a shield is *left*. A Power Word: Shield that has
+eaten 90% of its capacity would look identical to one cast a moment ago.
 
-So the accuracy ceiling here is materially lower than Plan 11's, and the failure
-mode is worse: a stale shield segment sits on the bar looking authoritative for
-as long as the aura lasts. That is worth its own plan and its own decision
-rather than being carried in on the back of a feature that works properly.
+**What changed:** `UnitGetTotalAbsorbs` exists on both clients. If it reports a
+live remaining value, that entire paragraph stops applying and this plan becomes
+the same shape as Plan 19's direct half — read a number, draw a segment, no
+learning, no decay bookkeeping, no rank table.
+
+The separation from Plan 11 still holds either way. Where absorbs land on the
+bar, whether they overflow, and what colour they are remain this plan's
+decisions, and the fallback below remains this plan's problem if the API is
+inert. What is no longer certain is that the fallback is *needed*.
 
 ---
 
@@ -63,19 +86,35 @@ problem a LibHealComm provider would solve for both plans at once.
 ## Diagnose before designing
 
 The data source is not known, and three candidates are not equally good. This
-plan does **not** pick one and design around a guess. Probe first, in one
-session, via `Probe/DyrueUnitFrames_Probe`:
+plan does **not** pick one and design around a guess.
 
-| # | Candidate | What to check | If it holds |
+| # | Candidate | Status as of 11 Aug 2026 | If it holds |
 |---|---|---|---|
-| 1 | `UnitGetTotalAbsorbs` exists after all | Call it on `player` with a shield up. Plan 11 already adds this to `/duf compat`, so the answer may be in hand before this plan starts | Everything below is deleted. Read the number, draw the segment. Two hours of work total |
-| 2 | The aura tooltip carries the remaining amount | Scan the Power Word: Shield buff tooltip on yourself, shielded and part-consumed. Some clients render "Absorbs N damage" live | Best realistic outcome: exact remaining value, no decay bookkeeping, no rank table. Locale-dependent parse, enUS only, which §11.4 already accepts |
+| 1 | `UnitGetTotalAbsorbs` | **Present on both clients. Never observed non-zero.** One measurement away | Everything below is deleted. Read the number, draw the segment |
+| 2 | The aura tooltip carries the remaining amount | Unprobed | Exact remaining value, no decay bookkeeping, no rank table. Locale-dependent parse, enUS only, which §11.4 already accepts |
 | 3 | Estimate and decay | The fallback, designed below | Approximate but always available |
 
-Candidate 2 is worth ten minutes of a probe before anyone writes candidate 3.
-It is genuinely uncertain — the tooltip behaviour differs by expansion and has
-never been verified on 1.15.9 or 2.5.6 — and it is the difference between an
-exact readout and an estimate that drifts.
+### Phase 0 — one run, and it decides the whole plan
+
+`/dufprobe incoming` already samples `UnitGetTotalAbsorbs` on every tick, across
+`player`, `target`, `focus` and `party1-4`, and already reports
+`absorbNonZero` and `maxAbsorb`. **No probe change is needed.** What the existing
+run lacked was a shield.
+
+**Get a Power Word: Shield onto one of those seven units and run it.** Then:
+
+| Result | Verdict |
+|---|---|
+| `maxAbsorb > 0`, and it *falls* as the shield is eaten | Candidate 1. Delete the design below; this becomes a two-hour plan |
+| `maxAbsorb > 0` but it never moves until the aura drops | Half a win: capacity is readable, decay is not. Keep the decay half of candidate 3, delete the rank-table half — which was the expensive half |
+| Always zero, with a shield definitely up | Present but inert. Candidate 1 is dead, and the answer goes in `COMPAT_FINDINGS` beside the incoming-heals one |
+
+The middle row is the outcome nobody has considered and is entirely plausible:
+`UnitGetTotalAbsorbs` may be wired to the aura's nominal value on a client with
+no absorb tracking behind it. **Watch the number over time, not just once.**
+
+Candidate 2 is still worth ten minutes before anyone writes candidate 3, and
+only matters if Phase 0 lands on the third row.
 
 ---
 
@@ -205,13 +244,23 @@ addon has landed on independently.
 
 | Piece | Hours |
 |---|---|
-| Probe the three candidates, in game | 0.5 |
-| **If candidate 1 or 2 holds:** accessor, segment, options, tests | **2–3 total** |
-| **If not:** capacity learning + decay accounting | 3–4 |
+| Phase 0: one `/dufprobe incoming` run with a shield up | 0.25 |
+| **If candidate 1 holds:** accessor, segment, options, tests | **2–3 total** |
+| **If capacity reads but decay does not:** the decay half only | 2–3 |
+| **If inert:** capacity learning + decay accounting | 3–4 |
 | Options, defaults, locale | 0.5 |
 | `testAbsorbShields` | 1.5 |
 | **Total, fallback path** | **5.5–6.5** |
 
-Half a day if the probe is kind, most of a day if it is not. Do not start
-writing candidate 3 before the probe has run — that is the whole reason this is
-a separate plan.
+Half a day if the probe is kind, most of a day if it is not — and it is now
+**more likely to be kind than when this was written**, because the API it hoped
+for turned out to exist. Do not start writing candidate 3 before Phase 0 has
+run; that is the whole reason this is a separate plan, and it is the advice that
+just paid off.
+
+**Plan 19's precedent, worth applying here directly.** That plan spent four
+probes deriving something the game already reported, because a `COMPAT_FINDINGS`
+row said the API was absent on expansion-era reasoning. This plan's equivalent
+row is now known to be wrong in the same direction. The remaining question is not
+whether the function exists — it does — but whether it *answers*, which is a
+different question and the one Phase 0 asks.
