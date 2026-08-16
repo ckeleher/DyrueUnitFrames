@@ -28,8 +28,9 @@ local type, pairs, ipairs, next = type, pairs, ipairs, next
 -- off the combo bar added in Plan 9; 14 quiets the aura overlays (Plan 13);
 -- 15 gives every text element a width mode and puts the names on "fit"
 -- (Plan 6); 16 renames the portrait placements and moves the default to the
--- new "column" (Plan 7).
-Defaults.SCHEMA_VERSION = 16
+-- new "column" (Plan 7); 17 turns the pet's indicator row on, because Plan 24
+-- put hunter pet happiness in it and the row has shipped off since 1.0.
+Defaults.SCHEMA_VERSION = 17
 
 --------------------------------------------------------------------------------
 -- Table helpers
@@ -468,9 +469,33 @@ local function unit(overrides)
 			alpha = 1,
 			growth = "RIGHT",          -- RIGHT | LEFT | UP | DOWN
 			style = "icon",            -- icon | square
+			-- Present on every unit for schema uniformity, the same reasoning
+			-- the comment on `mana` gives. Which of them can actually appear on
+			-- a given frame is Elements/Indicators.lua's `available`, not a
+			-- question the stored schema answers.
+			--
+			-- Plan 24. The happiness three ship COLORED where resting and combat
+			-- ship white, and the departure is deliberate on two counts:
+			--
+			--   * White leaves Blizzard's art unmodified, which is right when
+			--     the art is self-explanatory. The three happiness faces differ
+			--     only by expression, and at 20px that is genuinely hard to read
+			--     at a glance -- which is the entire job of the row.
+			--   * Under `style = "square"` -- Plan 1's fallback for art that has
+			--     moved -- white would render three IDENTICAL squares. They are
+			--     mutually exclusive and share a slot, so the fallback would
+			--     convey nothing at all. The tints are what keep it a fallback
+			--     rather than decoration.
+			--
+			-- Gentle rather than primary, because a vertex color multiplies:
+			-- pure green against the happy face would zero its red and blue and
+			-- flatten the detail out of it.
 			states = {
 				resting = { enabled = true, color = color(1, 1, 1) },
 				combat = { enabled = true, color = color(1, 1, 1) },
+				happy = { enabled = true, color = color(0.4, 1.0, 0.4) },
+				content = { enabled = true, color = color(1.0, 0.9, 0.4) },
+				unhappy = { enabled = true, color = color(1.0, 0.4, 0.4) },
 			},
 		},
 
@@ -651,6 +676,44 @@ local function buildUnits()
 		anchor = { to = "player", point = "TOPLEFT", relativePoint = "BOTTOMLEFT", x = 0, y = -6 },
 		power = { height = 8 },
 		texts = fullTexts("[hp:perc]%"),
+		-- Plan 24. The second unit to ship the indicator row on, and for the
+		-- opposite reason to the player's: the player's row is state you already
+		-- know and want confirmed, the pet's is happiness, which is invisible
+		-- otherwise and decays without telling you. On a non-hunter the states
+		-- are not available, so the row builds empty and shows nothing.
+		--
+		-- Placed OUTSIDE the frame's right edge rather than on the health bar,
+		-- which is where the schema default puts it. The pet frame is 150x32 and
+		-- already carries a name and a health percentage; the player's row can
+		-- sit on the bar because it was tuned to clear that frame's text, and at
+		-- pet size there is no clear space left to tune it into. Outside the
+		-- edge the row cannot collide with anything the frame draws, and it
+		-- grows further right, away from the frame, as states are added.
+		--
+		-- `frame` rather than `health` on purpose: frame.content is the button's
+		-- own rect, and it is the one anchor target that is ALWAYS available, so
+		-- the row cannot vanish because somebody turned the health bar off.
+		--
+		-- x = 2 is the row's own `spacing`, so the gap between the frame and the
+		-- first icon matches the gap between icons. y = 0 centres it on the edge
+		-- -- the schema's y = 5 exists to lift the row off the player frame's
+		-- name text and means nothing once the row is outside the frame.
+		--
+		-- Combat ships OFF here alone. A pet is in combat whenever you are, so
+		-- on this frame the marker is the least informative thing the row can
+		-- show -- it repeats the player's own indicator a few pixels lower. It
+		-- stays offered rather than removed, because a hunter whose pet is off
+		-- tanking something is a case where the answer is genuinely not the same
+		-- as the player's; it is just not the common one.
+		indicators = {
+			enabled = true,
+			anchorTo = "frame",
+			point = "LEFT",
+			relativePoint = "RIGHT",
+			x = 2,
+			y = 0,
+			states = { combat = { enabled = false } },
+		},
 	})
 
 	u.focus = unit({

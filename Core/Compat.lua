@@ -212,6 +212,57 @@ function Compat.GetComboPoints(unit)
 end
 
 --------------------------------------------------------------------------------
+-- Pet happiness (Plan 24)
+--
+-- Classic and TBC only -- Cataclysm removed the mechanic outright, which is
+-- exactly the shape of change `hasPetHappiness` exists to absorb. Sits here
+-- rather than beside the combo-point block on purpose: the trap named above is
+-- that power type 4 is HAPPINESS in the Classic numbering, and this is the real
+-- happiness reader that number keeps getting mistaken for.
+--
+-- TWO conditions, not one, and the second is the one that is easy to miss:
+--
+--   * `GetPetHappiness` takes no unit argument. It answers about the PLAYER's
+--     pet, so there is no version of this for anyone else's -- `partypet1-4`
+--     cannot have a happiness readout no matter how the caller asks.
+--   * A warlock's voidwalker has no happiness, but a caller that only checks
+--     "is there a pet" gets a stale number rather than nothing. Blizzard's own
+--     PetFrame gates on the second return of HasPetUI for this reason, and so
+--     does this.
+--------------------------------------------------------------------------------
+
+Compat.hasPetUI = (_G.HasPetUI ~= nil)
+
+-- Named rather than left as literals at the call sites: 1/2/3 carry no meaning
+-- on sight, and this file has already been bitten once by a bare power-type
+-- number meaning two different things.
+Compat.PET_UNHAPPY = 1
+Compat.PET_CONTENT = 2
+Compat.PET_HAPPY = 3
+
+--- Is the player's current pet a hunter pet?
+-- False for a warlock, mage or death knight pet, and false when there is no pet.
+function Compat.IsHunterPet()
+	local fn = _G.HasPetUI
+	if not fn then return false end
+	local ok, _, isHunterPet = pcall(fn)
+	if not ok then return false end
+	return isHunterPet and true or false
+end
+
+--- Happiness of the player's pet.
+-- @return number|nil PET_UNHAPPY | PET_CONTENT | PET_HAPPY, or nil when this
+--         client has no happiness mechanic, there is no pet, or the pet is not
+--         a hunter pet. nil is "do not display", never "unhappy".
+function Compat.GetPetHappiness()
+	if not Compat.hasPetHappiness then return nil end
+	if not Compat.IsHunterPet() then return nil end
+	local ok, happiness = pcall(_G.GetPetHappiness)
+	if not ok then return nil end
+	return happiness
+end
+
+--------------------------------------------------------------------------------
 -- Heal prediction (Plans 11 and 19)
 --
 -- This block used to say UnitGetIncomingHeals arrived in Cataclysm and
@@ -526,9 +577,16 @@ end
 
 local STATE_ICON_SHEET = "Interface\\CharacterFrame\\UI-StateIcon"
 
+-- Plan 24. A second sheet, on the same terms: three 24x23 cells across its top
+-- row, happy first, at the tex coords Blizzard's own PetFrame_Update uses.
+local HAPPINESS_SHEET = "Interface\\PetPaperDollFrame\\UI-PetHappiness"
+
 local stateIcons = {
 	resting = { texture = STATE_ICON_SHEET, left = 0, right = 0.5, top = 0, bottom = 0.421875 },
 	combat  = { texture = STATE_ICON_SHEET, left = 0.5, right = 1.0, top = 0, bottom = 0.484375 },
+	happy   = { texture = HAPPINESS_SHEET, left = 0,      right = 0.1875, top = 0, bottom = 0.359375 },
+	content = { texture = HAPPINESS_SHEET, left = 0.1875, right = 0.375,  top = 0, bottom = 0.359375 },
+	unhappy = { texture = HAPPINESS_SHEET, left = 0.375,  right = 0.5625, top = 0, bottom = 0.359375 },
 }
 
 --- Art for a unit-state icon.
@@ -749,6 +807,15 @@ function Compat.Describe()
 		hasFocusProbed = Compat.hasFocusProbed,
 		hasFocus = Compat.hasFocus,
 		hasPetHappiness = Compat.hasPetHappiness,
+		-- Plan 24. Presence of the reader was already known; these two are what
+		-- was NOT known. `hasUnitHappiness` is the open question the plan names
+		-- -- nothing had ever asserted the push event fires, and this project
+		-- has been burned by presence-is-not-function three times. `hasPetUI`
+		-- is what keeps a warlock's voidwalker from showing a happiness face,
+		-- so an absent one would be a silent behaviour change rather than a
+		-- missing feature.
+		hasUnitHappiness = Compat.HasEvent("UNIT_HAPPINESS"),
+		hasPetUI = Compat.hasPetUI,
 		hasClickCastFrames = Compat.hasClickCastFrames,
 		hasSecretValues = Compat.hasSecretValues,
 		hasUnitAurasAPI = Compat.hasUnitAurasAPI,

@@ -372,16 +372,20 @@ register("raidtarget", {
 	end,
 })
 
+-- Plan 24. This used to call GetPetHappiness directly -- a SPEC §5.5 breach --
+-- and to gate on nothing but "is this the pet frame", so it reported a happiness
+-- for a warlock's voidwalker, which has none. Compat.GetPetHappiness folds the
+-- hunter-pet test into reading the value, and is now the single definition of it,
+-- shared with the happiness states in Elements/Indicators.lua.
 register("happiness", {
 	events = { UNIT_HAPPINESS = true },
-	help = "[happiness] (pet, Classic/TBC only)",
+	help = "[happiness] (hunter pet, Classic/TBC only)",
 	fn = function(unit)
-		if not Compat.hasPetHappiness then return nil end
 		if not UnitIsUnit(unit, "pet") then return nil end
-		local happiness = GetPetHappiness()
+		local happiness = Compat.GetPetHappiness()
 		if not happiness then return nil end
-		if happiness == 3 then return L["Happy"] end
-		if happiness == 2 then return L["Content"] end
+		if happiness == Compat.PET_HAPPY then return L["Happy"] end
+		if happiness == Compat.PET_CONTENT then return L["Content"] end
 		return L["Unhappy"]
 	end,
 })

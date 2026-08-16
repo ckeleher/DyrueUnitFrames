@@ -407,11 +407,81 @@ local function portraitColumn(profile)
 	return profile
 end
 
+--- 16 -> 17. Plan 24 put hunter pet happiness into the state-indicator row, and
+-- the pet frame has shipped that row DISABLED since 1.0. EnsureProfile only
+-- fills keys that are absent, so every existing profile already carries
+-- `pet.indicators.enabled = false` and the feature would arrive invisible to
+-- precisely the hunters it was asked for by.
+--
+-- Same rule as steps 12-15: only the EXACT untouched row moves. For a boolean
+-- that is not enough on its own -- `enabled = false` is also what a deliberate
+-- choice looks like -- so "untouched" is the whole shipped geometry tuple.
+-- Anyone who has positioned, resized or re-anchored the pet's row has looked at
+-- it, and a row somebody looked at and left off stays off.
+--
+-- A nil reads as untouched rather than as a choice, the same way step 15's
+-- portrait `mode` does: this runs BEFORE EnsureProfile, so nil reliably means
+-- "this profile predates the key" -- which is the common case here, since an
+-- ancient profile's indicator block holds four keys and the current one holds
+-- ten.
+-- What a profile that has never touched the row carries: the schema default,
+-- which puts the row on the health bar because that is where the PLAYER's is.
+local SHIPPED_PET_ROW = {
+	anchorTo = "health",
+	point = "TOPLEFT", relativePoint = "TOPLEFT",
+	x = 0, y = 5,
+	size = 20, spacing = 2,
+	growth = "RIGHT", style = "icon",
+}
+
+-- Where Plan 24 puts it instead: outside the frame's right edge, clear of the
+-- name and health text that the 150x32 pet frame is already full of. Turning
+-- the row on and placing it are the same judgement about the same inherited
+-- default, so they are one step rather than two -- a profile that has never
+-- chosen a position has not chosen the health bar either.
+local PET_ROW_PLACEMENT = {
+	anchorTo = "frame",
+	point = "LEFT", relativePoint = "RIGHT",
+	x = 2, y = 0,
+}
+
+local function petIndicatorRow(profile)
+	local row = profile.units and profile.units.pet and profile.units.pet.indicators
+	if type(row) ~= "table" then return profile end
+
+	-- nil means the key predates the setting and EnsureProfile is about to fill
+	-- it with the current pet default, which is now on and placed. Nothing to do.
+	if row.enabled ~= false then return profile end
+
+	for key, shipped in pairs(SHIPPED_PET_ROW) do
+		local value = row[key]
+		if value ~= nil and value ~= shipped then return profile end
+	end
+
+	row.enabled = true
+
+	-- Written unconditionally rather than only over keys that are present: for
+	-- an absent key this lands on exactly what EnsureProfile would have filled
+	-- in a moment later, so the two agree either way.
+	for key, value in pairs(PET_ROW_PLACEMENT) do row[key] = value end
+
+	-- And combat off, for the same reason the pet ships that way: it repeats the
+	-- player's own indicator, since a pet is in combat whenever you are. Safe to
+	-- force because we only reach here on a row that was never shown -- a state
+	-- inside an invisible row cannot have been judged, whatever value it holds.
+	if type(row.states) == "table" and type(row.states.combat) == "table" then
+		row.states.combat.enabled = false
+	end
+
+	return profile
+end
+
 local steps = {
 	[12] = raiseTargetBuffs,
 	[13] = quietAuraOverlays,
 	[14] = textWidthModes,
 	[15] = portraitColumn,
+	[16] = petIndicatorRow,
 }
 
 Migrate.steps = steps
