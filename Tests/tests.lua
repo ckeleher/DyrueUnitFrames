@@ -711,6 +711,111 @@ local function testMigration()
 		settled.units.player.portrait.placement, "column")
 
 	--------------------------------------------------------------------------
+	-- 16 -> 17: the pet's indicator row (Plan 24)
+	--
+	-- The row has shipped OFF since 1.0, so without this step Plan 24's whole
+	-- feature arrives invisible to every existing profile. The interesting half
+	-- is the restraint: `enabled = false` is both the inherited default AND
+	-- what a deliberate choice looks like, so the geometry has to break the tie.
+	--------------------------------------------------------------------------
+
+	local SHIPPED_ROW = {
+		enabled = false, anchorTo = "health",
+		point = "TOPLEFT", relativePoint = "TOPLEFT",
+		x = 0, y = 5, size = 20, spacing = 2,
+		growth = "RIGHT", style = "icon",
+	}
+
+	local function petRowProfile(overrides)
+		local row = {}
+		for k, v in pairs(SHIPPED_ROW) do row[k] = v end
+		for k, v in pairs(overrides or {}) do row[k] = v end
+		return { schemaVersion = 16, units = { pet = { indicators = row } } }
+	end
+
+	local function migratedPetRow(overrides)
+		local p = petRowProfile(overrides)
+		Migrate:Run(p, {})
+		return p.units.pet.indicators
+	end
+
+	equal("migrate/an untouched pet row is turned on",
+		migratedPetRow().enabled, true)
+
+	-- ...and placed. Turning it on and moving it off the health bar are one
+	-- judgement about the same inherited default: a profile that never chose a
+	-- position never chose the health bar either.
+	local placed = migratedPetRow()
+	equal("migrate/and anchored to the frame", placed.anchorTo, "frame")
+	equal("migrate/off its right edge", placed.relativePoint, "RIGHT")
+	equal("migrate/by its own left edge", placed.point, "LEFT")
+	equal("migrate/with the spacing gap", placed.x, 2)
+	equal("migrate/vertically centred", placed.y, 0)
+
+	-- Combat comes off with it. A real v16 profile carries the states table with
+	-- combat on, inherited from the schema default -- and a state inside a row
+	-- that has never been shown cannot have been judged, whatever it holds.
+	local withStates = { schemaVersion = 16, units = { pet = { indicators = {
+		enabled = false, anchorTo = "health", y = 5,
+		states = { combat = { enabled = true }, resting = { enabled = true } },
+	} } } }
+	Migrate:Run(withStates, {})
+	equal("migrate/the pet's combat marker comes off with the move",
+		withStates.units.pet.indicators.states.combat.enabled, false)
+
+	-- Somebody who moved the row looked at it, and a row you looked at and left
+	-- off stays off. This is the assertion that keeps the step honest.
+	local moved = migratedPetRow({ y = -30 })
+	equal("migrate/a repositioned pet row is left off", moved.enabled, false)
+	equal("migrate/and is not re-placed either", moved.anchorTo, "health")
+
+	local movedWithStates = { schemaVersion = 16, units = { pet = { indicators = {
+		enabled = false, anchorTo = "health", y = -30,
+		states = { combat = { enabled = true } },
+	} } } }
+	Migrate:Run(movedWithStates, {})
+	equal("migrate/nor is its combat marker touched",
+		movedWithStates.units.pet.indicators.states.combat.enabled, true)
+	equal("migrate/a resized one too",
+		migratedPetRow({ size = 32 }).enabled, false)
+	equal("migrate/and a re-anchored one",
+		migratedPetRow({ anchorTo = "power" }).enabled, false)
+
+	-- A row already on is not something this step has an opinion about.
+	equal("migrate/a row already on is untouched",
+		migratedPetRow({ enabled = true, y = -30 }).enabled, true)
+
+	-- An ancient profile's indicator block holds four keys, not ten. The absent
+	-- ones predate the setting and must read as untouched rather than as
+	-- choices, or the step would never fire for the profiles that need it most.
+	local sparse = { schemaVersion = 16,
+		units = { pet = { indicators = { enabled = false, point = "TOPLEFT", x = 0 } } } }
+	Migrate:Run(sparse, {})
+	equal("migrate/a sparse pet row still turns on",
+		sparse.units.pet.indicators.enabled, true)
+	equal("migrate/and is placed the same way",
+		sparse.units.pet.indicators.relativePoint, "RIGHT")
+
+	-- Idempotent, and specifically not re-firing on a row the user has since
+	-- turned back off.
+	local petSettled = petRowProfile()
+	Migrate:Run(petSettled, {})
+	petSettled.units.pet.indicators.enabled = false
+	petSettled.units.pet.indicators.y = -30
+	petSettled.schemaVersion = 16
+	Migrate:Run(petSettled, {})
+	equal("migrate/pet row step does not re-fire on a moved row",
+		petSettled.units.pet.indicators.enabled, false)
+
+	-- No pet block at all: EnsureProfile supplies the whole thing, including
+	-- the new default of ON, rather than the step having to build it.
+	local noPet = { schemaVersion = 16, units = { player = {} } }
+	Migrate:Run(noPet, {})
+	Defaults:EnsureProfile(noPet)
+	equal("migrate/a profile with no pet block gets the new default",
+		noPet.units.pet.indicators.enabled, true)
+
+	--------------------------------------------------------------------------
 	-- Failure handling
 	--
 	-- Reaching the "no migration path" branch needs a gap above the collapse
@@ -2620,8 +2725,15 @@ local function testIndicators()
 	target:FullUpdate()
 	local targetEl = target.elements.indicators
 	check("indicators/combat works on the target too", targetEl.icons.combat:IsShown())
-	check("indicators/resting never shows on another unit",
-		not targetEl.icons.resting:IsShown())
+	-- Plan 24 made this structural rather than explained. Resting is not
+	-- available on another unit, so no texture is built for it at all -- it used
+	-- to be built, permanently hidden, and covered by a note in the options.
+	check("indicators/resting is not even built on another unit",
+		targetEl.icons.resting == nil)
+	check("indicators/and its controls are absent there",
+		ns.Options.table.args.units.args.target.args.indicators.args.enabled_resting == nil)
+	check("indicators/while the player still has them",
+		opts.enabled_resting ~= nil)
 	stub.units.target.inCombat = nil
 	ns:UnitConfig("target").indicators.enabled = false
 
@@ -2646,6 +2758,245 @@ local function testIndicators()
 	ns:BumpSerial()
 	ns:RefreshUnit("player")
 	ns:RefreshUnit("target")
+	ns.CombatQueue:Flush()
+end
+
+--------------------------------------------------------------------------------
+-- 25b. Hunter pet happiness (Plan 24)
+--
+-- Three boolean states in the indicator row rather than one tri-state entry, so
+-- most of what needs pinning is that they behave as ONE indicator: mutually
+-- exclusive, one slot, and absent entirely where they cannot apply.
+--
+-- The pet is set up here rather than in setupWorld because every other suite
+-- runs against a world with no pet, and giving one to all of them would change
+-- what `UnitExists("pet")` answers underneath tests that never asked for it.
+--------------------------------------------------------------------------------
+
+local function testPetHappiness()
+	local Compat = ns.Compat
+
+	stub.setUnit("pet", {
+		name = "Broken Tooth", level = 60, health = 1200, healthMax = 1500,
+		power = 80, powerMax = 100, powerType = 2, powerToken = "FOCUS",
+		reaction = 5, inParty = true, guid = "pet-1",
+	})
+	stub.isHunterPet = true
+
+	ns:BumpSerial()
+	ns:RefreshUnit("pet")
+	ns.CombatQueue:Flush()
+
+	local pet = ns.frames.pet
+	local cfg = ns:UnitConfig("pet").indicators
+
+	equal("happiness/the pet's indicator row ships on", cfg.enabled, true)
+
+	-- Outside the frame's right edge, not on the health bar where the schema
+	-- default and the player's row put it. The 150x32 pet frame already carries
+	-- a name and a health percentage and has no clear space to tune into.
+	equal("happiness/anchored to the frame itself", cfg.anchorTo, "frame")
+	equal("happiness/by its left edge", cfg.point, "LEFT")
+	equal("happiness/to the frame's right edge", cfg.relativePoint, "RIGHT")
+	equal("happiness/gapped by its own spacing", cfg.x, cfg.spacing)
+	equal("happiness/and vertically centred", cfg.y, 0)
+	equal("happiness/growing away from the frame", cfg.growth, "RIGHT")
+
+	local el = pet.elements.indicators
+	check("happiness/element built on the pet", el ~= nil)
+	if not el then return end
+
+	local happy, content, unhappy = el.icons.happy, el.icons.content, el.icons.unhappy
+	check("happiness/all three levels built on the pet",
+		happy ~= nil and content ~= nil and unhappy ~= nil)
+	if not happy then return end
+
+	-- Only one can ever be up, so "exactly one" is the assertion rather than
+	-- "the right one is shown".
+	local function shownCount()
+		local n = 0
+		if happy:IsShown() then n = n + 1 end
+		if content:IsShown() then n = n + 1 end
+		if unhappy:IsShown() then n = n + 1 end
+		return n
+	end
+
+	for _, case in ipairs({
+		{ level = 3, icon = happy, label = "happy" },
+		{ level = 2, icon = content, label = "content" },
+		{ level = 1, icon = unhappy, label = "unhappy" },
+	}) do
+		stub.petHappiness = case.level
+		pet:FullUpdate()
+		check("happiness/" .. case.label .. " is shown at level " .. case.level,
+			case.icon:IsShown())
+		equal("happiness/and it is the only one", shownCount(), 1)
+		equal("happiness/taking slot one", indicatorSlot(case.icon, cfg), 0)
+	end
+
+	-- Combat ships OFF on the pet: it repeats the player's own indicator, since
+	-- a pet is in combat whenever you are.
+	equal("happiness/combat ships off on the pet",
+		ns:UnitConfig("pet").indicators.states.combat.enabled, false)
+	equal("happiness/but is still on for the player",
+		ns:UnitConfig("player").indicators.states.combat.enabled, true)
+
+	stub.petHappiness = 3
+	stub.units.pet.inCombat = true
+	pet:FullUpdate()
+	check("happiness/an in-combat pet shows no combat marker by default",
+		not el.icons.combat:IsShown())
+	equal("happiness/and happiness still holds slot one",
+		indicatorSlot(happy, cfg), 0)
+
+	-- Turned on, combat sits AFTER happiness rather than before it.
+	local petOpts = ns.Options.table.args.units.args.pet.args.indicators.args
+	petOpts.enabled_combat.set(nil, true)
+	pet:FullUpdate()
+	check("happiness/combat and happiness show together once it is on",
+		el.icons.combat:IsShown() and happy:IsShown())
+	equal("happiness/happiness takes slot one", indicatorSlot(happy, cfg), 0)
+	equal("happiness/combat follows it in slot two",
+		indicatorSlot(el.icons.combat, cfg), cfg.size + cfg.spacing)
+	petOpts.enabled_combat.set(nil, false)
+
+	stub.units.pet.inCombat = nil
+	pet:FullUpdate()
+
+	-- Resting is player-only and must not have been built here either.
+	check("happiness/resting is not built on the pet", el.icons.resting == nil)
+
+	--------------------------------------------------------------------------
+	-- Anchored to the frame, not to a bar
+	--
+	-- `frame` is the one anchor target that is always available. The player's
+	-- row hides when the bar it is anchored to is turned off -- correct there,
+	-- and the wrong answer for a row whose whole job is to report a value that
+	-- has nothing to do with health. This is the reason for choosing `frame`
+	-- over `health`, so it is pinned rather than left implied by the default.
+	--------------------------------------------------------------------------
+
+	ns:UnitConfig("pet").health.enabled = false
+	ns:BumpSerial()
+	ns:RefreshUnit("pet")
+	ns.CombatQueue:Flush()
+	pet:FullUpdate()
+	check("happiness/survives the health bar being turned off", happy:IsShown())
+
+	ns:UnitConfig("pet").health.enabled = true
+	ns:BumpSerial()
+	ns:RefreshUnit("pet")
+	ns.CombatQueue:Flush()
+	pet:FullUpdate()
+
+	--------------------------------------------------------------------------
+	-- "Only mark the pet when something is wrong"
+	--
+	-- A design goal rather than a side effect of the three-entry shape, so it
+	-- is stated as a test: turning `happy` off has to leave the other two live.
+	--------------------------------------------------------------------------
+
+	local opts = ns.Options.table.args.units.args.pet.args.indicators.args
+	opts.enabled_happy.set(nil, false)
+
+	stub.petHappiness = 3
+	pet:FullUpdate()
+	equal("happiness/a happy pet is unmarked once happy is off", shownCount(), 0)
+
+	stub.petHappiness = 1
+	pet:FullUpdate()
+	check("happiness/but an unhappy one still is", unhappy:IsShown())
+	equal("happiness/and it moves up to slot one", indicatorSlot(unhappy, cfg), 0)
+
+	opts.enabled_happy.set(nil, true)
+	stub.petHappiness = 3
+
+	--------------------------------------------------------------------------
+	-- The warlock case
+	--
+	-- GetPetHappiness keeps returning a number for a voidwalker; HasPetUI's
+	-- second return is the only thing that says it is meaningless. This is the
+	-- bug the shipped [happiness] tag had, so the tag is asserted beside the
+	-- icons.
+	--------------------------------------------------------------------------
+
+	local happinessTag = ns.Tags:Compile("[happiness]")
+	equal("happiness/the tag reads a hunter pet",
+		ns.Tags:Render(happinessTag, "pet"), "Happy")
+
+	stub.isHunterPet = false
+	pet:FullUpdate()
+	equal("happiness/nothing is marked on a warlock pet", shownCount(), 0)
+	equal("happiness/and the tag says nothing about it",
+		ns.Tags:Render(happinessTag, "pet"), "")
+
+	stub.isHunterPet = true
+	pet:FullUpdate()
+	equal("happiness/back once it is a hunter pet again", shownCount(), 1)
+
+	--------------------------------------------------------------------------
+	-- Per-unit gating in the options tree (SPEC §FR-8.5)
+	--------------------------------------------------------------------------
+
+	local units = ns.Options.table.args.units.args
+	check("happiness/controls are on the pet's tab",
+		units.pet.args.indicators.args.enabled_happy ~= nil
+		and units.pet.args.indicators.args.color_unhappy ~= nil)
+	check("happiness/and absent from the player's",
+		units.player.args.indicators.args.enabled_happy == nil)
+	check("happiness/and from the target's",
+		units.target.args.indicators.args.enabled_happy == nil)
+
+	--------------------------------------------------------------------------
+	-- A client with no happiness at all -- the Cataclysm case
+	--
+	-- This is what `requires` is for, and it is asserted against the predicate
+	-- rather than against a live frame on purpose: capability is fixed at load,
+	-- so a frame built while happiness existed keeps the states it was built
+	-- with, and flipping the flag underneath it would be testing a transition
+	-- that cannot happen. What has to hold is that a client without the
+	-- capability never builds them in the first place.
+	--------------------------------------------------------------------------
+
+	local indicators = ns.elements.indicators
+	local realFlag = Compat.hasPetHappiness
+
+	local function stateKeys(unitKey)
+		local keys = {}
+		for _, state in ipairs(indicators.StateList(unitKey)) do keys[state.key] = true end
+		return keys
+	end
+
+	local withHappiness = stateKeys("pet")
+	check("happiness/the pet offers all three while the client has them",
+		withHappiness.happy and withHappiness.content and withHappiness.unhappy)
+
+	Compat.hasPetHappiness = false
+
+	local without = stateKeys("pet")
+	check("happiness/a client without it offers none of them",
+		not without.happy and not without.content and not without.unhappy)
+	check("happiness/but the pet keeps combat", without.combat)
+
+	-- And the controls go with them, rather than sitting there dead.
+	local rebuilt = ns.Options.BuildUnit(ns.Registry:Get("pet"))
+	check("happiness/nor are the controls built",
+		rebuilt.args.indicators.args.enabled_happy == nil
+		and rebuilt.args.indicators.args.header_unhappy == nil)
+	check("happiness/while combat's still are",
+		rebuilt.args.indicators.args.enabled_combat ~= nil)
+
+	Compat.hasPetHappiness = realFlag
+
+	--------------------------------------------------------------------------
+	-- Teardown
+	--------------------------------------------------------------------------
+
+	stub.setUnit("pet", nil)
+	stub.petHappiness = 3
+	ns.Defaults:ResetUnit(ns:Profile(), "pet")
+	ns:BumpSerial()
+	ns:RefreshUnit("pet")
 	ns.CombatQueue:Flush()
 end
 
@@ -3489,7 +3840,11 @@ local function testPortraitBackground()
 	-- New keys, no stored value changed, so EnsureProfile fills them and there
 	-- is nothing to migrate. Pinned so a later bump cannot claim this one
 	-- needed it -- the same guard the heal prediction suite uses.
-	equal("portraitbg/no schema bump of its own", ns.Defaults.SCHEMA_VERSION, 16)
+	--
+	-- Moved 16 -> 17 for Plan 24, which owns that bump: it rewrites a stored
+	-- value (the pet's indicator row, off since 1.0) rather than adding keys.
+	-- Plan 18 still adds none of its own, which is what this line is for.
+	equal("portraitbg/no schema bump of its own", ns.Defaults.SCHEMA_VERSION, 17)
 
 	portrait.mode.set(nil, "3d")
 	player:FullUpdate()
@@ -5142,11 +5497,12 @@ local function testHealPrediction()
 	--
 	-- The number is whatever main is at, not a version this plan owns. It was
 	-- 13 when the branch was written and moved to 15 underneath it (Plans 13
-	-- and 14), then to 16 (Plan 7); re-pinned each time after checking this
-	-- branch's Defaults.lua still matches main's exactly. Re-pin the same way
-	-- if it moves again -- what the assertion guards is that Plan 11 adds no
-	-- bump of its own.
-	equal("heal/added keys without a schema bump", ns.Defaults.SCHEMA_VERSION, 16)
+	-- and 14), then to 16 (Plan 7), then to 17 (Plan 24, which turns the pet's
+	-- indicator row on and so rewrites a stored value); re-pinned each time
+	-- after checking this branch's Defaults.lua still matches main's exactly.
+	-- Re-pin the same way if it moves again -- what the assertion guards is
+	-- that Plan 11 adds no bump of its own.
+	equal("heal/added keys without a schema bump", ns.Defaults.SCHEMA_VERSION, 17)
 
 	equal("heal/every unit carries the block",
 		ns:UnitConfig("targettarget").healPrediction ~= nil, true)
@@ -5685,6 +6041,7 @@ local suites = {
 	{ "frame-appearance", testFrameAppearance },
 	{ "textures", testTextures },
 	{ "indicators", testIndicators },
+	{ "pet-happiness", testPetHappiness },
 	{ "player-buffs", testPlayerBuffs },
 	{ "mana-text", testManaText },
 	{ "brightness", testBrightness },

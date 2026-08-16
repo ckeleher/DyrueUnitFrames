@@ -87,7 +87,7 @@ Player cast bar, profile import/export strings, aura filter presets, further der
 | `player` | Both | v1.0 | Includes shapeshift mana bar |
 | `target` | Both | v1.0 | Primary aura display host |
 | `targettarget` | Both | v1.0 | **Derived unit** — no reliable unit events, requires polling (§4.8) |
-| `pet` | Both | v1.0 | Happiness indicator is TBC/Classic-specific |
+| `pet` | Both | v1.0 | Happiness indicator is TBC/Classic-specific — **shipped, Plan 24**: three states in the indicator row (§FR-8.8), gated on `Compat.hasPetHappiness` and on the pet being a *hunter* pet |
 | `party1-4` | Both | **v1.0** | Static secure buttons, not a group header — see §5.4 |
 | `partypet1-4` | Both | **v1.0** | Same pattern; **default disabled** |
 | `focus` | TBC only | **v1.0** | Does not exist in Classic Era; feature-gated on `Compat.hasFocus`, never version-gated by hardcode |
@@ -416,6 +416,13 @@ One ticker updating at most three frames a quarter-second apart is negligible ag
 **FR-8.6** Everything else applies unchanged: derived frames are ordinary secure buttons from the same factory, with the same elements, colour rules, portraits, and anchoring. They are a data-source variation, not a second frame system.
 
 **FR-8.7** The enemy-health limitation in §FR-4.7 applies to derived units too, and hits them harder — a target's target is very often a hostile NPC.
+
+**FR-8.8 State gating (Plan 24).** §FR-8.5's rule — *absent, not present-and-broken* — applies to an individual **state** in the indicator row as well as to a whole unit. A state declares where it can appear:
+
+- `requires` names a `Compat` capability flag, exactly as a unit definition does. A client without the capability neither draws the state nor builds its controls.
+- `units` is the set of unit keys the state can ever fire on.
+
+Where either excludes a state, **no texture is created for it and no options are generated** — it is not built-and-hidden, and not explained away with a note. Two states depend on this today: `resting`, which the game only reports about the player, and the three pet happiness states, which are `pet`-only for an API reason rather than a design one — `GetPetHappiness` takes no unit argument, so it answers about the player's pet whatever frame is asking, and an ungated happiness state would light an icon on the *target* frame. There is consequently no happiness readout for `partypet1-4` and cannot be one.
 
 ---
 

@@ -866,6 +866,210 @@ local function startRageTrace(seconds)
 end
 
 --------------------------------------------------------------------------------
+-- Plan 24 - does UNIT_HAPPINESS actually fire?
+--
+-- The survey above reports UNIT_HAPPINESS as an event, and /duf compat reports
+-- hasUnitHappiness. BOTH OF THOSE ARE VALIDITY CHECKS -- C_EventUtils.IsEventValid,
+-- or a RegisterEvent that did not throw. Neither has ever established that the
+-- client SENDS it, and this project has been wrong about exactly that distinction
+-- three times: UNIT_COMBO_POINTS, the secret-value functions, and hasFocus on Era.
+--
+-- Plan 24's happiness indicator refreshes on this event. If it never arrives, the
+-- icon goes stale until something else refreshes the frame, so this is the
+-- measurement the plan is waiting on.
+--
+-- The five questions, in the order they matter:
+--
+--   1. Does UNIT_HAPPINESS arrive at all when happiness changes? The 0.5s sampler
+--      is the control: a change it sees that no event reported is the failure
+--      case, and is what decides whether the indicator needs another refresh path.
+--   2. What unit token does it carry? The element registers it filtered to "pet"
+--      (SPEC §5.7). If it arrives for "player" instead, that filter drops it and
+--      the frame never wakes -- a live bug that would look exactly like the event
+--      not firing at all.
+--   3. Does the change arrive as UNIT_POWER_UPDATE instead? Happiness is power
+--      type 4 in the Classic numbering, so it is entirely plausible the client
+--      reports it that way and UNIT_HAPPINESS is vestigial.
+--   4. Is HasPetUI's second return actually true for a hunter pet? Everything
+--      Plan 24 shows is gated behind it, including the warlock-pet fix.
+--   5. Are damagePercentage and loyaltyRate populated? Neither is used today;
+--      both are the obvious follow-up, and this run is free.
+--
+-- Run it on a HUNTER with a pet out, and feed the pet during the trace -- that is
+-- the one thing that moves happiness quickly and on demand. Then, if you have one,
+-- run it again on a warlock with a voidwalker out to confirm question 4 negatively.
+--------------------------------------------------------------------------------
+
+local happinessTracer = CreateFrame("Frame")
+
+local function readHappiness()
+	if not GetPetHappiness then return nil end
+	local ok, happiness, damage, loyalty = pcall(GetPetHappiness)
+	if not ok then return nil end
+	return happiness, damage, loyalty
+end
+
+local function startHappinessTrace(seconds)
+	seconds = seconds or 120
+	local log = {}
+	local started = GetTime()
+	local lastHappiness = readHappiness()
+	local reportedSinceChange = false
+
+	local counts = {
+		happinessEvents = 0,      -- UNIT_HAPPINESS firings, changed or not
+		happinessSpurious = 0,    -- ...that reported no change
+		powerEvents = 0,          -- UNIT_POWER_UPDATE firings that DID change it
+		changes = 0,              -- changes seen by anything
+		silentChanges = 0,        -- ...that only the sampler saw
+	}
+	local units = {}              -- unit token -> count, for question 2
+
+	DyrueUnitFramesProbeDB.happinessTrace = log
+
+	local hasUI, isHunterPet = false, false
+	if HasPetUI then
+		local ok, a, b = pcall(HasPetUI)
+		if ok then hasUI, isHunterPet = a, b end
+	end
+
+	local happiness, damage, loyalty = readHappiness()
+
+	header("Happiness trace")
+	out("UNIT_HAPPINESS valid:", yn(eventExists("UNIT_HAPPINESS")),
+		" (validity only -- whether it FIRES is what this measures)")
+	out("PET_UI_UPDATE valid:", yn(eventExists("PET_UI_UPDATE")))
+	out("HasPetUI() =", tostring(hasUI), tostring(isHunterPet),
+		isHunterPet and "|cff40ff40hunter pet|r" or "|cffff5555NOT a hunter pet|r")
+	out("GetPetHappiness() =", tostring(happiness),
+		" damage=", tostring(damage), " loyalty=", tostring(loyalty))
+	out("UnitPowerType('pet') =", tostring(select(1, UnitPowerType("pet"))),
+		tostring(select(2, UnitPowerType("pet"))))
+
+	if not isHunterPet then
+		out("|cffffcc00No hunter pet out.|r The trace will run, but nothing will")
+		out("change. Summon a hunter pet first unless you are deliberately")
+		out("checking the warlock case.")
+	end
+
+	local function note(event, unit, source)
+		local now, current = GetTime(), readHappiness()
+		local changed = (current ~= lastHappiness)
+
+		if event == "UNIT_HAPPINESS" then
+			counts.happinessEvents = counts.happinessEvents + 1
+			units[tostring(unit)] = (units[tostring(unit)] or 0) + 1
+			if not changed then counts.happinessSpurious = counts.happinessSpurious + 1 end
+			reportedSinceChange = true
+		elseif event == "UNIT_POWER_UPDATE" and changed then
+			counts.powerEvents = counts.powerEvents + 1
+			reportedSinceChange = true
+		end
+
+		if changed then
+			counts.changes = counts.changes + 1
+			-- The whole point of the sampler: a change nothing announced.
+			if source == "sampler" and not reportedSinceChange then
+				counts.silentChanges = counts.silentChanges + 1
+			end
+			log[#log + 1] = {
+				t = now - started, event = event, unit = unit, source = source,
+				from = lastHappiness, to = current,
+			}
+			out(string.format("%.2fs %s%s happiness %s -> %s%s",
+				now - started, event,
+				unit and (" [" .. tostring(unit) .. "]") or "",
+				tostring(lastHappiness), tostring(current),
+				(source == "sampler" and not reportedSinceChange)
+					and " |cffff5555SAMPLER ONLY - NO EVENT|r" or ""))
+			lastHappiness = current
+			reportedSinceChange = false
+		end
+	end
+
+	for _, event in ipairs({
+		"UNIT_HAPPINESS", "UNIT_POWER_UPDATE", "UNIT_PET", "PET_UI_UPDATE",
+	}) do
+		pcall(happinessTracer.RegisterEvent, happinessTracer, event)
+	end
+
+	happinessTracer:SetScript("OnEvent", function(_, event, unit)
+		note(event, unit, "event")
+	end)
+
+	-- Question 1's control. Happiness moves over minutes, so 0.5s is ample and
+	-- costs nothing next to the 0.1s the rage trace needs.
+	local sampler = C_Timer.NewTicker(0.5, function()
+		if readHappiness() ~= lastHappiness then note("TICKER_ONLY", "pet", "sampler") end
+	end)
+
+	out("Tracing happiness for " .. seconds .. "s.")
+	out("|cffffcc00FEED THE PET.|r That is the one thing that moves happiness on")
+	out("demand; otherwise it only decays, over many minutes.")
+
+	C_Timer.After(seconds, function()
+		sampler:Cancel()
+		happinessTracer:UnregisterAllEvents()
+		happinessTracer:SetScript("OnEvent", nil)
+
+		local endHappiness, endDamage, endLoyalty = readHappiness()
+		DyrueUnitFramesProbeDB.happinessFindings = {
+			counts = counts,
+			units = units,
+			isHunterPet = isHunterPet,
+			eventValid = eventExists("UNIT_HAPPINESS"),
+			petUIUpdateValid = eventExists("PET_UI_UPDATE"),
+			damage = endDamage,
+			loyalty = endLoyalty,
+		}
+
+		header("Happiness trace finished")
+		out(counts.changes, "change(s);", counts.happinessEvents, "UNIT_HAPPINESS firing(s)")
+
+		-- The verdict, and the one branch that must not overclaim. A quiet run
+		-- proves nothing either way -- the same trap the aura order trace calls
+		-- out. Say so rather than reporting a green.
+		if counts.changes == 0 then
+			out("|cffffcc00Happiness never changed, so nothing was tested.|r")
+			out("Re-run on a hunter and feed the pet during the trace. Do NOT")
+			out("record this as evidence the event does or does not fire.")
+		elseif counts.silentChanges > 0 then
+			out("|cffff5555" .. counts.silentChanges .. " change(s) that NO event reported.|r")
+			out("Plan 24's indicator cannot rely on UNIT_HAPPINESS on this client.")
+			out("It would need the derived poller, or a refresh off PET_UI_UPDATE.")
+		elseif counts.happinessEvents > 0 then
+			out("|cff40ff40UNIT_HAPPINESS fires. Plan 24's refresh path is sound.|r")
+		else
+			out("|cffffcc00Every change was reported, but never by UNIT_HAPPINESS.|r")
+			out("Something else is carrying it -- see the unit/event lines above.")
+			out("The indicator works, but for a reason the code does not state.")
+		end
+
+		if counts.powerEvents > 0 then
+			out("|cffffcc00" .. counts.powerEvents .. " change(s) also arrived as",
+				"UNIT_POWER_UPDATE|r - happiness is power type 4 in this numbering.")
+		end
+		if counts.happinessSpurious > 0 then
+			out(counts.happinessSpurious, "UNIT_HAPPINESS firing(s) reported no change.")
+		end
+
+		local tokens = {}
+		for unit, n in pairs(units) do tokens[#tokens + 1] = unit .. "x" .. n end
+		if #tokens > 0 then
+			out("UNIT_HAPPINESS arrived for:", table.concat(tokens, " "))
+			if not units["pet"] then
+				out("|cffff5555Never for 'pet'.|r The element registers it filtered to")
+				out("pet (SPEC §5.7), so that filter is dropping every one of them.")
+			end
+		end
+
+		out("damagePercentage =", tostring(endDamage),
+			" loyaltyRate =", tostring(endLoyalty),
+			" (unused today; the obvious follow-up)")
+	end)
+end
+
+--------------------------------------------------------------------------------
 -- Plan 3 - options panel clipping
 --
 -- The symptom: on a long options tab, content scrolled below the fold is drawn
@@ -2756,6 +2960,8 @@ SlashCmdList.DUFPROBE = function(input)
 		startAuraOrderTrace(60)
 	elseif cmd == "rage" then
 		startRageTrace(90)
+	elseif cmd == "happiness" then
+		startHappinessTrace(120)
 	elseif cmd == "heals" then
 		startHealTrace(90, (input or ""):match("^%s*%S+%s+(.-)%s*$"))
 	elseif cmd == "healcomm" then
@@ -2783,10 +2989,10 @@ SlashCmdList.DUFPROBE = function(input)
 		out("|cffff5555Unknown subcommand '" .. cmd .. "'.|r")
 		out("If you expected it to exist, the probe was updated on disk but this")
 		out("client is still running the copy it loaded at login - |cffffcc00/reload|r first.")
-		out("Known: |cffffcc00mana derived health portrait auraorder rage heals healcomm incoming secrets scroll dump|r")
+		out("Known: |cffffcc00mana derived health portrait auraorder rage happiness heals healcomm incoming secrets scroll dump|r")
 	else
 		survey()
-		out("Also run: |cffffcc00/dufprobe mana|r, |cffffcc00derived|r, |cffffcc00health|r, |cffffcc00portrait|r, |cffffcc00auraorder|r, |cffffcc00rage|r, |cffffcc00heals|r, |cffffcc00healcomm|r, |cffffcc00incoming|r, |cffffcc00scroll|r")
+		out("Also run: |cffffcc00/dufprobe mana|r, |cffffcc00derived|r, |cffffcc00health|r, |cffffcc00portrait|r, |cffffcc00auraorder|r, |cffffcc00rage|r, |cffffcc00happiness|r, |cffffcc00heals|r, |cffffcc00healcomm|r, |cffffcc00incoming|r, |cffffcc00scroll|r")
 	end
 end
 

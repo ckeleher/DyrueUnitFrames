@@ -68,7 +68,9 @@ Phase 0 is for.
 | `UNIT_HEALTH_FREQUENT` | ~~**Probably removed**~~ **WRONG** | **Present — 11 Aug 2026** | | Not required either way. `Compat.HasEvent` skips anything invalid rather than erroring |
 | `UNIT_COMBO_POINTS` | Present | | **ABSENT — verified 2 Aug 2026** | Combo bar. See the verified finding below; the live path is `UNIT_POWER_UPDATE` for `"player"` |
 | `GetComboPoints` | Present | | **Present — verified 2 Aug 2026** | `Compat.GetComboPoints`. Only the event went, not the reader |
-| `GetPetHappiness` | Present (Classic/TBC only) | | | `[happiness]` tag |
+| `GetPetHappiness` | Present (Classic/TBC only) | | **Present — verified 11 Aug 2026** (`hasPetHappiness = true`, Era 1.15.9) | `[happiness]` tag and the Plan 24 indicator states, both through `Compat.GetPetHappiness` |
+| `HasPetUI` | Not previously asked | | | Plan 24. Its **second** return separates a hunter's pet from a warlock's. Presence is not enough on its own — see the Plan 24 note below |
+| `UNIT_HAPPINESS` | Assumed to fire | | **UNMEASURED** | The push event for the above. Registered by `Elements/PowerBar` and `Elements/Indicators`, and by `Probe.lua`. `/duf compat` now reports it as `hasUnitHappiness`. See the Plan 24 note below |
 | `ClickCastFrames` | Only with Clique installed | | | Clique interop |
 | `GetAddOnMemoryUsage` vs `C_AddOns.*` | Both handled | | | `/duf profile` |
 | `FontString:GetStringWidth` returns the **unconstrained** width | **Yes — verified 7 August 2026** | | | `Elements/Text.lua` width modes (Plan 6). See the verified finding below |
@@ -824,6 +826,59 @@ assumed value.** And note that the flag alone was still not enough:
 `hasIncomingHeals` is `_G.UnitGetIncomingHeals ~= nil`, which is presence, not
 function. It took a fourth probe to show that the function answers, that it
 answers about other people, and that it answers early enough to matter.
+
+---
+
+## Plan 24 — hunter pet happiness
+
+### VERIFIED — the reader is present; `hasPetHappiness = true` on Era 1.15.9
+
+Recorded in the 11 August capability dump above, three days before the feature
+was asked for. This is the cheap-flag lesson from the section immediately above
+being applied rather than re-learned: the capability question was closed before
+the plan was written, and no probe was built to re-ask it.
+
+### VERIFIED — presence of `GetPetHappiness` is not sufficient, for a new reason
+
+The usual failure in this file is a function that exists but does not work. This
+one works and is still not enough, because **it answers about the wrong thing**
+if asked carelessly:
+
+* It takes **no unit argument**. It reports the player's pet whatever the caller
+  had in mind, so there is no `partypet` version of the feature and cannot be
+  one. A happiness state that did not gate on unit would have lit an icon on the
+  *target* frame whenever the player's own pet was happy.
+* It keeps returning a number for a **warlock's voidwalker**, which has no
+  happiness at all. The only signal that separates the two is the **second
+  return of `HasPetUI`**, which is what Blizzard's own `PetFrame` gates on.
+
+`Compat.GetPetHappiness` folds both conditions into reading the value and returns
+`nil` rather than a level when either fails. `nil` means *do not display*, never
+*unhappy*.
+
+**This was live in the shipped `[happiness]` tag.** It checked
+`UnitIsUnit(unit, "pet")` and nothing else, so it reported "Happy" for a warlock
+pet. Found while writing Plan 24 rather than by a bug report, and fixed by
+routing the tag through the same accessor — the tag and the indicator now share
+one definition of "the happiness of a hunter pet".
+
+### UNMEASURED — does `UNIT_HAPPINESS` actually fire?
+
+Nothing in this file has ever asserted it, and the addon has depended on it since
+`Elements/PowerBar` registered it. Plan 24's indicator depends on it too.
+
+`Compat.HasEvent` makes registering it safe either way, and the exposure is
+bounded: `UNIT_PET` is in the pet's `changeEvents` and forces a whole-frame
+refresh, and happiness moves over minutes rather than seconds. The worst case is
+a briefly stale face, not a wrong one.
+
+**To close it:** `/duf compat` now reports `hasUnitHappiness`, and `Probe.lua`
+has registered `UNIT_HAPPINESS` since it was written — so an ordinary probe run
+on a hunter, feeding a pet, answers both whether the event is valid and whether
+it fires. Cost is one `/reload`. Until then this row stays honest about being an
+assumption, because this project has been wrong about presence-versus-function
+three times: `UNIT_COMBO_POINTS`, the secret-value functions, and
+`Compat.hasFocus` on Era.
 
 ---
 

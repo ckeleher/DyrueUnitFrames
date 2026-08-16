@@ -1097,8 +1097,13 @@ local function indicatorsGroup(def)
 		},
 	}
 
+	-- Only the states that can appear on THIS unit. SPEC §FR-8.5 -- absent, not
+	-- present-and-broken -- and the reason it is worth doing rather than
+	-- explaining: resting used to carry a note here saying it never shows
+	-- anywhere but the player, which is one dead control on ten unit tabs.
+	-- Happiness would have been nine.
 	local order = 30
-	for _, state in ipairs(ns.elements.indicators.StateList()) do
+	for _, state in ipairs(ns.elements.indicators.StateList(unitKey)) do
 		local key = state.key
 		local function stateCfg() return indicators().states[key] end
 
@@ -1109,10 +1114,10 @@ local function indicatorsGroup(def)
 			set = function(_, v) stateCfg().enabled = v; apply() end,
 		}
 		args["color_" .. key] = Options.Color(L["Tint"], order + 2, stateCfg, "color", apply)
-		if key == "resting" then
+		if key == "happy" then
 			args["note_" .. key] = {
 				type = "description", order = order + 3,
-				name = L["Resting is something the game only reports about you, so this never shows on any other unit."],
+				name = L["Turn this one off to be marked only when something is wrong: content and unhappy keep showing, and a happy pet takes no slot at all."],
 			}
 		end
 		order = order + 10

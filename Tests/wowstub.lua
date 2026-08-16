@@ -64,6 +64,12 @@ function stub.reset()
 	stub.chat = {}
 	stub.failTemplates = {}
 	stub.resting = false
+	-- Plan 24. A hunter with a happy pet is the default world, so the happiness
+	-- states have something to render without every test setting it up. The
+	-- warlock case -- isHunterPet false with petHappiness still set -- is what
+	-- the gating assertions flip.
+	stub.isHunterPet = true
+	stub.petHappiness = 3
 end
 
 stub.failTemplates = {}
@@ -602,6 +608,14 @@ _G.MAX_COMBO_POINTS = 5
 function _G.GetGuildInfo(u) local d = unit(u); return d and d.guild end
 function _G.GetRaidTargetIndex(u) local d = unit(u); return d and d.raidTarget end
 function _G.GetPetHappiness() return stub.petHappiness end
+
+--- Returns hasPetUI, isHunterPet -- the second is what separates a hunter's pet
+-- from a warlock's, and is the whole reason Compat.GetPetHappiness exists.
+function _G.HasPetUI()
+	local pet = stub.units and stub.units.pet
+	if not pet then return false, false end
+	return true, stub.isHunterPet and true or false
+end
 function _G.GetShapeshiftForm() return stub.form or 0 end
 
 function _G.RegisterUnitWatch(frame)
