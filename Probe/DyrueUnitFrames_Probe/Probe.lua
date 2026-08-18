@@ -2943,6 +2943,223 @@ end
 --------------------------------------------------------------------------------
 -- Slash command
 --------------------------------------------------------------------------------
+-- Plan 25 -- right-clicking a buff does nothing
+--
+-- The cancel overlay used to be a child of the aura icon, which made the icon
+-- protected and froze the whole buff display in combat. It is now a sibling on
+-- frame.cancelLayer, above the icon by frame LEVEL rather than by parentage.
+-- The test harness stores frame levels and does not order anything by them, so
+-- it cannot answer whether the click still lands. This asks the client.
+--
+-- The one measurement that matters is what the mouse is actually over when it
+-- is over a buff icon, and the two answers mean opposite things:
+--
+--   * the OVERLAY -- the click is arriving and the secure action is what is not
+--     working. Look at the attributes below and at whether this client supports
+--     "cancelaura" at all. Nothing to do with Plan 25; it would never have
+--     worked under the old arrangement either.
+--   * the ICON -- the overlay is not on top. A frame level or geometry problem,
+--     introduced by Plan 25, and fixable without touching the secure side.
+--
+-- Everything lands in DyrueUnitFramesProbeDB.cancel. Hover a buff while it
+-- runs; the sampler records what changes, so waving the mouse around is the
+-- whole of the user's job.
+--------------------------------------------------------------------------------
+
+local cancelTicker = nil
+
+local function widgetFacts(f)
+	if not f then return nil end
+	local facts = {}
+	pcall(function()
+		facts.objectType = f:GetObjectType()
+		facts.name = f:GetName()
+		facts.level = f:GetFrameLevel()
+		facts.strata = f:GetFrameStrata()
+		facts.shown = f:IsShown() and true or false
+		facts.visible = f:IsVisible() and true or false
+		facts.left, facts.bottom = f:GetLeft(), f:GetBottom()
+		facts.width, facts.height = f:GetWidth(), f:GetHeight()
+	end)
+	pcall(function() facts.mouseEnabled = f:IsMouseEnabled() and true or false end)
+	pcall(function()
+		local isProtected, explicitly = f:IsProtected()
+		facts.protected = isProtected and true or false
+		facts.protectedExplicitly = explicitly and true or false
+	end)
+	return facts
+end
+
+-- GetMouseFocus was replaced by GetMouseFoci, which returns a list. Try the
+-- new name first and fall back, because this probe runs on two clients.
+local function mouseFocus()
+	if _G.GetMouseFoci then
+		local ok, foci = pcall(_G.GetMouseFoci)
+		if ok and type(foci) == "table" then return foci[1] end
+	end
+	if _G.GetMouseFocus then
+		local ok, focus = pcall(_G.GetMouseFocus)
+		if ok then return focus end
+	end
+	return nil
+end
+
+local function cancelProbe(seconds)
+	seconds = tonumber(seconds) or 30
+
+	header("Cancel overlay (Plan 25)")
+
+	local frame = _G["DyrueUF_player"]
+	if not frame then
+		out("|cffff5555No DyrueUF_player.|r The addon is not loaded under that name.")
+		return
+	end
+
+	local group = frame.elements and frame.elements.auras and frame.elements.auras.buffs
+	if not group then
+		out("|cffff5555The player frame has no buff group.|r")
+		out("Enable player buffs, then run this again.")
+		return
+	end
+
+	local record = {
+		timestamp = date("%Y-%m-%d %H:%M:%S"),
+		tocVersion = select(4, GetBuildInfo()),
+		completed = false,
+		inCombat = InCombatLockdown() and true or false,
+		api = {
+			hasCancelUnitBuff = _G.CancelUnitBuff ~= nil,
+			hasGetMouseFoci = _G.GetMouseFoci ~= nil,
+			hasGetMouseFocus = _G.GetMouseFocus ~= nil,
+			hasSecureActionButtonTemplate = true,
+		},
+		chain = {
+			frame = widgetFacts(frame),
+			content = widgetFacts(frame.content),
+			cancelLayer = widgetFacts(frame.cancelLayer),
+			groupFrame = widgetFacts(group.frame),
+		},
+		buttons = {},
+		focus = {},
+	}
+
+	-- Frame -> label, so the sampler can say "overlay 2" instead of a pointer.
+	local label = {}
+	if frame.cancelLayer then label[frame.cancelLayer] = "cancelLayer" end
+	if frame.content then label[frame.content] = "content" end
+	if group.frame then label[group.frame] = "groupFrame" end
+	label[frame] = "unitFrame"
+
+	for i = 1, math.min(#group.buttons, 8) do
+		local button = group.buttons[i]
+		local overlay = button and button.cancel
+		local entry = {
+			index = i,
+			icon = widgetFacts(button),
+			overlay = widgetFacts(overlay),
+			hasOverlay = overlay ~= nil,
+			cancelFailed = button and button.cancelFailed and true or false,
+		}
+
+		if button then label[button] = "icon " .. i end
+		if overlay then
+			label[overlay] = "overlay " .. i
+			entry.overlayParentIsCancelLayer = (overlay:GetParent() == frame.cancelLayer)
+			entry.attributes = {}
+			for _, key in ipairs({ "type", "type2", "unit", "index", "filter" }) do
+				pcall(function() entry.attributes[key] = tostring(overlay:GetAttribute(key)) end)
+			end
+			-- The comparison that decides it, if both are on screen.
+			if entry.icon and entry.icon.level and entry.overlay.level then
+				entry.overlayIsAbove = entry.overlay.level > entry.icon.level
+			end
+		end
+
+		record.buttons[#record.buttons + 1] = entry
+	end
+
+	registerRun("cancel", record)
+	DyrueUnitFramesProbeDB.cancel = record
+
+	out("player buff buttons:", #group.buttons, " overlays:",
+		(record.buttons[1] and record.buttons[1].hasOverlay) and "present" or "none")
+
+	for _, entry in ipairs(record.buttons) do
+		if entry.hasOverlay then
+			out(string.format("  %d  icon level %s  overlay level %s  above %s  parent ok %s  shown %s  mouse %s",
+				entry.index,
+				tostring(entry.icon and entry.icon.level),
+				tostring(entry.overlay and entry.overlay.level),
+				yn(entry.overlayIsAbove),
+				yn(entry.overlayParentIsCancelLayer),
+				yn(entry.overlay and entry.overlay.shown),
+				yn(entry.overlay and entry.overlay.mouseEnabled)))
+		else
+			out(string.format("  %d  icon level %s  |cffff5555no overlay|r  cancelFailed %s",
+				entry.index,
+				tostring(entry.icon and entry.icon.level),
+				yn(entry.cancelFailed)))
+		end
+	end
+
+	out("|cffffcc00Now hover a buff icon on the player frame.|r Sampling for",
+		seconds, "seconds.")
+
+	if cancelTicker then cancelTicker:Cancel() end
+	local last = nil
+	local elapsed = 0
+	cancelTicker = C_Timer.NewTicker(0.2, function()
+		elapsed = elapsed + 0.2
+		local focus = mouseFocus()
+		local name = "nothing"
+		if focus then
+			name = label[focus]
+			if not name then
+				local ok, widgetName = pcall(function()
+					return focus:GetName() or ("unnamed " .. focus:GetObjectType())
+				end)
+				name = ok and widgetName or "unreadable"
+			end
+		end
+
+		if name ~= last then
+			last = name
+			record.focus[#record.focus + 1] = {
+				at = string.format("%.1f", elapsed),
+				over = name,
+			}
+			if name ~= "nothing" then out("  mouse over:", name) end
+		end
+
+		if elapsed >= seconds then
+			cancelTicker:Cancel()
+			cancelTicker = nil
+			record.completed = true
+			header("Cancel overlay done")
+
+			local sawOverlay, sawIcon = false, false
+			for _, sample in ipairs(record.focus) do
+				if sample.over:find("overlay", 1, true) then sawOverlay = true end
+				if sample.over:find("icon", 1, true) then sawIcon = true end
+			end
+
+			if sawOverlay then
+				out("|cff40ff40The overlay took the mouse.|r The click is arriving, so the")
+				out("secure action is what is not working -- check the attributes above")
+				out("and whether this client supports cancelaura at all.")
+			elseif sawIcon then
+				out("|cffff5555The ICON took the mouse, never the overlay.|r The overlay is")
+				out("not on top. Frame level or geometry, not the secure action.")
+			else
+				out("|cffffcc00Neither was hovered.|r Nothing was measured -- re-run and")
+				out("hover a buff icon on the PLAYER frame while it samples.")
+			end
+			out("Saved to DyrueUnitFramesProbeDB.cancel")
+		end
+	end)
+end
+
+--------------------------------------------------------------------------------
 
 SLASH_DUFPROBE1 = "/dufprobe"
 SlashCmdList.DUFPROBE = function(input)
@@ -2972,6 +3189,8 @@ SlashCmdList.DUFPROBE = function(input)
 		secretsProbe((input or ""):match("^%s*%S+%s+(.-)%s*$"))
 	elseif cmd == "scroll" then
 		scrollProbe((input or ""):match("^%s*%S+%s+(.-)%s*$"))
+	elseif cmd == "cancel" then
+		cancelProbe((input or ""):match("^%s*%S+%s+(%S+)"))
 	elseif cmd == "portraitoff" then
 		if portraitFrame then portraitFrame:Hide() end
 		if portraitFrame and portraitFrame.model then portraitFrame.model:Hide() end
@@ -2989,7 +3208,7 @@ SlashCmdList.DUFPROBE = function(input)
 		out("|cffff5555Unknown subcommand '" .. cmd .. "'.|r")
 		out("If you expected it to exist, the probe was updated on disk but this")
 		out("client is still running the copy it loaded at login - |cffffcc00/reload|r first.")
-		out("Known: |cffffcc00mana derived health portrait auraorder rage happiness heals healcomm incoming secrets scroll dump|r")
+		out("Known: |cffffcc00mana derived health portrait auraorder rage happiness heals healcomm incoming secrets scroll cancel dump|r")
 	else
 		survey()
 		out("Also run: |cffffcc00/dufprobe mana|r, |cffffcc00derived|r, |cffffcc00health|r, |cffffcc00portrait|r, |cffffcc00auraorder|r, |cffffcc00rage|r, |cffffcc00happiness|r, |cffffcc00heals|r, |cffffcc00healcomm|r, |cffffcc00incoming|r, |cffffcc00scroll|r")
