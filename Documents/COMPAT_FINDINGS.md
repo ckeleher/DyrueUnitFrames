@@ -882,6 +882,91 @@ three times: `UNIT_COMBO_POINTS`, the secret-value functions, and
 
 ---
 
+## Plan 25 — what actually makes a frame protected
+
+### VERIFIED — a frame that OWNS a protected child is restricted; a frame that merely descends from one is not
+
+Measured on Era 1.15.9 from the client's own `ADDON_ACTION_BLOCKED` reports,
+via the blocked-action listener in `DyrueWoWTools_Probe`. In combat:
+
+```
+ADDON_ACTION_BLOCKED addon=DyrueUnitFrames function=Button:SetSize()
+ADDON_ACTION_BLOCKED addon=DyrueUnitFrames function=Button:ClearAllPoints()
+ADDON_ACTION_BLOCKED addon=DyrueUnitFrames function=Button:SetPoint()
+ADDON_ACTION_BLOCKED addon=DyrueUnitFrames function=Button:Show()
+```
+
+repeating per aura icon, then a trailing `Button:Hide()`.
+
+The addon's whole layering rests on `frame.content`, an ordinary frame under the
+`SecureUnitButtonTemplate` unit button, on the assumption that **descent from a
+secure frame does not protect a child**. That assumption is correct, and this
+log is what proves it: `applyButton` calls `button.cooldown:Show()` or `:Hide()`
+between the refused `SetPoint` and the refused `Show`, on a `Cooldown` frame
+sitting *below* the aura icon and therefore even deeper under the same secure
+button — and **no `Cooldown:` line ever appears**. Had descent been the rule,
+every element in `frame.content` would have been refused and the addon would
+never have worked at all.
+
+What separated the icon from the cooldown was one thing: the icon had a
+`SecureActionButtonTemplate` child, the cancel-buff overlay. So the restriction
+runs the other way — **upward, from a protected child to whatever owns it**,
+which stands to reason, because moving or hiding the owner moves or hides the
+secure frame with it.
+
+Consequences, both now enforced in code:
+
+* A secure frame may only be parented to something that is never moved, resized,
+  shown or hidden in combat. `frame.cancelLayer` exists solely to be that thing:
+  anchored once at creation, never touched again.
+* `group.frame` is specifically disqualified — `updateGroup` calls
+  `group.frame:Show()` on every single aura update. Under the old arrangement
+  that call was being refused too, which is the 13th blocked call the regression
+  test counts.
+
+### VERIFIED — the harness could not see any of this, and now can
+
+`Tests/wowstub.lua` had `IsProtected` as a flat `return false, false` and let
+every protected method succeed in combat. 1104 assertions passed over a bug that
+froze the player's buff display for the whole of every fight, from `d4ef9a3`
+until Plan 25 — roughly the addon's entire life. The stub now models explicit
+protection from `Secure*` templates, the owns-a-protected-child rule above, and
+records refusals to `stub.blocked`.
+
+The regression test counts 12 refusals on the old arrangement (three icons ×
+`SetSize`, `ClearAllPoints`, `SetPoint`, `Show`) plus the group frame's `Show`,
+and 0 on the new one. That 12 is the same shape as the chat log, which is the
+point: the harness now reproduces the thing the client reported.
+
+### UNMEASURED — how far up the parent chain the restriction runs
+
+Whether owning a protected *grandchild* restricts a frame, or only a direct
+child, was never established — the log cannot distinguish them, because the
+icon's overlay was a direct child. The stub models it as running the whole way
+up, which is the conservative reading.
+
+Nothing depends on the answer. `frame.cancelLayer` and `frame.content` are both
+anchored once and never touched again, and `frame` itself is secure and already
+routed through `CombatQueue`, so every frame the restriction could reach is one
+that never moves in combat regardless.
+
+**To close it:** put a secure button two levels down from a plain frame and try
+to move that frame in combat, with the blocked listener running. Cost is one
+`/reload` and nothing currently rides on it.
+
+### UNMEASURED — that the overlay still takes the right-click
+
+The overlay moved from being a child of the icon to a sibling at
+`ns:Level(frame, "AURAS") + 1`, so it is no longer above the icon by virtue of
+parentage; it is above it by frame level, set explicitly at creation. Frame
+levels are not modeled in the harness beyond storing the number, so **the
+harness cannot answer whether the click lands**.
+
+**To close it:** right-click one of your own buffs on the player frame, out of
+combat, and confirm it cancels.
+
+---
+
 ## Deviations from SPEC.md
 
 Recorded as they are made, so the reasoning survives.
@@ -891,7 +976,7 @@ Recorded as they are made, so the reasoning survives.
 | §5.9 "update paths are not blanket-wrapped" | One `xpcall` per *event dispatch*, plus a single local assignment naming the element about to run | Gives per-element circuit-breaker attribution at the cost of one protected call per event rather than one per element. Satisfies the intent (no per-element pcall) while making the circuit breaker actually implementable |
 | §5.8 AceDB defaults | AceDB is used for profile management only; the schema is deep-filled by `Defaults:EnsureProfile` | AceDB implements defaults with `__index` metatables, under which a *deleted* color rule or text element comes back on next login. User-editable lists need real ownership |
 | §FR-2.3 append mode | The appended mana bar hangs below the button's own bounds rather than growing the button | Growing a secure button is a protected operation. Hanging the bar outside means a druid shifting form mid-fight sees mana immediately instead of at `PLAYER_REGEN_ENABLED`. Reserve mode is unaffected and keeps everything inside the frame |
-| §FR-5.9 right-click cancel | Secure attribute on a separate overlay button, updated through `CombatQueue` | Aura icons must be shown and hidden constantly in combat, which a protected frame cannot do. Splitting insecure icon from secure overlay is the only arrangement that satisfies both. Cost: in combat the overlay can be one aura stale |
+| §FR-5.9 right-click cancel | Secure attribute on a separate overlay button, a **sibling** of the icon on `frame.cancelLayer`, with both its geometry and its attributes updated through `CombatQueue` (Plan 25) | Aura icons must be shown and hidden constantly in combat, which a protected frame cannot do. Splitting insecure icon from secure overlay is the only arrangement that satisfies both — but the split only works if the overlay is not *under* the icon, which it was from `d4ef9a3` until Plan 25. See the protection row below. Cost: in combat the overlay keeps the position and the aura index it had when combat started, so canceling mid-fight may cancel a neighbor. Out of combat it is exact |
 | §5.7 incremental aura updates | `updateInfo` is used to *skip* no-op updates; the normal path is a full rescan | The spec calls this an optimization, not a blocker. Maintaining a parallel instance-ID store is a real bug surface and buys nothing measurable at Classic's aura counts |
 | §FR-4.1 "Default: green" | Health bars ship in `class` mode, with `reaction` as the NPC fallback | Class color says at a glance who you are looking at, and degrades to something meaningful for NPCs rather than to a fixed color that means nothing. The spec's green is still the stored `color` and is one dropdown away. Schema 4 migrates profiles still on the old default |
 | §5.7 three permitted tickers | A fourth was added: one `OnUpdate` driver in `Systems/BarSweep.lua`, shared by the power tick indicator (Plan 2), the five second rule indicator (Plan 10) and the rage decay indicator (Plan 17) | The sweep is a continuous animation *between* two regen ticks and nothing fires in between — `UNIT_POWER_UPDATE` fires AT the tick, which is the moment the sweep restarts. Same category as the derived-unit poller: the game does not push what we need. It obeys the same discipline as the other three, running only while a visible bar has an active sweep and stopping the instant that stops being true, and `/duf profile` reports it. Player only, on the §FR-8.5 boundary: another unit's tick cadence, mana expenditure and rage decay are not observable. All three plans share the one driver and one line-rendering path with a table of providers, so a third indicator added no ticker and there is still no fifth |

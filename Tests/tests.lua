@@ -3157,6 +3157,67 @@ local function testPlayerBuffs()
 	check("playerbuffs/overlay built once combat ends",
 		playerBuffGroup().buttons[1].cancel ~= nil)
 
+	--------------------------------------------------------------------------
+	-- Plan 25. The overlay is secure and the icon is not, and the whole reason
+	-- for splitting them is that the icon has to keep re-laying-out in combat.
+	-- Parenting the overlay to the icon quietly undid that: a frame that owns
+	-- a protected child cannot be moved, resized, shown or hidden either, so
+	-- every buff update in combat was refused and the player's buffs froze for
+	-- the fight. Nothing errored, nothing was visibly wrong, and the suite had
+	-- no way to see it -- hence the protection model in wowstub.lua.
+	--------------------------------------------------------------------------
+
+	local group = playerBuffGroup()
+	local icon = group.buttons[1]
+
+	check("playerbuffs/the aura icon is not protected", not icon:IsProtected())
+	check("playerbuffs/the cancel overlay is protected", (icon.cancel:IsProtected()))
+	check("playerbuffs/the overlay is a sibling of the icon, not a child",
+		icon.cancel:GetParent() == player.cancelLayer,
+		"parent is " .. tostring(icon.cancel:GetParent()))
+
+	-- The cancel layer exists for the overlays and is never touched again, so
+	-- it is allowed to be pinned by them. An aura group frame is not: it is
+	-- shown on every single update, including in combat.
+	check("playerbuffs/the cancel layer owns the protection",
+		(player.cancelLayer:IsProtected()))
+	check("playerbuffs/the aura group frame stays free of it",
+		not group.frame:IsProtected())
+
+	local isIcon = {}
+	for i = 1, #group.buttons do isIcon[group.buttons[i]] = true end
+
+	-- A buff landing mid-fight, which is when this matters.
+	stub.blocked = {}
+	stub.inCombat = true
+	stub.units.player.auras.HELPFUL[4] = {
+		name = "Regrowth", icon = 14, applications = 0, duration = 21,
+		expirationTime = 40, sourceUnit = "player", spellId = 3004, isHelpful = true,
+	}
+	player:FullUpdate()
+
+	local refused = 0
+	for i = 1, #stub.blocked do
+		if isIcon[stub.blocked[i].frame] then refused = refused + 1 end
+	end
+	equal("playerbuffs/no aura icon is refused in combat", refused, 0)
+	equal("playerbuffs/nothing at all is refused during a combat aura update",
+		#stub.blocked, 0)
+	equal("playerbuffs/a buff gained mid-fight displays immediately",
+		shownButtons(playerBuffGroup()), 4)
+
+	-- The overlay itself stays put until combat ends -- that is the documented
+	-- FR-5.9 cost, and it is the reason the queue is involved at all.
+	check("playerbuffs/no overlay is built for a mid-fight buff",
+		playerBuffGroup().buttons[4].cancel == nil)
+
+	stub.units.player.auras.HELPFUL[4] = nil
+	stub.inCombat = false
+	ns.CombatQueue:Flush()
+	player:FullUpdate()
+	equal("playerbuffs/back to three once combat ends",
+		shownButtons(playerBuffGroup()), 3)
+
 	ns.Errors:Reset()
 	buffs.enabled.set(nil, false)
 	ns.CombatQueue:Flush()
