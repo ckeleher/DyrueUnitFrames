@@ -3043,7 +3043,7 @@ end
 -- nothing in the output said which was which -- it had to be inferred from an
 -- unfiltered click count. The probe's own header has warned about stale Lua
 -- since August 11 and still could not tell you when it was the stale one.
-local CANCEL_BUILD = 6
+local CANCEL_BUILD = 7
 
 local cancelTicker = nil
 
@@ -3484,21 +3484,33 @@ local function cancelTestProbe()
 			button.text:SetPoint("CENTER")
 
 			button:HookScript("PostClick", function(self, clicked)
-				-- Ground truth, read off the unit rather than off a hook.
-				local still = auraByIndex(record.target.index) == record.target.name
-				local result = {
+				local form, target = self.formKey, record.target
+				local entry = {
 					at = date("%H:%M:%S"),
-					form = self.formKey,
+					form = form,
 					button = tostring(clicked),
-					auraStillUp = still,
+					immediately = tostring(auraByIndex(target.index)),
 				}
-				record.results[#record.results + 1] = result
-				if still then
-					out(self.formKey .. ": |cffff5555still there|r")
-				else
-					out(self.formKey .. ": |cff40ff40GONE -- this is the form that works|r")
-					record.winner = self.formKey
-				end
+				record.results[#record.results + 1] = entry
+
+				-- Build 6 read the aura here, microseconds after the click, and
+				-- reported "still there" for all three forms. That verdict was
+				-- worthless: cancelling a buff is a server round trip, so an
+				-- aura that is on its way out is still up at PostClick and a
+				-- working form is indistinguishable from a broken one.
+				C_Timer.After(0.5, function()
+					entry.after05 = tostring(auraByIndex(target.index))
+				end)
+				C_Timer.After(2.0, function()
+					entry.after20 = tostring(auraByIndex(target.index))
+					entry.gone = entry.after20 ~= target.name
+					if entry.gone then
+						record.winner = form
+						out(form .. ": |cff40ff40GONE after 2s -- this form works|r")
+					else
+						out(form .. ": |cffff5555still there after 2s|r")
+					end
+				end)
 			end)
 
 			testFrame.buttons[i] = button
@@ -3529,11 +3541,95 @@ local function cancelTestProbe()
 		button:Show()
 	end
 
+	out("Each result lands 2 seconds after the click, not instantly -- cancelling")
+	out("is a server round trip and reading it any sooner says nothing.")
 	out("Three buttons above the middle of your screen.")
 	out("|cffffcc00Right-click A, then B, then C.|r C also answers to a left-click,")
 	out("because that is the form OPie uses and it puts cancelaura on `type`.")
 	out("Whichever makes the buff vanish is the answer. |cffffcc00/dufprobe canceltestoff|r")
 	out("hides them; re-run to retarget after the buff is gone.")
+end
+
+--------------------------------------------------------------------------------
+-- /dufprobe cancelcall -- is cancelling protected on this client at all?
+--
+-- The question nobody asked. The secure-overlay design in Elements/Auras.lua
+-- rests on the premise that cancelling a buff is protected and therefore needs
+-- a SecureActionButton. SPEC §FR-5.9 states it as fact -- "This is a protected
+-- action" -- and it is inherited from retail, where it is true. It has never
+-- been measured here.
+--
+-- If an ordinary addon can simply call CancelUnitBuff, then FR-5.9 needs an
+-- OnClick handler and nothing else: no secure frame, no CombatQueue, no stale
+-- index in combat, and nothing that can pin the aura icon. Plan 25's cancel
+-- layer would exist only to hold something that did not need to exist.
+--
+-- Three outcomes and all three are useful, which is what makes this worth a
+-- round on its own.
+--------------------------------------------------------------------------------
+
+local function cancelCallProbe()
+	header("Direct cancel (Plan 26) -- build " .. CANCEL_BUILD)
+
+	local index, name = firstOwnBuff()
+	if not index then
+		out("|cffff5555No buff of your own on you.|r Cast something on yourself first.")
+		return
+	end
+
+	local record = {
+		timestamp = date("%Y-%m-%d %H:%M:%S"),
+		build = CANCEL_BUILD,
+		target = { index = index, name = name },
+		inCombat = InCombatLockdown() and true or false,
+		blocked = {},
+		completed = false,
+	}
+	DyrueUnitFramesProbeDB.cancelCall = record
+
+	-- Watch for a refusal rather than trusting silence, and only for as long as
+	-- this call could plausibly be the cause of one.
+	local watcher = CreateFrame("Frame")
+	pcall(watcher.RegisterEvent, watcher, "ADDON_ACTION_BLOCKED")
+	pcall(watcher.RegisterEvent, watcher, "ADDON_ACTION_FORBIDDEN")
+	watcher:SetScript("OnEvent", function(_, event, addon, func)
+		record.blocked[#record.blocked + 1] = {
+			event = event, addon = tostring(addon), func = tostring(func),
+		}
+	end)
+
+	out('calling CancelUnitBuff("player", ' .. index .. ', "HELPFUL") on |cffffcc00'
+		.. name .. "|r")
+
+	local ok, err = pcall(CancelUnitBuff, "player", index, "HELPFUL")
+	record.callOk = ok and true or false
+	if not ok then
+		record.callError = tostring(err)
+		out("|cffff5555the call itself errored:|r " .. tostring(err))
+	end
+
+	C_Timer.After(2.0, function()
+		watcher:UnregisterAllEvents()
+		record.after = tostring(auraByIndex(index))
+		record.gone = record.after ~= name
+		record.completed = true
+
+		if record.gone then
+			out("|cff40ff40The buff is gone.|r Cancelling is NOT protected here, so")
+			out("FR-5.9 needs an OnClick handler and nothing else -- no secure")
+			out("button, no queue, no stale index in combat.")
+		elseif #record.blocked > 0 then
+			out("|cffffcc00Refused:|r " .. record.blocked[1].event .. " "
+				.. record.blocked[1].addon .. " " .. record.blocked[1].func)
+			out("So it IS protected and the secure route is the only route.")
+		else
+			out("|cffff5555Still there, and nothing was refused.|r The call is allowed")
+			out("and does nothing, which puts the fault in the arguments rather")
+			out("than in the permission -- index or filter is not what this")
+			out("client's CancelUnitBuff expects.")
+		end
+		out("Saved to DyrueUnitFramesProbeDB.cancelCall")
+	end)
 end
 
 --------------------------------------------------------------------------------
@@ -3572,6 +3668,8 @@ SlashCmdList.DUFPROBE = function(input)
 		cancelTestProbe()
 	elseif cmd == "canceltestoff" then
 		if testFrame then testFrame:Hide() end
+	elseif cmd == "cancelcall" then
+		cancelCallProbe()
 	elseif cmd == "portraitoff" then
 		if portraitFrame then portraitFrame:Hide() end
 		if portraitFrame and portraitFrame.model then portraitFrame.model:Hide() end
@@ -3589,7 +3687,7 @@ SlashCmdList.DUFPROBE = function(input)
 		out("|cffff5555Unknown subcommand '" .. cmd .. "'.|r")
 		out("If you expected it to exist, the probe was updated on disk but this")
 		out("client is still running the copy it loaded at login - |cffffcc00/reload|r first.")
-		out("Known: |cffffcc00mana derived health portrait auraorder rage happiness heals healcomm incoming secrets scroll cancel canceltest dump|r")
+		out("Known: |cffffcc00mana derived health portrait auraorder rage happiness heals healcomm incoming secrets scroll cancel canceltest cancelcall dump|r")
 	else
 		survey()
 		out("Also run: |cffffcc00/dufprobe mana|r, |cffffcc00derived|r, |cffffcc00health|r, |cffffcc00portrait|r, |cffffcc00auraorder|r, |cffffcc00rage|r, |cffffcc00happiness|r, |cffffcc00heals|r, |cffffcc00healcomm|r, |cffffcc00incoming|r, |cffffcc00scroll|r")
