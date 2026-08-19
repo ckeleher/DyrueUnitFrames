@@ -1016,16 +1016,32 @@ assumption here, after `UNIT_COMBO_POINTS`, `UnitGetIncomingHeals` and
 `Compat.hasFocus`. The recurring shape is not a wrong answer; it is a question
 nobody thought to ask because the answer was obvious somewhere else.
 
-### UNMEASURED — does the direct call still work in combat?
+### VERIFIED — the direct call IS refused in combat
 
-Every run above was out of combat. If the client refuses it during a fight the
-click does nothing and the refusal is the client's to report — a graceful
-failure, and still better than never working. The handler is deliberately not
-gated on `InCombatLockdown`, because gating would remove a working feature on
-the guess that it does not work.
+Open for about an hour, and closed by a bug report rather than a probe: *"I
+still get those warnings when trying to click off a buff in combat."* Every
+refused click raises an `ADDON_ACTION_BLOCKED` naming this addon, so the shipped
+behavior was the worst of both — the click did nothing **and** made noise doing
+it.
 
-**To close it:** `/dufprobe cancelcall` already records `inCombat`. Run it
-during a fight. Cost is one keypress and one buff.
+So canceling is unprotected out of combat and protected within it, which is a
+narrower rule than either "protected" or "not protected", and neither the spec
+nor the original design allowed for it.
+
+`Elements/Auras.lua` now checks `InCombatLockdown` before calling, and says so
+once every few seconds rather than swallowing the click. Silence would
+reproduce the report this plan started from — *"right clicking does nothing"* —
+and a deliberate click deserves an answer.
+
+**The reasoning that shipped it ungated still holds.** Plan 26 declined to gate
+on a guess and said measurement would settle it. That was right: had it guessed,
+it would have guessed *for* the gate and been correct for the wrong reason,
+which is the same thing that put a retail assumption in §FR-5.9 in the first
+place. The cost of being wrong for an hour was one bug report.
+
+**Still worth a probe run** to record it properly: `/dufprobe cancelcall`
+already stores `inCombat`, so running it during a fight turns an observation
+into a record with the refusal's exact function name.
 
 ---
 

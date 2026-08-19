@@ -3179,18 +3179,31 @@ local function testPlayerBuffs()
 	ns.CombatQueue:Flush()
 	player:FullUpdate()
 
-	-- Canceling DURING a fight, on buttons that already exist -- which is the
-	-- real scenario, and the one the old design served worst: the overlay's
-	-- index was frozen at the moment combat started, so a buff that came or went
-	-- mid-fight shifted every index under it and the click hit a neighbor.
+	-- In combat the client refuses the call, so the addon no longer makes it.
+	--
+	-- Plan 26 shipped without this check and said why: the call was known to
+	-- work out of combat, and gating on a guess would remove a working feature.
+	-- The guess resolved the other way -- the client does refuse it in combat,
+	-- and every refused click also raised an ADDON_ACTION_BLOCKED, so the click
+	-- did nothing and made noise doing it.
+	--
+	-- The notice matters as much as the silence. Swallowing the click would
+	-- reproduce the complaint this whole plan started from.
 	local combatGroup = playerBuffGroup()
 	stub.inCombat = true
+	local chatBefore = #stub.chat
 	local combatCancelled = rightClick(combatGroup.buttons[1])
-	equal("playerbuffs/right-click cancels in combat", #combatCancelled, 1)
-	if combatCancelled[1] then
-		equal("playerbuffs/the in-combat index is the current one",
-			combatCancelled[1].index, combatGroup.buttons[1].auraIndex)
-	end
+	equal("playerbuffs/no cancel is attempted in combat", #combatCancelled, 0)
+
+	local notice = table.concat(stub.chat, " ", chatBefore + 1, #stub.chat)
+	check("playerbuffs/the refusal is explained rather than silent",
+		notice:find("combat", 1, true) ~= nil, notice)
+
+	-- Clicked round the whole group, it is still one message.
+	local chatAfter = #stub.chat
+	for i = 1, #combatGroup.buttons do rightClick(combatGroup.buttons[i]) end
+	equal("playerbuffs/the notice is throttled", #stub.chat, chatAfter)
+
 	stub.inCombat = false
 
 	--------------------------------------------------------------------------

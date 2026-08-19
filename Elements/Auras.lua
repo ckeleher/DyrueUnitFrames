@@ -29,6 +29,10 @@ local element = {
 
 local GROUPS = { buffs = "HELPFUL", debuffs = "HARMFUL" }
 
+-- FR-5.9 in-combat notice. One message per few seconds, not one per click.
+local CANCEL_NOTICE_THROTTLE = 3
+local lastCancelNotice = 0
+
 --------------------------------------------------------------------------------
 -- Duration ticker
 --
@@ -241,9 +245,30 @@ local function createButton(group, index)
 	-- buff, on your own frame. Guarded on the same terms as everything else in
 	-- this file -- right-click cancel is a convenience and must never be able to
 	-- take the aura display down with it.
+	--
+	-- The combat check is measured, not assumed. Plan 26 shipped without it and
+	-- said so: the direct call was known to work out of combat and gating on a
+	-- guess would have removed a working feature. It turns out the client DOES
+	-- refuse it in combat, and every refused click raised an
+	-- ADDON_ACTION_BLOCKED -- so the click did nothing AND made noise.
+	--
+	-- Saying so is the point. Silently swallowing it would reproduce the
+	-- original complaint ("right clicking does nothing"), and this is a
+	-- deliberate click that deserves an answer. Throttled, because holding the
+	-- button down is one message, not thirty.
 	button:SetScript("OnClick", function(self, mouseButton)
 		if mouseButton ~= "RightButton" then return end
 		if not self.cancelable or not self.auraIndex then return end
+
+		if InCombatLockdown() then
+			local now = GetTime()
+			if now - lastCancelNotice > CANCEL_NOTICE_THROTTLE then
+				lastCancelNotice = now
+				Errors:Print(L["Buffs cannot be canceled during combat."])
+			end
+			return
+		end
+
 		pcall(CancelUnitBuff, "player", self.auraIndex, self.filter)
 	end)
 
