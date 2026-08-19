@@ -2966,6 +2966,69 @@ end
 -- whole of the user's job.
 --------------------------------------------------------------------------------
 
+-- Round two. The overlay takes the mouse -- measured 18 August 2026, levels 8
+-- over 7, rects identical, and no ADDON_ACTION_BLOCKED from this addon at all.
+-- So the click arrives, the attributes are what we set, and nothing happens.
+--
+-- What is NOT known is whether the secure handler dispatches `cancelaura` at
+-- all on this client, and if it does, which API it reaches for. OPie -- which
+-- works here -- drives cancelaura with a `spell` attribute rather than the
+-- `index` + `filter` pair this addon sets, so the index form may simply not be
+-- supported. That is a lead, not a finding, and these three hooks settle it:
+--
+--   * SecureActionButton_OnClick fires    -> dispatch is happening
+--   * CancelUnitBuff called               -> the index form works; the failure
+--                                            is the index or the aura itself
+--   * CancelSpellByName called            -> the handler wants the spell form
+--   * dispatch but neither called         -> cancelaura+index is unsupported
+--                                            here, and `spell` is the fix
+--
+-- hooksecurefunc, so nothing here can taint the secure path it is watching.
+local cancelHooked = false
+local cancelClicks = nil
+
+local function recordCancelCall(what, a, b, c)
+	if not cancelClicks then return end
+	cancelClicks[#cancelClicks + 1] = {
+		at = date("%H:%M:%S"),
+		call = what,
+		arg1 = tostring(a), arg2 = tostring(b), arg3 = tostring(c),
+	}
+end
+
+local function hookCancelPath()
+	if cancelHooked then return end
+	cancelHooked = true
+
+	if _G.CancelUnitBuff then
+		hooksecurefunc("CancelUnitBuff", function(unit, index, filter)
+			recordCancelCall("CancelUnitBuff", unit, index, filter)
+		end)
+	end
+	if _G.CancelSpellByName then
+		hooksecurefunc("CancelSpellByName", function(spell)
+			recordCancelCall("CancelSpellByName", spell)
+		end)
+	end
+	if _G.SecureActionButton_OnClick then
+		hooksecurefunc("SecureActionButton_OnClick", function(self, button)
+			if not cancelClicks then return end
+			local resolved = {}
+			pcall(function()
+				for _, key in ipairs({ "type", "type2", "unit", "index", "filter", "spell" }) do
+					resolved[key] = tostring(self:GetAttribute(key))
+				end
+			end)
+			cancelClicks[#cancelClicks + 1] = {
+				at = date("%H:%M:%S"),
+				call = "SecureActionButton_OnClick",
+				arg1 = tostring(button),
+				attributes = resolved,
+			}
+		end)
+	end
+end
+
 local cancelTicker = nil
 
 local function widgetFacts(f)
@@ -3041,7 +3104,11 @@ local function cancelProbe(seconds)
 		},
 		buttons = {},
 		focus = {},
+		clicks = {},
 	}
+
+	hookCancelPath()
+	cancelClicks = record.clicks
 
 	-- Frame -> label, so the sampler can say "overlay 2" instead of a pointer.
 	local label = {}
@@ -3066,7 +3133,7 @@ local function cancelProbe(seconds)
 			label[overlay] = "overlay " .. i
 			entry.overlayParentIsCancelLayer = (overlay:GetParent() == frame.cancelLayer)
 			entry.attributes = {}
-			for _, key in ipairs({ "type", "type2", "unit", "index", "filter" }) do
+			for _, key in ipairs({ "type", "type2", "unit", "index", "filter", "spell" }) do
 				pcall(function() entry.attributes[key] = tostring(overlay:GetAttribute(key)) end)
 			end
 			-- The comparison that decides it, if both are on screen.
@@ -3102,8 +3169,9 @@ local function cancelProbe(seconds)
 		end
 	end
 
-	out("|cffffcc00Now hover a buff icon on the player frame.|r Sampling for",
-		seconds, "seconds.")
+	out("|cffffcc00Now RIGHT-CLICK a few of your buffs on the player frame.|r")
+	out("Hovering alone is not enough any more -- the click is what is being")
+	out("traced. Sampling for", seconds, "seconds.")
 
 	if cancelTicker then cancelTicker:Cancel() end
 	local last = nil
@@ -3143,10 +3211,34 @@ local function cancelProbe(seconds)
 				if sample.over:find("icon", 1, true) then sawIcon = true end
 			end
 
-			if sawOverlay then
-				out("|cff40ff40The overlay took the mouse.|r The click is arriving, so the")
-				out("secure action is what is not working -- check the attributes above")
-				out("and whether this client supports cancelaura at all.")
+			local dispatched, cancelCalled = false, nil
+			for _, click in ipairs(record.clicks) do
+				if click.call == "SecureActionButton_OnClick" then dispatched = true end
+				if click.call == "CancelUnitBuff" or click.call == "CancelSpellByName" then
+					cancelCalled = click.call
+				end
+			end
+			record.verdict = {
+				sawOverlay = sawOverlay,
+				dispatched = dispatched,
+				cancelCalled = cancelCalled,
+			}
+
+			out("clicks traced:", #record.clicks,
+				" dispatch:", yn(dispatched),
+				" cancel API:", cancelCalled or "|cffff5555never called|r")
+
+			if cancelCalled then
+				out("|cff40ff40" .. cancelCalled .. " was called.|r The secure path works end")
+				out("to end, so the failure is its arguments or the aura itself.")
+			elseif dispatched then
+				out("|cffff5555Dispatch happened and no cancel API was called.|r This client")
+				out("does not act on cancelaura with index+filter. OPie drives it with a")
+				out("`spell` attribute; that is the change to make.")
+			elseif sawOverlay then
+				out("|cffff5555The overlay took the mouse but no click dispatched.|r Either no")
+				out("right-click landed during the window, or RegisterForClicks is not")
+				out("catching it. Re-run and right-click the icons.")
 			elseif sawIcon then
 				out("|cffff5555The ICON took the mouse, never the overlay.|r The overlay is")
 				out("not on top. Frame level or geometry, not the secure action.")
