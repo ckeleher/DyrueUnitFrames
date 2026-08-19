@@ -59,6 +59,8 @@ end
 function stub.reset()
 	stub.units = {}
 	stub.inCombat = false
+	-- Every protected call the client refused since the last reset (Plan 25).
+	stub.blocked = {}
 	stub.inGroup = false
 	stub.inRaid = false
 	stub.chat = {}
@@ -73,6 +75,7 @@ function stub.reset()
 end
 
 stub.failTemplates = {}
+stub.blocked = {}
 
 --------------------------------------------------------------------------------
 -- Widgets
@@ -315,6 +318,76 @@ function methods:GetStatusBarTexture() return self.__statusBarTexture end
 
 function methods:GetFrameCPUUsage() return 0 end
 
+--------------------------------------------------------------------------------
+-- Protection (Plan 25)
+--
+-- Until this existed the harness could not see a refused call at all:
+-- IsProtected was a flat `return false, false` and every protected method
+-- succeeded in combat. A bug that stopped the player's aura icons re-laying-out
+-- for the whole of every fight sat in the suite for months with 1100 assertions
+-- passing over the top of it.
+--
+-- Two rules, and the second is the one that mattered:
+--
+--   * a frame built from a template whose name contains "Secure" is
+--     EXPLICITLY protected;
+--   * a frame that OWNS an explicitly protected descendant is restricted too,
+--     because moving or hiding it would move or hide the secure frame with it.
+--
+-- Descent alone is deliberately NOT a restriction. On the real client the
+-- Cooldown frame inside an aura icon -- several levels below a
+-- SecureUnitButtonTemplate -- is shown and hidden in combat without complaint,
+-- while the icon that owned a SecureActionButtonTemplate child was refused.
+-- That contrast is the evidence Plan 25 was diagnosed from, and this models it
+-- rather than the more obvious "anything under a secure frame" rule, which the
+-- evidence rules out.
+--
+-- This is a model of what gets REFUSED, which is what the addon can trip over.
+-- It is not a claim about the exact pair of values the live IsProtected returns
+-- for every arrangement; nothing in the addon calls it.
+--------------------------------------------------------------------------------
+
+local function ownsProtected(w)
+	local children = w.__children
+	if not children then return false end
+	for i = 1, #children do
+		local c = children[i]
+		if c.__protectedExplicit or ownsProtected(c) then return true end
+	end
+	return false
+end
+
+function methods:IsProtected()
+	local explicit = self.__protectedExplicit == true
+	return explicit or ownsProtected(self), explicit
+end
+
+-- The methods the client refuses on a protected frame while the player is in
+-- combat. SetShown is absent on purpose: it routes through Show and Hide.
+local PROTECTED_METHODS = {
+	"Show", "Hide",
+	"SetPoint", "ClearAllPoints", "SetAllPoints",
+	"SetSize", "SetWidth", "SetHeight", "SetScale",
+	"SetAttribute",
+}
+
+for _, name in ipairs(PROTECTED_METHODS) do
+	local allowed = methods[name]
+	methods[name] = function(self, ...)
+		if stub.inCombat and self:IsProtected() then
+			local blocked = stub.blocked
+			blocked[#blocked + 1] = {
+				frame = self,
+				method = (self.__type or "Frame") .. ":" .. name,
+			}
+			return
+		end
+		return allowed(self, ...)
+	end
+end
+
+--------------------------------------------------------------------------------
+
 -- Anything not modeled above is a no-op that returns nothing. Memoised so
 -- repeated lookups do not allocate.
 widgetMT = {
@@ -339,6 +412,11 @@ function _G.CreateFrame(objectType, name, parent, template)
 	end
 	local f = newWidget(objectType, name, parent)
 	f.__template = template
+	-- SecureUnitButtonTemplate, SecureActionButtonTemplate, SecureHandler*.
+	-- Matching on the name is what the real distinction amounts to here.
+	if template and template:find("Secure", 1, true) then
+		f.__protectedExplicit = true
+	end
 	if name then _G[name] = f end
 	stub.frames = stub.frames or {}
 	stub.frames[#stub.frames + 1] = f
