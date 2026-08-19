@@ -163,7 +163,7 @@ way `/target` is — so `SlashCmdList["FOCUS"]` being nil says nothing about
 whether focus works. It is still reported, because a future patch could move it
 into Lua and make it a discriminator after all.
 
-**Every load-time signal is identical across the two clients, and the behaviour
+**Every load-time signal is identical across the two clients, and the behavior
 is not.** So SPEC's *feature-probe, never version-check* rule cannot be satisfied
 here, and this is the recorded exception rather than an oversight — eight probes
 were tried before concluding it.
@@ -180,7 +180,7 @@ generalises to any later client without needing a new `WOW_PROJECT_ID` added to 
 list. `general.focusOverride` stays as the escape hatch it was always meant to
 be.
 
-**This is a behaviour change on Era** — the focus frame, its options and its
+**This is a behavior change on Era** — the focus frame, its options and its
 anchor target all disappear there — so it belongs in its own plan with the SPEC
 amendment written out, not folded into something else.
 
@@ -241,7 +241,7 @@ check.
    here, and the entire focus-gating design rests on it. The probe is
    `C_EventUtils.IsEventValid("PLAYER_FOCUS_CHANGED")`, which is validity in the
    shared codebase rather than evidence that `/focus` works. **This is live
-   behaviour**: with the flag true, the addon builds a focus frame and offers
+   behavior**: with the flag true, the addon builds a focus frame and offers
    focus options on Era. To close it: `/focus` a target and check
    `UnitExists("focus")`. A yes is a feature *gain* — §FR-8.5 can be relaxed. A
    no means a frame is being created that can never populate.
@@ -311,7 +311,7 @@ so `UNIT_POWER_UPDATE` for `"player"` is the live path.
 does so *silently*, so the element was subscribed to nothing. The bar showed the
 correct count, but only after something forced a full update: changing target
 worked, spending a combo point did not. No error, no warning, and a headless
-suite that was green because `Tests/wowstub.lua` modelled a client that still
+suite that was green because `Tests/wowstub.lua` modeled a client that still
 had the event.
 
 Three things changed as a result:
@@ -723,7 +723,7 @@ covered direct casts only" is the same shape of argument that produced the wrong
 `UnitGetIncomingHeals(unit, "player")` was called 5120 times without a single
 failure, and returned **0 every time**, while the player cast only two heals in
 the whole run. So the probe's own guard reported Q2 as unproven, which was
-correct behaviour: `others` is computed as `all - mine`, and a filtered form that
+correct behavior: `others` is computed as `all - mine`, and a filtered form that
 silently ignored its argument would produce exactly this.
 
 **The conclusion above does not rest on that subtraction.** Two casts cannot
@@ -967,6 +967,84 @@ combat, and confirm it cancels.
 
 ---
 
+## Plan 26 — canceling a buff is not protected
+
+### VERIFIED — `CancelUnitBuff` works from insecure addon code
+
+**`/dufprobe cancelcall`, TBC Anniversary 2.5.6, 18 August 2026.** Called
+directly, with an `ADDON_ACTION_BLOCKED` / `ADDON_ACTION_FORBIDDEN` watcher
+running for two seconds either side:
+
+```
+CancelUnitBuff("player", 1, "HELPFUL")  on Omen of Clarity
+callOk: true    callError: none    blocked events: 0
+after 2s: index 1 holds "Gift of Arthas"    gone: true
+```
+
+The buff was cancelled. Nothing was refused and nothing errored.
+
+### VERIFIED — a secure `cancelaura` button cancels nothing here, in any form
+
+**`/dufprobe canceltest`, same client, same session.** Three
+`SecureActionButtonTemplate` buttons built by the *probe* — so no taint from
+DyrueUnitFrames could reach them — each carrying a different form of the same
+request against `Major Agility`:
+
+| Form | Attributes | after 2s |
+|---|---|---|
+| A | `type2=cancelaura` + `unit` + `index` + `filter` | still up |
+| B | `type2=cancelaura` + `spell` | still up |
+| C | `type=cancelaura` + `spell` — OPie's exact form | still up |
+
+`cancelaura` appears not to be a type this client's `SecureTemplates.lua` acts
+on. Note that OPie ships form C and works on this client, so its presence in an
+addon is not evidence that it functions.
+
+**This is why FR-5.9 never worked.** The spec required the secure route as a
+matter of correctness, and the secure route is the one that does not work.
+`SPEC.md` §FR-5.9 has been amended rather than left standing against the code.
+
+### The measurement that should have come first
+
+The premise — "canceling is a protected action" — is true on retail and was
+carried across without being asked. It sat in `SPEC.md` as fact, in
+`Elements/Auras.lua` as a comment, and in this file as a design decision, and
+none of the three was a measurement.
+
+That is now the fourth time a Classic client has disagreed with a retail
+assumption here, after `UNIT_COMBO_POINTS`, `UnitGetIncomingHeals` and
+`Compat.hasFocus`. The recurring shape is not a wrong answer; it is a question
+nobody thought to ask because the answer was obvious somewhere else.
+
+### VERIFIED — the direct call IS refused in combat
+
+Open for about an hour, and closed by a bug report rather than a probe: *"I
+still get those warnings when trying to click off a buff in combat."* Every
+refused click raises an `ADDON_ACTION_BLOCKED` naming this addon, so the shipped
+behavior was the worst of both — the click did nothing **and** made noise doing
+it.
+
+So canceling is unprotected out of combat and protected within it, which is a
+narrower rule than either "protected" or "not protected", and neither the spec
+nor the original design allowed for it.
+
+`Elements/Auras.lua` now checks `InCombatLockdown` before calling, and says so
+once every few seconds rather than swallowing the click. Silence would
+reproduce the report this plan started from — *"right clicking does nothing"* —
+and a deliberate click deserves an answer.
+
+**The reasoning that shipped it ungated still holds.** Plan 26 declined to gate
+on a guess and said measurement would settle it. That was right: had it guessed,
+it would have guessed *for* the gate and been correct for the wrong reason,
+which is the same thing that put a retail assumption in §FR-5.9 in the first
+place. The cost of being wrong for an hour was one bug report.
+
+**Still worth a probe run** to record it properly: `/dufprobe cancelcall`
+already stores `inCombat`, so running it during a fight turns an observation
+into a record with the refusal's exact function name.
+
+---
+
 ## Deviations from SPEC.md
 
 Recorded as they are made, so the reasoning survives.
@@ -976,7 +1054,7 @@ Recorded as they are made, so the reasoning survives.
 | §5.9 "update paths are not blanket-wrapped" | One `xpcall` per *event dispatch*, plus a single local assignment naming the element about to run | Gives per-element circuit-breaker attribution at the cost of one protected call per event rather than one per element. Satisfies the intent (no per-element pcall) while making the circuit breaker actually implementable |
 | §5.8 AceDB defaults | AceDB is used for profile management only; the schema is deep-filled by `Defaults:EnsureProfile` | AceDB implements defaults with `__index` metatables, under which a *deleted* color rule or text element comes back on next login. User-editable lists need real ownership |
 | §FR-2.3 append mode | The appended mana bar hangs below the button's own bounds rather than growing the button | Growing a secure button is a protected operation. Hanging the bar outside means a druid shifting form mid-fight sees mana immediately instead of at `PLAYER_REGEN_ENABLED`. Reserve mode is unaffected and keeps everything inside the frame |
-| §FR-5.9 right-click cancel | Secure attribute on a separate overlay button, a **sibling** of the icon on `frame.cancelLayer`, with both its geometry and its attributes updated through `CombatQueue` (Plan 25) | Aura icons must be shown and hidden constantly in combat, which a protected frame cannot do. Splitting insecure icon from secure overlay is the only arrangement that satisfies both — but the split only works if the overlay is not *under* the icon, which it was from `d4ef9a3` until Plan 25. See the protection row below. Cost: in combat the overlay keeps the position and the aura index it had when combat started, so canceling mid-fight may cancel a neighbor. Out of combat it is exact |
+| §FR-5.9 right-click cancel | An ordinary `OnClick` handler calling `CancelUnitBuff`. No secure button, no overlay, no `CombatQueue` (Plan 26) | The spec required a secure button attribute *because canceling is protected*, which is true on retail and false here. Measured 18 August 2026: the direct call works from insecure code and a secure `cancelaura` button cancels nothing in any attribute form. The secure design is what kept the feature broken for the addon's entire life. Removing it also removes the in-combat staleness it forced — the handler reads the aura index at the moment of the click |
 | §5.7 incremental aura updates | `updateInfo` is used to *skip* no-op updates; the normal path is a full rescan | The spec calls this an optimization, not a blocker. Maintaining a parallel instance-ID store is a real bug surface and buys nothing measurable at Classic's aura counts |
 | §FR-4.1 "Default: green" | Health bars ship in `class` mode, with `reaction` as the NPC fallback | Class color says at a glance who you are looking at, and degrades to something meaningful for NPCs rather than to a fixed color that means nothing. The spec's green is still the stored `color` and is one dropdown away. Schema 4 migrates profiles still on the old default |
 | §5.7 three permitted tickers | A fourth was added: one `OnUpdate` driver in `Systems/BarSweep.lua`, shared by the power tick indicator (Plan 2), the five second rule indicator (Plan 10) and the rage decay indicator (Plan 17) | The sweep is a continuous animation *between* two regen ticks and nothing fires in between — `UNIT_POWER_UPDATE` fires AT the tick, which is the moment the sweep restarts. Same category as the derived-unit poller: the game does not push what we need. It obeys the same discipline as the other three, running only while a visible bar has an active sweep and stopping the instant that stops being true, and `/duf profile` reports it. Player only, on the §FR-8.5 boundary: another unit's tick cadence, mana expenditure and rage decay are not observable. All three plans share the one driver and one line-rendering path with a table of providers, so a third indicator added no ticker and there is still no fifth |

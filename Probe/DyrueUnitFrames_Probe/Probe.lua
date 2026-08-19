@@ -2943,6 +2943,696 @@ end
 --------------------------------------------------------------------------------
 -- Slash command
 --------------------------------------------------------------------------------
+-- Plan 25 -- right-clicking a buff does nothing
+--
+-- The cancel overlay used to be a child of the aura icon, which made the icon
+-- protected and froze the whole buff display in combat. It is now a sibling on
+-- frame.cancelLayer, above the icon by frame LEVEL rather than by parentage.
+-- The test harness stores frame levels and does not order anything by them, so
+-- it cannot answer whether the click still lands. This asks the client.
+--
+-- The one measurement that matters is what the mouse is actually over when it
+-- is over a buff icon, and the two answers mean opposite things:
+--
+--   * the OVERLAY -- the click is arriving and the secure action is what is not
+--     working. Look at the attributes below and at whether this client supports
+--     "cancelaura" at all. Nothing to do with Plan 25; it would never have
+--     worked under the old arrangement either.
+--   * the ICON -- the overlay is not on top. A frame level or geometry problem,
+--     introduced by Plan 25, and fixable without touching the secure side.
+--
+-- Everything lands in DyrueUnitFramesProbeDB.cancel. Hover a buff while it
+-- runs; the sampler records what changes, so waving the mouse around is the
+-- whole of the user's job.
+--------------------------------------------------------------------------------
+
+-- Round two. The overlay takes the mouse -- measured 18 August 2026, levels 8
+-- over 7, rects identical, and no ADDON_ACTION_BLOCKED from this addon at all.
+-- So the click arrives, the attributes are what we set, and nothing happens.
+--
+-- What is NOT known is whether the secure handler dispatches `cancelaura` at
+-- all on this client, and if it does, which API it reaches for. OPie -- which
+-- works here -- drives cancelaura with a `spell` attribute rather than the
+-- `index` + `filter` pair this addon sets, so the index form may simply not be
+-- supported. That is a lead, not a finding, and these three hooks settle it:
+--
+--   * SecureActionButton_OnClick fires    -> dispatch is happening
+--   * CancelUnitBuff called               -> the index form works; the failure
+--                                            is the index or the aura itself
+--   * CancelSpellByName called            -> the handler wants the spell form
+--   * dispatch but neither called         -> cancelaura+index is unsupported
+--                                            here, and `spell` is the fix
+--
+-- hooksecurefunc, so nothing here can taint the secure path it is watching.
+local cancelHooked = false
+local cancelClicks = nil
+
+local function recordCancelCall(what, a, b, c)
+	if not cancelClicks then return end
+	cancelClicks[#cancelClicks + 1] = {
+		at = date("%H:%M:%S"),
+		call = what,
+		arg1 = tostring(a), arg2 = tostring(b), arg3 = tostring(c),
+	}
+end
+
+local function hookCancelPath()
+	if cancelHooked then return end
+	cancelHooked = true
+
+	if _G.CancelUnitBuff then
+		hooksecurefunc("CancelUnitBuff", function(unit, index, filter)
+			recordCancelCall("CancelUnitBuff", unit, index, filter)
+		end)
+	end
+	if _G.CancelSpellByName then
+		hooksecurefunc("CancelSpellByName", function(spell)
+			recordCancelCall("CancelSpellByName", spell)
+		end)
+	end
+	if _G.SecureActionButton_OnClick then
+		hooksecurefunc("SecureActionButton_OnClick", function(self, button)
+			if not cancelClicks then return end
+			-- Only ours. Round two recorded all 1268 action-bar dispatches as
+			-- well, which drowned the signal and put a megabyte of noise in
+			-- SavedVariables. A button with no cancelaura on it is not part of
+			-- this question.
+			local ok, type2 = pcall(self.GetAttribute, self, "type2")
+			if not ok or type2 ~= "cancelaura" then return end
+			local resolved = {}
+			pcall(function()
+				for _, key in ipairs({ "type", "type2", "unit", "index", "filter", "spell" }) do
+					resolved[key] = tostring(self:GetAttribute(key))
+				end
+			end)
+			cancelClicks[#cancelClicks + 1] = {
+				at = date("%H:%M:%S"),
+				call = "SecureActionButton_OnClick",
+				arg1 = tostring(button),
+				attributes = resolved,
+			}
+		end)
+	end
+end
+
+-- Bumped on every change to this probe, printed at the top of every run and
+-- stored on the record.
+--
+-- Round five was spent reading a run that came from round three's code. The new
+-- file was on disk, the client was still executing what it loaded at login, and
+-- nothing in the output said which was which -- it had to be inferred from an
+-- unfiltered click count. The probe's own header has warned about stale Lua
+-- since August 11 and still could not tell you when it was the stale one.
+local CANCEL_BUILD = 7
+
+local cancelTicker = nil
+
+local function widgetFacts(f)
+	if not f then return nil end
+	local facts = {}
+	pcall(function()
+		facts.objectType = f:GetObjectType()
+		facts.name = f:GetName()
+		facts.level = f:GetFrameLevel()
+		facts.strata = f:GetFrameStrata()
+		facts.shown = f:IsShown() and true or false
+		facts.visible = f:IsVisible() and true or false
+		facts.left, facts.bottom = f:GetLeft(), f:GetBottom()
+		facts.width, facts.height = f:GetWidth(), f:GetHeight()
+	end)
+	pcall(function() facts.mouseEnabled = f:IsMouseEnabled() and true or false end)
+	pcall(function()
+		local isProtected, explicitly = f:IsProtected()
+		facts.protected = isProtected and true or false
+		facts.protectedExplicitly = explicitly and true or false
+	end)
+	return facts
+end
+
+-- GetMouseFocus was replaced by GetMouseFoci, which returns a list. Try the
+-- new name first and fall back, because this probe runs on two clients.
+local function mouseFocus()
+	if _G.GetMouseFoci then
+		local ok, foci = pcall(_G.GetMouseFoci)
+		if ok and type(foci) == "table" then return foci[1] end
+	end
+	if _G.GetMouseFocus then
+		local ok, focus = pcall(_G.GetMouseFocus)
+		if ok then return focus end
+	end
+	return nil
+end
+
+local function cancelProbe(seconds)
+	seconds = tonumber(seconds) or 30
+
+	header("Cancel overlay (Plan 26) -- build " .. CANCEL_BUILD)
+
+	local frame = _G["DyrueUF_player"]
+	if not frame then
+		out("|cffff5555No DyrueUF_player.|r The addon is not loaded under that name.")
+		return
+	end
+
+	local group = frame.elements and frame.elements.auras and frame.elements.auras.buffs
+	if not group then
+		out("|cffff5555The player frame has no buff group.|r")
+		out("Enable player buffs, then run this again.")
+		return
+	end
+
+	local record = {
+		timestamp = date("%Y-%m-%d %H:%M:%S"),
+		tocVersion = select(4, GetBuildInfo()),
+		build = CANCEL_BUILD,
+		completed = false,
+		inCombat = InCombatLockdown() and true or false,
+		api = {
+			hasCancelUnitBuff = _G.CancelUnitBuff ~= nil,
+			hasGetMouseFoci = _G.GetMouseFoci ~= nil,
+			hasGetMouseFocus = _G.GetMouseFocus ~= nil,
+			hasSecureActionButtonTemplate = true,
+			-- The identity to compare a button's OnClick against. If ours is
+			-- not this, the template is not what we think it is.
+			secureOnClick = tostring(_G.SecureActionButton_OnClick),
+			-- A button known to work, for the same comparison. Bartender4 and
+			-- Blizzard's bars both use SecureActionButtonTemplate, and 1316 of
+			-- their clicks were traced last round.
+			referenceOnClick = (function()
+				for _, name in ipairs({ "BT4Button1", "ActionButton1", "MultiBarBottomLeftButton1" }) do
+					local b = _G[name]
+					if b and b.GetScript then
+						local ok, script = pcall(b.GetScript, b, "OnClick")
+						if ok and script then return name .. " = " .. tostring(script) end
+					end
+				end
+				return "no reference button found"
+			end)(),
+		},
+		chain = {
+			frame = widgetFacts(frame),
+			content = widgetFacts(frame.content),
+			cancelLayer = widgetFacts(frame.cancelLayer),
+			groupFrame = widgetFacts(group.frame),
+		},
+		buttons = {},
+		focus = {},
+		clicks = {},
+	}
+
+	hookCancelPath()
+	cancelClicks = record.clicks
+
+	-- Frame -> label, so the sampler can say "overlay 2" instead of a pointer.
+	local label = {}
+	if frame.cancelLayer then label[frame.cancelLayer] = "cancelLayer" end
+	if frame.content then label[frame.content] = "content" end
+	if group.frame then label[group.frame] = "groupFrame" end
+	label[frame] = "unitFrame"
+
+	for i = 1, math.min(#group.buttons, 8) do
+		local button = group.buttons[i]
+		local overlay = button and button.cancel
+		local entry = {
+			index = i,
+			icon = widgetFacts(button),
+			overlay = widgetFacts(overlay),
+			hasOverlay = overlay ~= nil,
+			cancelFailed = button and button.cancelFailed and true or false,
+		}
+
+		if button then label[button] = "icon " .. i end
+		if overlay then
+			label[overlay] = "overlay " .. i
+
+			-- Round three. Round two proved the overlay never dispatched:
+			-- sixteen windows with the mouse sitting on one, 1268 secure
+			-- clicks traced, and not one of them ours. So the question is no
+			-- longer which API cancelaura reaches for -- it is whether the
+			-- click reaches the button at all.
+			--
+			-- PreClick and PostClick are the sanctioned way to watch a secure
+			-- button: the client runs them around the secure action and they
+			-- do not taint it, which HookScript on OnClick would.
+			--
+			--   PreClick fires   -> the click arrives; the secure action ran
+			--                       and did nothing
+			--   PreClick silent  -> the click never reaches the button, and
+			--                       RegisterForClicks or the frame itself is
+			--                       the problem, not the attributes
+			pcall(function()
+				entry.hasOnClick = overlay:GetScript("OnClick") ~= nil
+				if not overlay.__probeClickHooked then
+					overlay.__probeClickHooked = true
+					local which = i
+					-- Round four. PreClick and PostClick both fire and the
+					-- secure handler never runs, so the click reaches the
+					-- widget and the secure dispatch is what is missing.
+					-- Two candidates, and these two readings separate them:
+					--
+					--   * the attributes are gone or different AT CLICK TIME
+					--     -- something is clearing them between the update
+					--     that sets them and the click that reads them;
+					--   * the OnClick script is not the one action bars use
+					--     -- the template did not give us what we assumed,
+					--     and the identity comparison says so outright.
+					overlay:HookScript("PreClick", function(self, clicked)
+						local seen = {}
+						pcall(function()
+							for _, key in ipairs({ "type", "type2", "unit", "index", "filter", "spell" }) do
+								seen[key] = tostring(self:GetAttribute(key))
+							end
+							seen.onClick = tostring(self:GetScript("OnClick"))
+						end)
+						local entry = {
+							at = date("%H:%M:%S"),
+							call = "PreClick overlay " .. which,
+							arg1 = tostring(clicked),
+							attributes = seen,
+						}
+						if cancelClicks then cancelClicks[#cancelClicks + 1] = entry end
+					end)
+					overlay:HookScript("PostClick", function(_, clicked)
+						recordCancelCall("PostClick overlay " .. which, clicked)
+					end)
+				end
+			end)
+			entry.overlayParentIsCancelLayer = (overlay:GetParent() == frame.cancelLayer)
+			entry.attributes = {}
+			for _, key in ipairs({ "type", "type2", "unit", "index", "filter", "spell" }) do
+				pcall(function() entry.attributes[key] = tostring(overlay:GetAttribute(key)) end)
+			end
+			-- The comparison that decides it, if both are on screen.
+			if entry.icon and entry.icon.level and entry.overlay.level then
+				entry.overlayIsAbove = entry.overlay.level > entry.icon.level
+			end
+		end
+
+		record.buttons[#record.buttons + 1] = entry
+	end
+
+	registerRun("cancel", record)
+	DyrueUnitFramesProbeDB.cancel = record
+
+	out("player buff buttons:", #group.buttons, " overlays:",
+		(record.buttons[1] and record.buttons[1].hasOverlay) and "present" or "none")
+
+	for _, entry in ipairs(record.buttons) do
+		if entry.hasOverlay then
+			out(string.format("  %d  icon level %s  overlay level %s  above %s  parent ok %s  shown %s  mouse %s",
+				entry.index,
+				tostring(entry.icon and entry.icon.level),
+				tostring(entry.overlay and entry.overlay.level),
+				yn(entry.overlayIsAbove),
+				yn(entry.overlayParentIsCancelLayer),
+				yn(entry.overlay and entry.overlay.shown),
+				yn(entry.overlay and entry.overlay.mouseEnabled)))
+		else
+			out(string.format("  %d  icon level %s  |cffff5555no overlay|r  cancelFailed %s",
+				entry.index,
+				tostring(entry.icon and entry.icon.level),
+				yn(entry.cancelFailed)))
+		end
+	end
+
+	out("|cffffcc00Now RIGHT-CLICK a few of your buffs on the player frame.|r")
+	out("Hovering alone is not enough any more -- the click is what is being")
+	out("traced. Sampling for", seconds, "seconds.")
+
+	if cancelTicker then cancelTicker:Cancel() end
+	local last = nil
+	local elapsed = 0
+	cancelTicker = C_Timer.NewTicker(0.2, function()
+		elapsed = elapsed + 0.2
+		local focus = mouseFocus()
+		local name = "nothing"
+		if focus then
+			name = label[focus]
+			if not name then
+				local ok, widgetName = pcall(function()
+					return focus:GetName() or ("unnamed " .. focus:GetObjectType())
+				end)
+				name = ok and widgetName or "unreadable"
+			end
+		end
+
+		if name ~= last then
+			last = name
+			-- Capped. The mouse crosses a lot of frames in thirty seconds and
+			-- none of this is worth a megabyte of SavedVariables.
+			if #record.focus < 150 then
+				record.focus[#record.focus + 1] = {
+					at = string.format("%.1f", elapsed),
+					over = name,
+				}
+			end
+			if name ~= "nothing" then out("  mouse over:", name) end
+		end
+
+		if elapsed >= seconds then
+			cancelTicker:Cancel()
+			cancelTicker = nil
+			record.completed = true
+			header("Cancel overlay done")
+
+			local sawOverlay, sawIcon = false, false
+			for _, sample in ipairs(record.focus) do
+				if sample.over:find("overlay", 1, true) then sawOverlay = true end
+				if sample.over:find("icon", 1, true) then sawIcon = true end
+			end
+
+			-- Only OUR button counts. Round two counted every secure click on
+			-- screen and called 1268 action-bar dispatches a success, which
+			-- was worse than no verdict at all.
+			local reached, dispatched, cancelCalled = false, false, nil
+			for _, click in ipairs(record.clicks) do
+				if click.call:find("PreClick", 1, true) then reached = true end
+				if click.call == "SecureActionButton_OnClick"
+					and click.attributes and click.attributes.type2 == "cancelaura" then
+					dispatched = true
+				end
+				if click.call == "CancelUnitBuff" or click.call == "CancelSpellByName" then
+					cancelCalled = click.call
+				end
+			end
+			record.verdict = {
+				sawOverlay = sawOverlay,
+				reached = reached,
+				dispatched = dispatched,
+				cancelCalled = cancelCalled,
+			}
+
+			out("clicks traced:", #record.clicks,
+				" reached the overlay:", yn(reached),
+				" dispatched ours:", yn(dispatched),
+				" cancel API:", cancelCalled or "|cffff5555never called|r")
+
+			if reached and not dispatched then
+				out("|cffff5555The click reaches the button and the secure handler never")
+				out("runs.|r Compare the PreClick attributes against the static dump, and")
+				out("the overlay's OnClick against api.secureOnClick and")
+				out("api.referenceOnClick -- one of those two will not match.")
+			elseif not reached and sawOverlay then
+				out("|cffff5555The click never reached the overlay.|r It has the mouse and")
+				out("it is shown, sized and on top, so RegisterForClicks or the frame")
+				out("itself is refusing the click -- not the attributes, and nothing to")
+				out("do with whether cancelaura is supported.")
+			elseif cancelCalled then
+				out("|cff40ff40" .. cancelCalled .. " was called.|r The secure path works end")
+				out("to end, so the failure is its arguments or the aura itself.")
+			elseif dispatched then
+				out("|cffff5555Dispatch happened and no cancel API was called.|r This client")
+				out("does not act on cancelaura with index+filter. OPie drives it with a")
+				out("`spell` attribute; that is the change to make.")
+			elseif sawOverlay then
+				out("|cffff5555The overlay took the mouse but no click dispatched.|r Either no")
+				out("right-click landed during the window, or RegisterForClicks is not")
+				out("catching it. Re-run and right-click the icons.")
+			elseif sawIcon then
+				out("|cffff5555The ICON took the mouse, never the overlay.|r The overlay is")
+				out("not on top. Frame level or geometry, not the secure action.")
+			else
+				out("|cffffcc00Neither was hovered.|r Nothing was measured -- re-run and")
+				out("hover a buff icon on the PLAYER frame while it samples.")
+			end
+			out("Saved to DyrueUnitFramesProbeDB.cancel")
+		end
+	end)
+end
+
+--------------------------------------------------------------------------------
+-- /dufprobe canceltest -- three attribute forms, side by side
+--
+-- Build 5 ruled out the top two candidates outright. The overlay's OnClick IS
+-- SecureActionButton_OnClick (identical function pointer), and the attributes
+-- at click time are exactly right: type2=cancelaura, unit=player, index=6,
+-- filter=HELPFUL, spell=Dire Bear Form. Nothing is stale and nothing is
+-- missing.
+--
+-- It also showed that "dispatched=false" was never a fact about the client.
+-- The overlay's OnClick holds a DIRECT reference to the original function,
+-- bound when the template was applied; hooksecurefunc replaces the global, so
+-- calls through that bound reference are invisible to the hook. Action bar
+-- buttons go through a closure that looks the global up at call time, which is
+-- why 1268 of theirs were traced and none of ours. The same doubt applies to
+-- the CancelUnitBuff and CancelSpellByName hooks, so their silence proves
+-- nothing either.
+--
+-- Which leaves two live candidates and no way to separate them by watching:
+--
+--   * taint -- the client refuses the secure action because an insecure addon
+--     built the button and writes its attributes;
+--   * the attribute form -- cancelaura may not act on index+filter here. OPie
+--     works on this client and sets `type` (not type2) with `spell` alone.
+--
+-- So stop watching and start comparing. Three buttons, built and configured
+-- entirely by THIS addon -- untouched by DyrueUnitFrames, so a taint problem
+-- there cannot follow them -- each carrying a different form of the same
+-- request against the same buff:
+--
+--   A  type2=cancelaura  unit  index  filter     what the addon does now
+--   B  type2=cancelaura  spell                   spell, on the right button
+--   C  type=cancelaura   spell                   OPie's exact form
+--
+-- Ground truth is whether the buff is still there afterwards, read straight
+-- off the unit. No hooks, nothing to be fooled by.
+--------------------------------------------------------------------------------
+
+local testFrame = nil
+
+local function auraByIndex(index)
+	if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+		local ok, data = pcall(C_UnitAuras.GetAuraDataByIndex, "player", index, "HELPFUL")
+		if ok and data then return data.name end
+		return nil
+	end
+	local ok, name = pcall(UnitBuff, "player", index)
+	if ok then return name end
+	return nil
+end
+
+--- Index of the first buff the player cast on themselves, or nil.
+local function firstOwnBuff()
+	for index = 1, 40 do
+		if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+			local ok, data = pcall(C_UnitAuras.GetAuraDataByIndex, "player", index, "HELPFUL")
+			if not ok or not data then break end
+			if data.sourceUnit == "player" then return index, data.name end
+		else
+			local ok, name, _, _, _, _, _, source = pcall(UnitBuff, "player", index)
+			if not ok or not name then break end
+			if source == "player" then return index, name end
+		end
+	end
+	return nil
+end
+
+local FORMS = {
+	{ key = "A", label = "A index", color = { 0.6, 0.1, 0.1 } },
+	{ key = "B", label = "B spell2", color = { 0.1, 0.4, 0.1 } },
+	{ key = "C", label = "C spell", color = { 0.1, 0.2, 0.6 } },
+}
+
+local function cancelTestProbe()
+	header("Cancel forms (Plan 26) -- build " .. CANCEL_BUILD)
+
+	if InCombatLockdown() then
+		out("|cffff5555In combat.|r Every call here is protected; try again after.")
+		return
+	end
+
+	local index, name = firstOwnBuff()
+	if not index then
+		out("|cffff5555No buff of your own on you.|r Cast something on yourself first.")
+		return
+	end
+
+	out("target buff: |cffffcc00" .. name .. "|r at index " .. index)
+
+	local record = {
+		timestamp = date("%Y-%m-%d %H:%M:%S"),
+		build = CANCEL_BUILD,
+		target = { index = index, name = name },
+		results = {},
+	}
+	DyrueUnitFramesProbeDB.cancelTest = record
+
+	if not testFrame then
+		testFrame = CreateFrame("Frame", nil, UIParent)
+		testFrame:SetSize(330, 90)
+		testFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 160)
+		testFrame.buttons = {}
+	end
+	testFrame:Show()
+
+	for i, form in ipairs(FORMS) do
+		local button = testFrame.buttons[i]
+		if not button then
+			local ok, made = pcall(CreateFrame, "Button", nil, testFrame, "SecureActionButtonTemplate")
+			if not ok or not made then
+				out("|cffff5555Could not build test button " .. form.key .. ".|r")
+				return
+			end
+			button = made
+			button:SetSize(100, 60)
+			button:SetPoint("LEFT", testFrame, "LEFT", (i - 1) * 110, 0)
+			button:RegisterForClicks("RightButtonUp", "LeftButtonUp")
+
+			button.bg = button:CreateTexture(nil, "BACKGROUND")
+			button.bg:SetAllPoints(button)
+			button.text = button:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+			button.text:SetPoint("CENTER")
+
+			button:HookScript("PostClick", function(self, clicked)
+				local form, target = self.formKey, record.target
+				local entry = {
+					at = date("%H:%M:%S"),
+					form = form,
+					button = tostring(clicked),
+					immediately = tostring(auraByIndex(target.index)),
+				}
+				record.results[#record.results + 1] = entry
+
+				-- Build 6 read the aura here, microseconds after the click, and
+				-- reported "still there" for all three forms. That verdict was
+				-- worthless: cancelling a buff is a server round trip, so an
+				-- aura that is on its way out is still up at PostClick and a
+				-- working form is indistinguishable from a broken one.
+				C_Timer.After(0.5, function()
+					entry.after05 = tostring(auraByIndex(target.index))
+				end)
+				C_Timer.After(2.0, function()
+					entry.after20 = tostring(auraByIndex(target.index))
+					entry.gone = entry.after20 ~= target.name
+					if entry.gone then
+						record.winner = form
+						out(form .. ": |cff40ff40GONE after 2s -- this form works|r")
+					else
+						out(form .. ": |cffff5555still there after 2s|r")
+					end
+				end)
+			end)
+
+			testFrame.buttons[i] = button
+		end
+
+		button.formKey = form.key
+		button.bg:SetColorTexture(form.color[1], form.color[2], form.color[3], 0.9)
+		button.text:SetText(form.label)
+
+		-- Every attribute cleared first, so a form only ever carries its own.
+		for _, key in ipairs({ "type", "type2", "unit", "index", "filter", "spell" }) do
+			button:SetAttribute(key, nil)
+		end
+
+		if form.key == "A" then
+			button:SetAttribute("type2", "cancelaura")
+			button:SetAttribute("unit", "player")
+			button:SetAttribute("index", index)
+			button:SetAttribute("filter", "HELPFUL")
+		elseif form.key == "B" then
+			button:SetAttribute("type2", "cancelaura")
+			button:SetAttribute("spell", name)
+		else
+			button:SetAttribute("type", "cancelaura")
+			button:SetAttribute("spell", name)
+		end
+
+		button:Show()
+	end
+
+	out("Each result lands 2 seconds after the click, not instantly -- cancelling")
+	out("is a server round trip and reading it any sooner says nothing.")
+	out("Three buttons above the middle of your screen.")
+	out("|cffffcc00Right-click A, then B, then C.|r C also answers to a left-click,")
+	out("because that is the form OPie uses and it puts cancelaura on `type`.")
+	out("Whichever makes the buff vanish is the answer. |cffffcc00/dufprobe canceltestoff|r")
+	out("hides them; re-run to retarget after the buff is gone.")
+end
+
+--------------------------------------------------------------------------------
+-- /dufprobe cancelcall -- is cancelling protected on this client at all?
+--
+-- The question nobody asked. The secure-overlay design in Elements/Auras.lua
+-- rests on the premise that cancelling a buff is protected and therefore needs
+-- a SecureActionButton. SPEC §FR-5.9 states it as fact -- "This is a protected
+-- action" -- and it is inherited from retail, where it is true. It has never
+-- been measured here.
+--
+-- If an ordinary addon can simply call CancelUnitBuff, then FR-5.9 needs an
+-- OnClick handler and nothing else: no secure frame, no CombatQueue, no stale
+-- index in combat, and nothing that can pin the aura icon. Plan 25's cancel
+-- layer would exist only to hold something that did not need to exist.
+--
+-- Three outcomes and all three are useful, which is what makes this worth a
+-- round on its own.
+--------------------------------------------------------------------------------
+
+local function cancelCallProbe()
+	header("Direct cancel (Plan 26) -- build " .. CANCEL_BUILD)
+
+	local index, name = firstOwnBuff()
+	if not index then
+		out("|cffff5555No buff of your own on you.|r Cast something on yourself first.")
+		return
+	end
+
+	local record = {
+		timestamp = date("%Y-%m-%d %H:%M:%S"),
+		build = CANCEL_BUILD,
+		target = { index = index, name = name },
+		inCombat = InCombatLockdown() and true or false,
+		blocked = {},
+		completed = false,
+	}
+	DyrueUnitFramesProbeDB.cancelCall = record
+
+	-- Watch for a refusal rather than trusting silence, and only for as long as
+	-- this call could plausibly be the cause of one.
+	local watcher = CreateFrame("Frame")
+	pcall(watcher.RegisterEvent, watcher, "ADDON_ACTION_BLOCKED")
+	pcall(watcher.RegisterEvent, watcher, "ADDON_ACTION_FORBIDDEN")
+	watcher:SetScript("OnEvent", function(_, event, addon, func)
+		record.blocked[#record.blocked + 1] = {
+			event = event, addon = tostring(addon), func = tostring(func),
+		}
+	end)
+
+	out('calling CancelUnitBuff("player", ' .. index .. ', "HELPFUL") on |cffffcc00'
+		.. name .. "|r")
+
+	local ok, err = pcall(CancelUnitBuff, "player", index, "HELPFUL")
+	record.callOk = ok and true or false
+	if not ok then
+		record.callError = tostring(err)
+		out("|cffff5555the call itself errored:|r " .. tostring(err))
+	end
+
+	C_Timer.After(2.0, function()
+		watcher:UnregisterAllEvents()
+		record.after = tostring(auraByIndex(index))
+		record.gone = record.after ~= name
+		record.completed = true
+
+		if record.gone then
+			out("|cff40ff40The buff is gone.|r Cancelling is NOT protected here, so")
+			out("FR-5.9 needs an OnClick handler and nothing else -- no secure")
+			out("button, no queue, no stale index in combat.")
+		elseif #record.blocked > 0 then
+			out("|cffffcc00Refused:|r " .. record.blocked[1].event .. " "
+				.. record.blocked[1].addon .. " " .. record.blocked[1].func)
+			out("So it IS protected and the secure route is the only route.")
+		else
+			out("|cffff5555Still there, and nothing was refused.|r The call is allowed")
+			out("and does nothing, which puts the fault in the arguments rather")
+			out("than in the permission -- index or filter is not what this")
+			out("client's CancelUnitBuff expects.")
+		end
+		out("Saved to DyrueUnitFramesProbeDB.cancelCall")
+	end)
+end
+
+--------------------------------------------------------------------------------
 
 SLASH_DUFPROBE1 = "/dufprobe"
 SlashCmdList.DUFPROBE = function(input)
@@ -2972,6 +3662,14 @@ SlashCmdList.DUFPROBE = function(input)
 		secretsProbe((input or ""):match("^%s*%S+%s+(.-)%s*$"))
 	elseif cmd == "scroll" then
 		scrollProbe((input or ""):match("^%s*%S+%s+(.-)%s*$"))
+	elseif cmd == "cancel" then
+		cancelProbe((input or ""):match("^%s*%S+%s+(%S+)"))
+	elseif cmd == "canceltest" then
+		cancelTestProbe()
+	elseif cmd == "canceltestoff" then
+		if testFrame then testFrame:Hide() end
+	elseif cmd == "cancelcall" then
+		cancelCallProbe()
 	elseif cmd == "portraitoff" then
 		if portraitFrame then portraitFrame:Hide() end
 		if portraitFrame and portraitFrame.model then portraitFrame.model:Hide() end
@@ -2989,7 +3687,7 @@ SlashCmdList.DUFPROBE = function(input)
 		out("|cffff5555Unknown subcommand '" .. cmd .. "'.|r")
 		out("If you expected it to exist, the probe was updated on disk but this")
 		out("client is still running the copy it loaded at login - |cffffcc00/reload|r first.")
-		out("Known: |cffffcc00mana derived health portrait auraorder rage happiness heals healcomm incoming secrets scroll dump|r")
+		out("Known: |cffffcc00mana derived health portrait auraorder rage happiness heals healcomm incoming secrets scroll cancel canceltest cancelcall dump|r")
 	else
 		survey()
 		out("Also run: |cffffcc00/dufprobe mana|r, |cffffcc00derived|r, |cffffcc00health|r, |cffffcc00portrait|r, |cffffcc00auraorder|r, |cffffcc00rage|r, |cffffcc00happiness|r, |cffffcc00heals|r, |cffffcc00healcomm|r, |cffffcc00incoming|r, |cffffcc00scroll|r")

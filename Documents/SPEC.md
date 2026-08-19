@@ -23,7 +23,7 @@ Blizzard's own guidance was that addon authors should target 2.5.6 as the refere
 Shadowed Unit Frames is not the right base to patch forward:
 
 - The author has publicly stated SUF will **not** be updated for the Midnight API direction.
-- SUF is licensed **All Rights Reserved**. We cannot copy, adapt, or vendor its source. This project is clean-room: we may replicate *behaviour and UX ideas* (which are not copyrightable), but not code.
+- SUF is licensed **All Rights Reserved**. We cannot copy, adapt, or vendor its source. This project is clean-room: we may replicate *behavior and UX ideas* (which are not copyrightable), but not code.
 - SUF carries ~15 years of retail-first architecture and a Lua-eval tag system that is a persistent source of errors and maintenance load.
 
 ### 1.2 Why a rewrite is likely to be *more* stable, not less
@@ -172,7 +172,7 @@ In practice this fires for druids in Bear, Dire Bear, and Cat form (Rage/Energy 
 | `anchorTo` | Frame, health bar, power bar, or shapeshift mana bar |
 | `anchorPoint`, `x`, `y` | Standard anchoring |
 | `font`, `size`, `outline` | Fonts sourced via LibSharedMedia-3.0 |
-| `justify`, `maxWidth` | Truncation behaviour |
+| `justify`, `maxWidth` | Truncation behavior |
 | `colorMode` | `static` \| `rules` \| `class` \| `reaction` \| `difficulty` \| `gradient` |
 | `color` | Static colour, used when `colorMode == "static"` or as rule fallback |
 | `rules` | Ordered rule list (see §4.3.3) |
@@ -196,7 +196,7 @@ Tags are declarative tokens replaced at render time. No `loadstring`, no user Lu
 **Status**
 `[status]` (Dead / Ghost / Offline), `[afk]`, `[dnd]`, `[pvp]`, `[leader]`, `[raidtarget]`, `[happiness]` (pet)
 
-**Formatting behaviour:**
+**Formatting behavior:**
 - `:short` abbreviates: `1234` → `1.2k`, `1234567` → `1.2m`. Threshold and decimal count configurable globally.
 - Percent values render without a `%` sign unless the user types one in the format string.
 - **Empty-tag collapse:** if a tag resolves to nothing, adjacent literal separators are removed. `[hp:cur] / [hp:max]` on a unit with unknown health renders as `100` (percent-only), not `100 / `. This is a small feature that removes a large class of ugly edge cases.
@@ -307,7 +307,7 @@ Showing "100/100" for a full-health raid boss is worse than showing nothing.
 
 The library is **not** bundled and **not** a hard dependency. Fewer dependencies, fewer patch-day failure modes.
 
-**FR-5.9** Tooltips on hover, suppressed in combat by user option. Right-click to cancel own buffs on the player frame (this is a protected action — it must go through a secure button attribute, not a script handler).
+**FR-5.9** Tooltips on hover, suppressed in combat by user option. Right-click to cancel own buffs on the player frame (an ordinary `OnClick` handler calling `CancelUnitBuff`). ~~this is a protected action — it must go through a secure button attribute, not a script handler~~ **AMENDED 18 August 2026, Plan 26.** That parenthetical was inherited from retail and is false on Classic: an insecure addon may call `CancelUnitBuff` directly, and a secure `cancelaura` button cancels nothing here in any attribute form. It is why the feature never worked — it required the only route that does not work on this client. See `COMPAT_FINDINGS.md`.
 
 ---
 
@@ -632,7 +632,7 @@ Measured with `/duf profile` (a built-in wrapper around `GetFrameCPUUsage`) and 
 | R7 | Scope creep (raid frames, cast bars, retail) | **High** | High | Explicit non-goals (§2.2); anything new goes to the v1.x backlog, not into v1.0 |
 | R8 | Config loss on upgrade | Low | High | Schema versioning, forward-only migration, automatic backup table |
 | R9 | Perf regression in raids | Medium | Medium | Per-unit event registration, no OnUpdate, string caching, measured against §6 budget |
-| R10 | Accidentally reproducing SUF code | Low | High (legal) | Clean-room rule: behaviour may be referenced, source may not be read while writing corresponding code |
+| R10 | Accidentally reproducing SUF code | Low | High (legal) | Clean-room rule: behavior may be referenced, source may not be read while writing corresponding code |
 | R11 | 3D portrait model frames misbehave (stale models, camera resets, leaks) | **High** | Low | Every failure mode in §FR-7.4 handled explicitly; automatic fallback to 2D; feature is default-off and cosmetic, so it can be disabled without affecting anything else |
 | R12 | `GROUP_ROSTER_UPDATE` fires in combat and triggers a protected operation | Medium | Medium | All roster handling routed through `CombatQueue`; explicitly tested by joining and leaving a group mid-fight |
 | R13 | Derived-unit poller runs when it should be idle, or interval is set too aggressively | Medium | Low–Medium | Single shared ticker tied to frame visibility, not one per frame; verified idle-at-zero in Phase 6 profiling; user interval floored at 0.1 s |
@@ -704,7 +704,7 @@ MIT covers *our* code. It does not relicense the embedded libraries, which keep 
 
 ### 11.3 Clean-room restated
 
-Shadowed Unit Frames is All Rights Reserved. Its *behaviour and UX* may be referenced freely; its *source* must not be read while writing the corresponding feature. This constraint is unaffected by the project being private — private use is not a defence against copying, and it costs nothing to simply not do it.
+Shadowed Unit Frames is All Rights Reserved. Its *behavior and UX* may be referenced freely; its *source* must not be read while writing the corresponding feature. This constraint is unaffected by the project being private — private use is not a defence against copying, and it costs nothing to simply not do it.
 
 ### 11.4 Hedges preserving the option to publish
 
