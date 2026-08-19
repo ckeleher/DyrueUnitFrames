@@ -1,6 +1,6 @@
 # Plan 26 — Right-clicking a buff does nothing
 
-**Status:** Open — diagnosis in progress, cause not yet established
+**Status:** Open — **cause established 18 August 2026**, design below, not yet implemented
 **Date:** 2026-08-18
 **Branch:** `Plan-26-buff-cancel-does-nothing` (diagnostic work already on it)
 
@@ -84,8 +84,10 @@ SavedVariables.
 
 ## Diagnosis steps, in order
 
-Round four is **synced and not yet run**. It reads both of the top two
-candidates in one pass.
+**Superseded — kept as the record of how the cause was found.** All five
+candidates were closed by builds 5 and 7; the answer is in *THE CAUSE* below,
+and it was none of them. The ranking was wrong in an instructive way: it assumed
+the secure route worked and asked which part of our use of it was broken.
 
 ### 1. The overlay's `OnClick` is not the one that works (most likely)
 
@@ -140,17 +142,129 @@ destination either way.
 
 ---
 
+## THE CAUSE — measured 18 August 2026
+
+**The premise the whole feature was built on is false on this client.**
+
+`SPEC.md` §FR-5.9, line 310:
+
+> Right-click to cancel own buffs on the player frame (this is a protected
+> action — it must go through a secure button attribute, not a script handler).
+
+The parenthetical is inherited from retail, where it is true. On TBC
+Anniversary 2.5.6 it is not, and it is the reason the feature has never worked:
+it mandated the one route that does not work here and forbade the one that does.
+
+### `/dufprobe cancelcall`, build 7 — cancelling is NOT protected
+
+`CancelUnitBuff("player", 1, "HELPFUL")` called **directly from insecure addon
+code**, with an `ADDON_ACTION_BLOCKED` / `ADDON_ACTION_FORBIDDEN` watcher
+running:
+
+```
+target: Omen of Clarity index 1
+callOk: True   callError: None
+blocked events: 0
+after 2s: Gift of Arthas   gone: True
+```
+
+The buff was cancelled. No error, no refusal, nothing protected about it.
+
+### `/dufprobe canceltest`, build 7 — the secure route does not work here
+
+Three probe-built `SecureActionButtonTemplate` buttons, untouched by
+DyrueUnitFrames so no taint of ours could follow them, each carrying a
+different form of the same request against `Major Agility`:
+
+| Form | Attributes | after 0.5s | after 2s |
+|---|---|---|---|
+| A | `type2=cancelaura` + `unit` + `index` + `filter` | still up | still up |
+| B | `type2=cancelaura` + `spell` | still up | still up |
+| C | `type=cancelaura` + `spell` — OPie's exact form | still up | still up |
+
+None of them cancels anything. `cancelaura` appears not to be a type this
+client's `SecureTemplates.lua` acts on at all.
+
+### So both halves of the diagnosis close
+
+* **Taint is ruled out** — the probe's own buttons fail identically.
+* **The attribute form is ruled out** — all three, including a form taken from
+  an addon that works on this client.
+* Candidates 1 and 2 were ruled out in build 5: the overlay's `OnClick` is
+  `SecureActionButton_OnClick` (identical function pointer) and the attributes
+  at click time are exactly right.
+
+The secure route is a dead end and always was. The direct call works.
+
+### One instrumentation lesson worth keeping
+
+Two verdicts in this investigation were artifacts, not findings:
+
+* **"dispatched=false"** — the overlay's `OnClick` holds a direct reference to
+  the original function, bound when the template was applied. `hooksecurefunc`
+  replaces the *global*, so calls through that bound reference are invisible.
+  Action bars go through a closure that resolves the global at call time, which
+  is why 1268 of theirs were traced and none of ours. The same doubt applies to
+  the `CancelUnitBuff` / `CancelSpellByName` hooks; their silence proved nothing.
+* **"all three still there"** (build 6) — the aura was read in `PostClick`,
+  microseconds after the click. Cancelling is a server round trip, so a working
+  form and a broken one look identical there. Fixed by reading at 2s.
+
+Both are recorded because both cost a round, and both are the kind of mistake
+that is invisible unless written down.
+
+---
+
 ## Design
 
-**Deliberately not written yet.** Steps 1–3 name mutually exclusive causes with
-different fixes — a different creation call, a different update path, or a
-different owner for the frame — and `Skills/NewWork.md` is explicit that a bug
-whose cause is unknown gets ranked candidates rather than a fix designed around
-a guess. This plan gets a Design section when the probe names the cause.
+Delete the secure overlay. Cancel from an ordinary `OnClick` handler.
 
-What is already decided: whatever the fix is, it must not put the overlay back
-under the icon. That arrangement is what Plan 25 removed, and it froze the
-player's entire buff display for the duration of every fight.
+### `Elements/Auras.lua`
+
+Remove `ensureCancelOverlay`, `updateCancelOverlay` and `hideCancelOverlay`
+entirely, along with `button.cancel`, `button.cancelKey` and
+`button.cancelFailed`. In `createButton`:
+
+```lua
+button:RegisterForClicks("RightButtonUp")
+button:SetScript("OnClick", function(self, mouseButton)
+    if mouseButton ~= "RightButton" then return end
+    if not self.cancelable or not self.auraIndex then return end
+    -- Guarded on the same terms as everything else here: right-click cancel is
+    -- a convenience and must never be able to take the aura display down.
+    pcall(CancelUnitBuff, "player", self.auraIndex, self.filter)
+end)
+```
+
+`applyButton` sets `button.cancelable` where it used to call
+`updateCancelOverlay` — same condition, `own and filter == "HELPFUL" and
+frame.unitKey == "player"`.
+
+### `Units/Factory.lua`
+
+`frame.cancelLayer` becomes unused and is removed. It existed only to hold the
+secure overlays; keeping an empty frame per unit frame because Plan 25 added it
+would be cargo.
+
+### What this gains beyond working at all
+
+* **No combat staleness.** The overlay's index was frozen for the duration of a
+  fight, so cancelling mid-combat could cancel a neighbouring buff. The handler
+  reads `self.auraIndex` at click time, which is always current.
+* **Nothing protected under the aura icon**, so the class of bug Plan 25 fixed
+  cannot recur through this path.
+* **Less code**: three functions, a frame per unit frame, and a queue key.
+
+### Open, and deliberately not blocking
+
+Whether the direct call still works **in combat** is unmeasured — the probe ran
+out of combat. If the client refuses it there, an `ADDON_ACTION_BLOCKED` fires
+and nothing happens, which is a graceful degradation and still strictly better
+than today. Do not gate on `InCombatLockdown` to pre-empt it: that would remove
+a working feature on the guess that it does not work.
+
+`/dufprobe cancelcall` already records `inCombat`, so running it during a fight
+answers this with no new code.
 
 ---
 
@@ -158,10 +272,13 @@ player's entire buff display for the duration of every fight.
 
 | File | Change |
 |---|---|
-| `Probe/DyrueUnitFrames_Probe/Probe.lua` | `/dufprobe cancel` — done, four rounds in |
-| `Elements/Auras.lua` | `spell` attribute alongside `index`/`filter` — done, pending the run that says whether it mattered |
-| — | The actual fix, once the cause is named |
-| `Documents/COMPAT_FINDINGS.md` | Record the outcome either way. If FR-5.9 has never worked on a live client, that is a finding worth more than the feature |
+| `Elements/Auras.lua` | Delete the three overlay functions; right-click `OnClick` calling `CancelUnitBuff`; `button.cancelable` set in `applyButton`. The `spell` attribute added mid-diagnosis goes with the rest |
+| `Units/Factory.lua` | Remove `frame.cancelLayer`, now unused |
+| `Documents/SPEC.md` | Amend §FR-5.9. The parenthetical mandating a secure button is wrong on this client and is why the feature never worked |
+| `Documents/COMPAT_FINDINGS.md` | The finding, and the §FR-5.9 deviation row rewritten. Plan 25's protection rows stay — that bug was real and its fix stands |
+| `Tests/wowstub.lua` | Record `CancelUnitBuff` calls |
+| `Tests/tests.lua` | Replace the overlay assertions with the behaviour that matters: right-click cancels, it works in combat, and nothing protected hangs under the aura icon |
+| `Probe/DyrueUnitFrames_Probe/Probe.lua` | `/dufprobe cancel`, `canceltest`, `cancelcall` — done, seven builds in. Keep them; this is the third time a Classic client has disagreed with a retail assumption |
 
 ---
 
