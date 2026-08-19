@@ -374,7 +374,7 @@ local function hideCancelOverlay(button)
 	CombatQueue:Run(button.cancelKey, function() overlay:Hide() end)
 end
 
-local function updateCancelOverlay(button, frame, cfg, filter, auraIndex, own)
+local function updateCancelOverlay(button, frame, cfg, filter, auraIndex, own, auraName)
 	local wanted = own and filter == "HELPFUL" and frame.unitKey == "player"
 
 	if not wanted then
@@ -394,6 +394,13 @@ local function updateCancelOverlay(button, frame, cfg, filter, auraIndex, own)
 			overlay:SetAttribute("unit", "player")
 			overlay:SetAttribute("index", auraIndex)
 			overlay:SetAttribute("filter", filter)
+			-- Both forms, because it is not established which one this client's
+			-- cancelaura handler reads. OPie -- which works here -- drives it
+			-- with `spell` alone; this addon has only ever set index+filter and
+			-- has never been observed to cancel anything. Setting both is a
+			-- superset, not a guess: whichever the handler looks at first is
+			-- correct, and the probe records which API actually gets called.
+			overlay:SetAttribute("spell", auraName)
 			overlay:Show()
 		end)
 		if not ok then
@@ -660,7 +667,7 @@ local function applyButton(frame, group, cfg, button, entry, cell, filter)
 	button.estimated = entry.estimated
 	button.groupConfig = cfg
 
-	updateCancelOverlay(button, frame, cfg, filter, entry.index, entry.own)
+	updateCancelOverlay(button, frame, cfg, filter, entry.index, entry.own, entry.name)
 
 	button:Show()
 end

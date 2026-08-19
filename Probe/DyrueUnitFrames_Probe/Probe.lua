@@ -3131,6 +3131,35 @@ local function cancelProbe(seconds)
 		if button then label[button] = "icon " .. i end
 		if overlay then
 			label[overlay] = "overlay " .. i
+
+			-- Round three. Round two proved the overlay never dispatched:
+			-- sixteen windows with the mouse sitting on one, 1268 secure
+			-- clicks traced, and not one of them ours. So the question is no
+			-- longer which API cancelaura reaches for -- it is whether the
+			-- click reaches the button at all.
+			--
+			-- PreClick and PostClick are the sanctioned way to watch a secure
+			-- button: the client runs them around the secure action and they
+			-- do not taint it, which HookScript on OnClick would.
+			--
+			--   PreClick fires   -> the click arrives; the secure action ran
+			--                       and did nothing
+			--   PreClick silent  -> the click never reaches the button, and
+			--                       RegisterForClicks or the frame itself is
+			--                       the problem, not the attributes
+			pcall(function()
+				entry.hasOnClick = overlay:GetScript("OnClick") ~= nil
+				if not overlay.__probeClickHooked then
+					overlay.__probeClickHooked = true
+					local which = i
+					overlay:HookScript("PreClick", function(_, clicked)
+						recordCancelCall("PreClick overlay " .. which, clicked)
+					end)
+					overlay:HookScript("PostClick", function(_, clicked)
+						recordCancelCall("PostClick overlay " .. which, clicked)
+					end)
+				end
+			end)
 			entry.overlayParentIsCancelLayer = (overlay:GetParent() == frame.cancelLayer)
 			entry.attributes = {}
 			for _, key in ipairs({ "type", "type2", "unit", "index", "filter", "spell" }) do
@@ -3211,24 +3240,38 @@ local function cancelProbe(seconds)
 				if sample.over:find("icon", 1, true) then sawIcon = true end
 			end
 
-			local dispatched, cancelCalled = false, nil
+			-- Only OUR button counts. Round two counted every secure click on
+			-- screen and called 1268 action-bar dispatches a success, which
+			-- was worse than no verdict at all.
+			local reached, dispatched, cancelCalled = false, false, nil
 			for _, click in ipairs(record.clicks) do
-				if click.call == "SecureActionButton_OnClick" then dispatched = true end
+				if click.call:find("PreClick", 1, true) then reached = true end
+				if click.call == "SecureActionButton_OnClick"
+					and click.attributes and click.attributes.type2 == "cancelaura" then
+					dispatched = true
+				end
 				if click.call == "CancelUnitBuff" or click.call == "CancelSpellByName" then
 					cancelCalled = click.call
 				end
 			end
 			record.verdict = {
 				sawOverlay = sawOverlay,
+				reached = reached,
 				dispatched = dispatched,
 				cancelCalled = cancelCalled,
 			}
 
 			out("clicks traced:", #record.clicks,
-				" dispatch:", yn(dispatched),
+				" reached the overlay:", yn(reached),
+				" dispatched ours:", yn(dispatched),
 				" cancel API:", cancelCalled or "|cffff5555never called|r")
 
-			if cancelCalled then
+			if not reached and sawOverlay then
+				out("|cffff5555The click never reached the overlay.|r It has the mouse and")
+				out("it is shown, sized and on top, so RegisterForClicks or the frame")
+				out("itself is refusing the click -- not the attributes, and nothing to")
+				out("do with whether cancelaura is supported.")
+			elseif cancelCalled then
 				out("|cff40ff40" .. cancelCalled .. " was called.|r The secure path works end")
 				out("to end, so the failure is its arguments or the aura itself.")
 			elseif dispatched then
