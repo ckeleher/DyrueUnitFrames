@@ -3013,6 +3013,12 @@ local function hookCancelPath()
 	if _G.SecureActionButton_OnClick then
 		hooksecurefunc("SecureActionButton_OnClick", function(self, button)
 			if not cancelClicks then return end
+			-- Only ours. Round two recorded all 1268 action-bar dispatches as
+			-- well, which drowned the signal and put a megabyte of noise in
+			-- SavedVariables. A button with no cancelaura on it is not part of
+			-- this question.
+			local ok, type2 = pcall(self.GetAttribute, self, "type2")
+			if not ok or type2 ~= "cancelaura" then return end
 			local resolved = {}
 			pcall(function()
 				for _, key in ipairs({ "type", "type2", "unit", "index", "filter", "spell" }) do
@@ -3095,6 +3101,22 @@ local function cancelProbe(seconds)
 			hasGetMouseFoci = _G.GetMouseFoci ~= nil,
 			hasGetMouseFocus = _G.GetMouseFocus ~= nil,
 			hasSecureActionButtonTemplate = true,
+			-- The identity to compare a button's OnClick against. If ours is
+			-- not this, the template is not what we think it is.
+			secureOnClick = tostring(_G.SecureActionButton_OnClick),
+			-- A button known to work, for the same comparison. Bartender4 and
+			-- Blizzard's bars both use SecureActionButtonTemplate, and 1316 of
+			-- their clicks were traced last round.
+			referenceOnClick = (function()
+				for _, name in ipairs({ "BT4Button1", "ActionButton1", "MultiBarBottomLeftButton1" }) do
+					local b = _G[name]
+					if b and b.GetScript then
+						local ok, script = pcall(b.GetScript, b, "OnClick")
+						if ok and script then return name .. " = " .. tostring(script) end
+					end
+				end
+				return "no reference button found"
+			end)(),
 		},
 		chain = {
 			frame = widgetFacts(frame),
@@ -3152,8 +3174,32 @@ local function cancelProbe(seconds)
 				if not overlay.__probeClickHooked then
 					overlay.__probeClickHooked = true
 					local which = i
-					overlay:HookScript("PreClick", function(_, clicked)
-						recordCancelCall("PreClick overlay " .. which, clicked)
+					-- Round four. PreClick and PostClick both fire and the
+					-- secure handler never runs, so the click reaches the
+					-- widget and the secure dispatch is what is missing.
+					-- Two candidates, and these two readings separate them:
+					--
+					--   * the attributes are gone or different AT CLICK TIME
+					--     -- something is clearing them between the update
+					--     that sets them and the click that reads them;
+					--   * the OnClick script is not the one action bars use
+					--     -- the template did not give us what we assumed,
+					--     and the identity comparison says so outright.
+					overlay:HookScript("PreClick", function(self, clicked)
+						local seen = {}
+						pcall(function()
+							for _, key in ipairs({ "type", "type2", "unit", "index", "filter", "spell" }) do
+								seen[key] = tostring(self:GetAttribute(key))
+							end
+							seen.onClick = tostring(self:GetScript("OnClick"))
+						end)
+						local entry = {
+							at = date("%H:%M:%S"),
+							call = "PreClick overlay " .. which,
+							arg1 = tostring(clicked),
+							attributes = seen,
+						}
+						if cancelClicks then cancelClicks[#cancelClicks + 1] = entry end
 					end)
 					overlay:HookScript("PostClick", function(_, clicked)
 						recordCancelCall("PostClick overlay " .. which, clicked)
@@ -3221,10 +3267,14 @@ local function cancelProbe(seconds)
 
 		if name ~= last then
 			last = name
-			record.focus[#record.focus + 1] = {
-				at = string.format("%.1f", elapsed),
-				over = name,
-			}
+			-- Capped. The mouse crosses a lot of frames in thirty seconds and
+			-- none of this is worth a megabyte of SavedVariables.
+			if #record.focus < 150 then
+				record.focus[#record.focus + 1] = {
+					at = string.format("%.1f", elapsed),
+					over = name,
+				}
+			end
 			if name ~= "nothing" then out("  mouse over:", name) end
 		end
 
@@ -3266,7 +3316,12 @@ local function cancelProbe(seconds)
 				" dispatched ours:", yn(dispatched),
 				" cancel API:", cancelCalled or "|cffff5555never called|r")
 
-			if not reached and sawOverlay then
+			if reached and not dispatched then
+				out("|cffff5555The click reaches the button and the secure handler never")
+				out("runs.|r Compare the PreClick attributes against the static dump, and")
+				out("the overlay's OnClick against api.secureOnClick and")
+				out("api.referenceOnClick -- one of those two will not match.")
+			elseif not reached and sawOverlay then
 				out("|cffff5555The click never reached the overlay.|r It has the mouse and")
 				out("it is shown, sized and on top, so RegisterForClicks or the frame")
 				out("itself is refusing the click -- not the attributes, and nothing to")
