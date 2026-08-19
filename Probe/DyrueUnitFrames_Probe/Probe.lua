@@ -3043,7 +3043,7 @@ end
 -- nothing in the output said which was which -- it had to be inferred from an
 -- unfiltered click count. The probe's own header has warned about stale Lua
 -- since August 11 and still could not tell you when it was the stale one.
-local CANCEL_BUILD = 5
+local CANCEL_BUILD = 6
 
 local cancelTicker = nil
 
@@ -3361,6 +3361,182 @@ local function cancelProbe(seconds)
 end
 
 --------------------------------------------------------------------------------
+-- /dufprobe canceltest -- three attribute forms, side by side
+--
+-- Build 5 ruled out the top two candidates outright. The overlay's OnClick IS
+-- SecureActionButton_OnClick (identical function pointer), and the attributes
+-- at click time are exactly right: type2=cancelaura, unit=player, index=6,
+-- filter=HELPFUL, spell=Dire Bear Form. Nothing is stale and nothing is
+-- missing.
+--
+-- It also showed that "dispatched=false" was never a fact about the client.
+-- The overlay's OnClick holds a DIRECT reference to the original function,
+-- bound when the template was applied; hooksecurefunc replaces the global, so
+-- calls through that bound reference are invisible to the hook. Action bar
+-- buttons go through a closure that looks the global up at call time, which is
+-- why 1268 of theirs were traced and none of ours. The same doubt applies to
+-- the CancelUnitBuff and CancelSpellByName hooks, so their silence proves
+-- nothing either.
+--
+-- Which leaves two live candidates and no way to separate them by watching:
+--
+--   * taint -- the client refuses the secure action because an insecure addon
+--     built the button and writes its attributes;
+--   * the attribute form -- cancelaura may not act on index+filter here. OPie
+--     works on this client and sets `type` (not type2) with `spell` alone.
+--
+-- So stop watching and start comparing. Three buttons, built and configured
+-- entirely by THIS addon -- untouched by DyrueUnitFrames, so a taint problem
+-- there cannot follow them -- each carrying a different form of the same
+-- request against the same buff:
+--
+--   A  type2=cancelaura  unit  index  filter     what the addon does now
+--   B  type2=cancelaura  spell                   spell, on the right button
+--   C  type=cancelaura   spell                   OPie's exact form
+--
+-- Ground truth is whether the buff is still there afterwards, read straight
+-- off the unit. No hooks, nothing to be fooled by.
+--------------------------------------------------------------------------------
+
+local testFrame = nil
+
+local function auraByIndex(index)
+	if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+		local ok, data = pcall(C_UnitAuras.GetAuraDataByIndex, "player", index, "HELPFUL")
+		if ok and data then return data.name end
+		return nil
+	end
+	local ok, name = pcall(UnitBuff, "player", index)
+	if ok then return name end
+	return nil
+end
+
+--- Index of the first buff the player cast on themselves, or nil.
+local function firstOwnBuff()
+	for index = 1, 40 do
+		if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+			local ok, data = pcall(C_UnitAuras.GetAuraDataByIndex, "player", index, "HELPFUL")
+			if not ok or not data then break end
+			if data.sourceUnit == "player" then return index, data.name end
+		else
+			local ok, name, _, _, _, _, _, source = pcall(UnitBuff, "player", index)
+			if not ok or not name then break end
+			if source == "player" then return index, name end
+		end
+	end
+	return nil
+end
+
+local FORMS = {
+	{ key = "A", label = "A index", color = { 0.6, 0.1, 0.1 } },
+	{ key = "B", label = "B spell2", color = { 0.1, 0.4, 0.1 } },
+	{ key = "C", label = "C spell", color = { 0.1, 0.2, 0.6 } },
+}
+
+local function cancelTestProbe()
+	header("Cancel forms (Plan 26) -- build " .. CANCEL_BUILD)
+
+	if InCombatLockdown() then
+		out("|cffff5555In combat.|r Every call here is protected; try again after.")
+		return
+	end
+
+	local index, name = firstOwnBuff()
+	if not index then
+		out("|cffff5555No buff of your own on you.|r Cast something on yourself first.")
+		return
+	end
+
+	out("target buff: |cffffcc00" .. name .. "|r at index " .. index)
+
+	local record = {
+		timestamp = date("%Y-%m-%d %H:%M:%S"),
+		build = CANCEL_BUILD,
+		target = { index = index, name = name },
+		results = {},
+	}
+	DyrueUnitFramesProbeDB.cancelTest = record
+
+	if not testFrame then
+		testFrame = CreateFrame("Frame", nil, UIParent)
+		testFrame:SetSize(330, 90)
+		testFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 160)
+		testFrame.buttons = {}
+	end
+	testFrame:Show()
+
+	for i, form in ipairs(FORMS) do
+		local button = testFrame.buttons[i]
+		if not button then
+			local ok, made = pcall(CreateFrame, "Button", nil, testFrame, "SecureActionButtonTemplate")
+			if not ok or not made then
+				out("|cffff5555Could not build test button " .. form.key .. ".|r")
+				return
+			end
+			button = made
+			button:SetSize(100, 60)
+			button:SetPoint("LEFT", testFrame, "LEFT", (i - 1) * 110, 0)
+			button:RegisterForClicks("RightButtonUp", "LeftButtonUp")
+
+			button.bg = button:CreateTexture(nil, "BACKGROUND")
+			button.bg:SetAllPoints(button)
+			button.text = button:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+			button.text:SetPoint("CENTER")
+
+			button:HookScript("PostClick", function(self, clicked)
+				-- Ground truth, read off the unit rather than off a hook.
+				local still = auraByIndex(record.target.index) == record.target.name
+				local result = {
+					at = date("%H:%M:%S"),
+					form = self.formKey,
+					button = tostring(clicked),
+					auraStillUp = still,
+				}
+				record.results[#record.results + 1] = result
+				if still then
+					out(self.formKey .. ": |cffff5555still there|r")
+				else
+					out(self.formKey .. ": |cff40ff40GONE -- this is the form that works|r")
+					record.winner = self.formKey
+				end
+			end)
+
+			testFrame.buttons[i] = button
+		end
+
+		button.formKey = form.key
+		button.bg:SetColorTexture(form.color[1], form.color[2], form.color[3], 0.9)
+		button.text:SetText(form.label)
+
+		-- Every attribute cleared first, so a form only ever carries its own.
+		for _, key in ipairs({ "type", "type2", "unit", "index", "filter", "spell" }) do
+			button:SetAttribute(key, nil)
+		end
+
+		if form.key == "A" then
+			button:SetAttribute("type2", "cancelaura")
+			button:SetAttribute("unit", "player")
+			button:SetAttribute("index", index)
+			button:SetAttribute("filter", "HELPFUL")
+		elseif form.key == "B" then
+			button:SetAttribute("type2", "cancelaura")
+			button:SetAttribute("spell", name)
+		else
+			button:SetAttribute("type", "cancelaura")
+			button:SetAttribute("spell", name)
+		end
+
+		button:Show()
+	end
+
+	out("Three buttons above the middle of your screen.")
+	out("|cffffcc00Right-click A, then B, then C.|r C also answers to a left-click,")
+	out("because that is the form OPie uses and it puts cancelaura on `type`.")
+	out("Whichever makes the buff vanish is the answer. |cffffcc00/dufprobe canceltestoff|r")
+	out("hides them; re-run to retarget after the buff is gone.")
+end
+
+--------------------------------------------------------------------------------
 
 SLASH_DUFPROBE1 = "/dufprobe"
 SlashCmdList.DUFPROBE = function(input)
@@ -3392,6 +3568,10 @@ SlashCmdList.DUFPROBE = function(input)
 		scrollProbe((input or ""):match("^%s*%S+%s+(.-)%s*$"))
 	elseif cmd == "cancel" then
 		cancelProbe((input or ""):match("^%s*%S+%s+(%S+)"))
+	elseif cmd == "canceltest" then
+		cancelTestProbe()
+	elseif cmd == "canceltestoff" then
+		if testFrame then testFrame:Hide() end
 	elseif cmd == "portraitoff" then
 		if portraitFrame then portraitFrame:Hide() end
 		if portraitFrame and portraitFrame.model then portraitFrame.model:Hide() end
@@ -3409,7 +3589,7 @@ SlashCmdList.DUFPROBE = function(input)
 		out("|cffff5555Unknown subcommand '" .. cmd .. "'.|r")
 		out("If you expected it to exist, the probe was updated on disk but this")
 		out("client is still running the copy it loaded at login - |cffffcc00/reload|r first.")
-		out("Known: |cffffcc00mana derived health portrait auraorder rage happiness heals healcomm incoming secrets scroll cancel dump|r")
+		out("Known: |cffffcc00mana derived health portrait auraorder rage happiness heals healcomm incoming secrets scroll cancel canceltest dump|r")
 	else
 		survey()
 		out("Also run: |cffffcc00/dufprobe mana|r, |cffffcc00derived|r, |cffffcc00health|r, |cffffcc00portrait|r, |cffffcc00auraorder|r, |cffffcc00rage|r, |cffffcc00happiness|r, |cffffcc00heals|r, |cffffcc00healcomm|r, |cffffcc00incoming|r, |cffffcc00scroll|r")
