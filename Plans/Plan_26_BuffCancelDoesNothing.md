@@ -10,7 +10,7 @@
 
 > right clicking does nothing
 
-Said while verifying [Plan 25](Plan_25_BlockedAuraLayoutInCombat.md) on TBC
+Said while verifying [Plan 25](Archive/Plan_25_BlockedAuraLayoutInCombat.md) on TBC
 Anniversary. Plan 25 moved the cancel overlay out from under the aura icon, and
 the check it asked for was whether right-click-cancel still worked. It did not.
 
