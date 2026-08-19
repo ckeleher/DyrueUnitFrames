@@ -61,6 +61,8 @@ function stub.reset()
 	stub.inCombat = false
 	-- Every protected call the client refused since the last reset (Plan 25).
 	stub.blocked = {}
+	-- Every CancelUnitBuff the addon made since the last reset (Plan 26).
+	stub.cancelled = {}
 	stub.inGroup = false
 	stub.inRaid = false
 	stub.chat = {}
@@ -76,6 +78,7 @@ end
 
 stub.failTemplates = {}
 stub.blocked = {}
+stub.cancelled = {}
 
 --------------------------------------------------------------------------------
 -- Widgets
@@ -704,6 +707,20 @@ end
 function _G.UnregisterUnitWatch(frame) frame.__unitWatch = nil end
 
 function _G.InCombatLockdown() return stub.inCombat end
+
+--- Canceling a buff (Plan 26).
+--
+-- Modeled as an ordinary global, because on Classic that is exactly what it
+-- is: measured on TBC Anniversary 2.5.6, an insecure addon may call this and
+-- the buff goes. The addon used to drive a SecureActionButton instead, on a
+-- premise inherited from retail, and the feature never worked once.
+--
+-- Recorded rather than acted on. The suite asserts that the right call is made
+-- with the right arguments; what the server does with it is not the harness's
+-- to model.
+function _G.CancelUnitBuff(unit, index, filter)
+	stub.cancelled[#stub.cancelled + 1] = { unit = unit, index = index, filter = filter }
+end
 function _G.IsResting() return stub.resting and true or false end
 function _G.UnitAffectingCombat(u)
 	local d = unit(u)

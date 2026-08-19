@@ -235,8 +235,17 @@ local sorters = {
 local function createButton(group, index)
 	local button = CreateFrame("Button", nil, group.frame)
 	button:EnableMouse(true)
-	-- Stable key so combat-queue de-duplication never builds strings per update.
-	button.cancelKey = "auracancel:" .. group.id .. ":" .. index
+	button:RegisterForClicks("RightButtonUp")
+
+	-- FR-5.9. `cancelable` is set by applyButton and is the whole gate: your own
+	-- buff, on your own frame. Guarded on the same terms as everything else in
+	-- this file -- right-click cancel is a convenience and must never be able to
+	-- take the aura display down with it.
+	button:SetScript("OnClick", function(self, mouseButton)
+		if mouseButton ~= "RightButton" then return end
+		if not self.cancelable or not self.auraIndex then return end
+		pcall(CancelUnitBuff, "player", self.auraIndex, self.filter)
+	end)
 
 	button.border = button:CreateTexture(nil, "BACKGROUND")
 	button.border:SetAllPoints(button)
@@ -284,131 +293,33 @@ end
 --------------------------------------------------------------------------------
 -- Right-click cancel on the player's own buffs (SPEC §FR-5.9)
 --
--- This is a protected action, so it goes through a secure button attribute
--- rather than a script handler. The overlay is a separate secure button so the
--- icon itself can stay insecure and therefore be shown, hidden and re-pointed
--- freely during combat, which aura display fundamentally requires.
+-- An ordinary OnClick handler, because on this client canceling is not a
+-- protected action.
 --
--- Separate means SIBLING, not child. Parenting the overlay to the icon was the
--- original arrangement and it silently defeated the whole split: a frame that
--- owns a protected child cannot be moved, resized, shown or hidden in combat
--- either, so every aura update in combat had its SetSize, ClearAllPoints,
--- SetPoint and Show refused, and the player's buffs stopped re-laying-out for
--- the duration of the fight. The overlays live on frame.cancelLayer, which
--- exists for no other purpose and is never touched after creation (Plan 25).
+-- Measured 18 August 2026 on TBC Anniversary 2.5.6 (Plan 26): CancelUnitBuff
+-- called straight from insecure code cancels the buff -- no error, no
+-- ADDON_ACTION_BLOCKED, gone on the next read. Meanwhile three different
+-- secure `cancelaura` attribute forms, on buttons this addon never touched,
+-- cancel nothing at all.
 --
--- Consequence, stated plainly: the overlay is protected, so both its geometry
--- and its attributes are routed through CombatQueue. While you are in combat
--- the overlays keep the position and the aura index they had when combat
--- started. Canceling a buff mid-fight may therefore cancel a neighboring one.
--- Out of combat it is exact.
---------------------------------------------------------------------------------
-
---- Build the secure overlay for one aura button, or give up on it.
+-- The spec used to say the opposite: "this is a protected action -- it must go
+-- through a secure button attribute, not a script handler". True on retail,
+-- inherited from there, and the reason this feature never once worked. It
+-- mandated the only route that does not work here and forbade the one that
+-- does. §FR-5.9 has been amended rather than left standing against the code.
 --
--- Every step here is guarded, and a failure sets `cancelFailed` so this button
--- never retries. Right-click-cancel is a convenience; the aura display is not,
--- and the convenience must never be able to take the display down with it.
+-- What went with the secure overlay: a protected frame per aura icon, a layer
+-- per unit frame to hold them, three functions, a CombatQueue key -- and the
+-- staleness all of it forced. The overlay's aura index was frozen for the
+-- length of a fight, so canceling mid-combat could cancel a neighbor.
+-- `self.auraIndex` below is read at the moment of the click and is always
+-- current.
 --
--- Nothing is attempted during combat. RegisterForClicks, SetAttribute and Hide
--- are all protected on a secure frame, so a buff gained mid-fight would
--- otherwise throw here on a freshly created overlay. Out of combat the next
--- aura update builds it.
-local function ensureCancelOverlay(frame, button)
-	if button.cancel then return button.cancel end
-	if button.cancelFailed then return nil end
-	if InCombatLockdown() then return nil end
-
-	-- No cancel layer, no overlay. Never fall back to parenting on the button:
-	-- that is the bug this function was rewritten to remove, and a silent
-	-- fallback would reintroduce it on whatever path skipped the layer.
-	local parent = frame.cancelLayer
-	if not parent then
-		button.cancelFailed = true
-		return nil
-	end
-
-	local ok, overlay = pcall(CreateFrame, "Button", nil, parent, "SecureActionButtonTemplate")
-	if not ok or not overlay then
-		button.cancelFailed = true
-		return nil
-	end
-
-	local configured = pcall(function()
-		-- Anchored across parents, so it tracks the icon without being under
-		-- it. Re-applied on every update through the queue, because the icon
-		-- moves in combat and this frame cannot follow until combat ends.
-		overlay:SetAllPoints(button)
-		overlay:SetFrameLevel(button:GetFrameLevel() + 1)
-		overlay:RegisterForClicks("RightButtonUp")
-		overlay:SetAttribute("type2", "cancelaura")
-		overlay:Hide()
-		-- Forward hover to the icon so the tooltip still works through it.
-		overlay:SetScript("OnEnter", function()
-			local handler = button:GetScript("OnEnter")
-			if handler then handler(button) end
-		end)
-		overlay:SetScript("OnLeave", function() GameTooltip:Hide() end)
-	end)
-
-	if not configured then
-		button.cancelFailed = true
-		pcall(overlay.Hide, overlay)
-		return nil
-	end
-
-	button.cancel = overlay
-	return overlay
-end
-
---- Hide one button's overlay, if it has one and it is showing.
---
--- Hiding the icon no longer hides the overlay -- they are siblings now -- so
--- every path that hides a button has to come through here or leave an
--- invisible click target behind. Hide is protected, hence the queue; the
--- IsShown check keeps the common case (every frame that is not the player's
--- buff group) from queueing anything at all.
-local function hideCancelOverlay(button)
-	local overlay = button.cancel
-	if not overlay or not overlay:IsShown() then return end
-	CombatQueue:Run(button.cancelKey, function() overlay:Hide() end)
-end
-
-local function updateCancelOverlay(button, frame, cfg, filter, auraIndex, own, auraName)
-	local wanted = own and filter == "HELPFUL" and frame.unitKey == "player"
-
-	if not wanted then
-		hideCancelOverlay(button)
-		return
-	end
-
-	local overlay = ensureCancelOverlay(frame, button)
-	if not overlay then return end
-
-	CombatQueue:Run(button.cancelKey, function()
-		-- Same reasoning as ensureCancelOverlay: if this fails, lose the
-		-- overlay for this button, not the aura display.
-		local ok = pcall(function()
-			-- The icon may have changed size or cell since this was queued.
-			overlay:SetAllPoints(button)
-			overlay:SetAttribute("unit", "player")
-			overlay:SetAttribute("index", auraIndex)
-			overlay:SetAttribute("filter", filter)
-			-- Both forms, because it is not established which one this client's
-			-- cancelaura handler reads. OPie -- which works here -- drives it
-			-- with `spell` alone; this addon has only ever set index+filter and
-			-- has never been observed to cancel anything. Setting both is a
-			-- superset, not a guess: whichever the handler looks at first is
-			-- correct, and the probe records which API actually gets called.
-			overlay:SetAttribute("spell", auraName)
-			overlay:Show()
-		end)
-		if not ok then
-			button.cancelFailed = true
-			pcall(overlay.Hide, overlay)
-		end
-	end)
-end
+-- Whether the client still allows this DURING combat is not established. If it
+-- refuses, the click does nothing and the refusal is the client's to report;
+-- that is a graceful failure and still strictly better than never working.
+-- Deliberately not gated on InCombatLockdown -- that would remove a working
+-- feature on a guess.
 
 --------------------------------------------------------------------------------
 -- Scanning
@@ -667,7 +578,7 @@ local function applyButton(frame, group, cfg, button, entry, cell, filter)
 	button.estimated = entry.estimated
 	button.groupConfig = cfg
 
-	updateCancelOverlay(button, frame, cfg, filter, entry.index, entry.own, entry.name)
+	button.cancelable = entry.own and filter == "HELPFUL" and frame.unitKey == "player"
 
 	button:Show()
 end
@@ -679,7 +590,6 @@ local function updateGroup(frame, el, group, cfg, filter)
 			local button = group.buttons[i]
 			button:Hide()
 			trackDuration(button, false)
-			hideCancelOverlay(button)
 		end
 		refreshDurationTicker()
 		return
@@ -700,9 +610,6 @@ local function updateGroup(frame, el, group, cfg, filter)
 		local button = group.buttons[i]
 		button:Hide()
 		trackDuration(button, false)
-		-- Was building "auracancel-hide:" .. tostring(button) here, per unused
-		-- button, per UNIT_AURA. The helper uses the button's own stable key.
-		hideCancelOverlay(button)
 	end
 
 	refreshDurationTicker()
@@ -767,7 +674,6 @@ function element.Disable(frame, el)
 			local button = group.buttons[i]
 			button:Hide()
 			trackDuration(button, false)
-			hideCancelOverlay(button)
 		end
 	end
 	refreshDurationTicker()

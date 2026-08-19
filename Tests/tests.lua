@@ -3071,11 +3071,37 @@ local function testPlayerBuffs()
 	end
 	equal("playerbuffs/icons are at distinct positions", duplicates, 0)
 
-	-- Own auras get a cancel overlay; nothing else does. This is the only path
-	-- unique to the player's own buffs.
-	check("playerbuffs/own buff has a cancel overlay", group.buttons[1].cancel ~= nil)
-	check("playerbuffs/cancel overlay is a secure action button",
-		group.buttons[1].cancel == nil or group.buttons[1].cancelFailed ~= true)
+	-- FR-5.9, the behavior rather than the machinery (Plan 26). Right-clicking
+	-- your own buff cancels it, and the click carries the aura's CURRENT index
+	-- -- the old secure overlay froze that for the length of a fight.
+	local function rightClick(button)
+		stub.cancelled = {}
+		local handler = button:GetScript("OnClick")
+		if handler then handler(button, "RightButton") end
+		return stub.cancelled
+	end
+
+	local cancelled = rightClick(group.buttons[1])
+	equal("playerbuffs/right-click cancels one buff", #cancelled, 1)
+	if cancelled[1] then
+		equal("playerbuffs/cancels on the player", cancelled[1].unit, "player")
+		equal("playerbuffs/cancels the aura under the cursor",
+			cancelled[1].index, group.buttons[1].auraIndex)
+		equal("playerbuffs/cancels a helpful aura", cancelled[1].filter, "HELPFUL")
+	end
+
+	equal("playerbuffs/left-click cancels nothing", (function()
+		stub.cancelled = {}
+		local handler = group.buttons[1]:GetScript("OnClick")
+		if handler then handler(group.buttons[1], "LeftButton") end
+		return #stub.cancelled
+	end)(), 0)
+
+	-- Nothing protected may hang under an aura icon, ever again (Plan 25). The
+	-- overlay is gone, so this is now true by construction -- assert it anyway,
+	-- because "by construction" is what the last one was too.
+	check("playerbuffs/nothing protected under the aura icon",
+		not group.buttons[1]:IsProtected())
 
 	-- Disable, then re-enable.
 	buffs.enabled.set(nil, false)
@@ -3107,10 +3133,11 @@ local function testPlayerBuffs()
 	ns.Errors.threshold = 5
 	ns.Errors:Reset()
 
-	-- "Degrade, never cascade" (SPEC §5.9). The right-click-cancel overlay and
-	-- the cooldown swipe are conveniences built from Blizzard templates; a
-	-- template that has moved must cost its own feature and nothing else.
-	for _, template in ipairs({ "SecureActionButtonTemplate", "CooldownFrameTemplate" }) do
+	-- "Degrade, never cascade" (SPEC §5.9). The cooldown swipe is a convenience
+	-- built from a Blizzard template; a template that has moved must cost its
+	-- own feature and nothing else. SecureActionButtonTemplate used to be in
+	-- this list and is no longer used at all (Plan 26).
+	for _, template in ipairs({ "CooldownFrameTemplate" }) do
 		buffs.enabled.set(nil, false)
 		ns.CombatQueue:Flush()
 
@@ -3133,8 +3160,9 @@ local function testPlayerBuffs()
 		ns.Errors:Reset()
 	end
 
-	-- No secure overlay is built during combat: RegisterForClicks, SetAttribute
-	-- and Hide are all protected, so a buff gained mid-fight would throw.
+	-- Buffs still build in combat, and cancel in combat. The old design could do
+	-- neither: the overlay could not be created mid-fight and its index was
+	-- frozen at the moment combat started, so canceling could hit a neighbor.
 	buffs.enabled.set(nil, false)
 	ns.CombatQueue:Flush()
 	playerBuffGroup().buttons = {}
@@ -3146,42 +3174,46 @@ local function testPlayerBuffs()
 	check("playerbuffs/no error building auras in combat",
 		combatCounts["player:auras"] == nil,
 		tostring(combatCounts["player:auras"]) .. " error(s)")
-	check("playerbuffs/no cancel overlay built in combat",
-		playerBuffGroup().buttons[1] == nil or playerBuffGroup().buttons[1].cancel == nil)
-	check("playerbuffs/combat failure is not permanent",
-		playerBuffGroup().buttons[1] == nil or playerBuffGroup().buttons[1].cancelFailed ~= true)
 
 	stub.inCombat = false
 	ns.CombatQueue:Flush()
 	player:FullUpdate()
-	check("playerbuffs/overlay built once combat ends",
-		playerBuffGroup().buttons[1].cancel ~= nil)
+
+	-- Canceling DURING a fight, on buttons that already exist -- which is the
+	-- real scenario, and the one the old design served worst: the overlay's
+	-- index was frozen at the moment combat started, so a buff that came or went
+	-- mid-fight shifted every index under it and the click hit a neighbor.
+	local combatGroup = playerBuffGroup()
+	stub.inCombat = true
+	local combatCancelled = rightClick(combatGroup.buttons[1])
+	equal("playerbuffs/right-click cancels in combat", #combatCancelled, 1)
+	if combatCancelled[1] then
+		equal("playerbuffs/the in-combat index is the current one",
+			combatCancelled[1].index, combatGroup.buttons[1].auraIndex)
+	end
+	stub.inCombat = false
 
 	--------------------------------------------------------------------------
-	-- Plan 25. The overlay is secure and the icon is not, and the whole reason
-	-- for splitting them is that the icon has to keep re-laying-out in combat.
-	-- Parenting the overlay to the icon quietly undid that: a frame that owns
-	-- a protected child cannot be moved, resized, shown or hidden either, so
-	-- every buff update in combat was refused and the player's buffs froze for
-	-- the fight. Nothing errored, nothing was visibly wrong, and the suite had
-	-- no way to see it -- hence the protection model in wowstub.lua.
+	-- Plan 25, kept and narrowed by Plan 26.
+	--
+	-- The bug was a secure overlay parented to the aura icon: a frame that owns
+	-- a protected child cannot be moved, resized, shown or hidden in combat
+	-- either, so every buff update in combat was refused and the player's buffs
+	-- froze for the fight. Nothing errored and nothing looked wrong, which is
+	-- why it survived a year and 1104 passing assertions.
+	--
+	-- Plan 26 then established that the overlay never needed to exist -- so the
+	-- structural assertions about where it lived are gone with it, and what
+	-- remains is the one that outlives any particular design: no protected
+	-- frame anywhere under an aura icon, and no refused call when the icons
+	-- re-lay-out mid-fight.
 	--------------------------------------------------------------------------
 
 	local group = playerBuffGroup()
 	local icon = group.buttons[1]
 
 	check("playerbuffs/the aura icon is not protected", not icon:IsProtected())
-	check("playerbuffs/the cancel overlay is protected", (icon.cancel:IsProtected()))
-	check("playerbuffs/the overlay is a sibling of the icon, not a child",
-		icon.cancel:GetParent() == player.cancelLayer,
-		"parent is " .. tostring(icon.cancel:GetParent()))
-
-	-- The cancel layer exists for the overlays and is never touched again, so
-	-- it is allowed to be pinned by them. An aura group frame is not: it is
-	-- shown on every single update, including in combat.
-	check("playerbuffs/the cancel layer owns the protection",
-		(player.cancelLayer:IsProtected()))
-	check("playerbuffs/the aura group frame stays free of it",
+	check("playerbuffs/the aura group frame is not protected either",
 		not group.frame:IsProtected())
 
 	local isIcon = {}

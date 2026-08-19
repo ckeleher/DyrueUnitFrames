@@ -568,22 +568,6 @@ function Factory:Create(def)
 		frame.borderEdges[i] = edge
 	end
 
-	-- The only home for secure frames below the unit button (Plan 25).
-	--
-	-- A frame that owns a protected child cannot itself be moved, resized,
-	-- shown or hidden in combat, and that restriction runs upward through the
-	-- parent chain. So this layer is anchored once, here, and never touched
-	-- again -- no SetPoint, no Show, no Hide, for the life of the frame. Hang
-	-- the cancel-buff overlays off it and the aura icons stay insecure, which
-	-- is what lets them re-layout during combat (SPEC §FR-5.9).
-	--
-	-- frame.content is safe to parent it to for the same reason: SetAllPoints
-	-- above is the only positioning it ever gets. Do not move this onto an
-	-- aura group frame, which is shown and hidden on every aura update.
-	frame.cancelLayer = CreateFrame("Frame", nil, frame.content)
-	frame.cancelLayer:SetAllPoints(frame.content)
-	frame.cancelLayer:SetFrameLevel(ns:Level(frame, "AURAS") + 1)
-
 	for methodName, fn in pairs(methods) do
 		frame[methodName] = fn
 	end
