@@ -3035,6 +3035,16 @@ local function hookCancelPath()
 	end
 end
 
+-- Bumped on every change to this probe, printed at the top of every run and
+-- stored on the record.
+--
+-- Round five was spent reading a run that came from round three's code. The new
+-- file was on disk, the client was still executing what it loaded at login, and
+-- nothing in the output said which was which -- it had to be inferred from an
+-- unfiltered click count. The probe's own header has warned about stale Lua
+-- since August 11 and still could not tell you when it was the stale one.
+local CANCEL_BUILD = 5
+
 local cancelTicker = nil
 
 local function widgetFacts(f)
@@ -3076,7 +3086,7 @@ end
 local function cancelProbe(seconds)
 	seconds = tonumber(seconds) or 30
 
-	header("Cancel overlay (Plan 25)")
+	header("Cancel overlay (Plan 26) -- build " .. CANCEL_BUILD)
 
 	local frame = _G["DyrueUF_player"]
 	if not frame then
@@ -3094,6 +3104,7 @@ local function cancelProbe(seconds)
 	local record = {
 		timestamp = date("%Y-%m-%d %H:%M:%S"),
 		tocVersion = select(4, GetBuildInfo()),
+		build = CANCEL_BUILD,
 		completed = false,
 		inCombat = InCombatLockdown() and true or false,
 		api = {
