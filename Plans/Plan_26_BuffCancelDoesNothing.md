@@ -1,6 +1,6 @@
 # Plan 26 — Right-clicking a buff does nothing
 
-**Status:** Open — **cause established 18 August 2026**, design below, not yet implemented
+**Status:** Implemented on `Plan-26-buff-cancel-does-nothing`, awaiting merge. Cause established and design carried out 18 August 2026.
 **Date:** 2026-08-18
 **Branch:** `Plan-26-buff-cancel-does-nothing` (diagnostic work already on it)
 
@@ -155,7 +155,7 @@ The parenthetical is inherited from retail, where it is true. On TBC
 Anniversary 2.5.6 it is not, and it is the reason the feature has never worked:
 it mandated the one route that does not work here and forbade the one that does.
 
-### `/dufprobe cancelcall`, build 7 — cancelling is NOT protected
+### `/dufprobe cancelcall`, build 7 — canceling is NOT protected
 
 `CancelUnitBuff("player", 1, "HELPFUL")` called **directly from insecure addon
 code**, with an `ADDON_ACTION_BLOCKED` / `ADDON_ACTION_FORBIDDEN` watcher
@@ -207,7 +207,7 @@ Two verdicts in this investigation were artifacts, not findings:
   is why 1268 of theirs were traced and none of ours. The same doubt applies to
   the `CancelUnitBuff` / `CancelSpellByName` hooks; their silence proved nothing.
 * **"all three still there"** (build 6) — the aura was read in `PostClick`,
-  microseconds after the click. Cancelling is a server round trip, so a working
+  microseconds after the click. Canceling is a server round trip, so a working
   form and a broken one look identical there. Fixed by reading at 2s.
 
 Both are recorded because both cost a round, and both are the kind of mistake
@@ -249,22 +249,41 @@ would be cargo.
 ### What this gains beyond working at all
 
 * **No combat staleness.** The overlay's index was frozen for the duration of a
-  fight, so cancelling mid-combat could cancel a neighbouring buff. The handler
+  fight, so canceling mid-combat could cancel a neighboring buff. The handler
   reads `self.auraIndex` at click time, which is always current.
 * **Nothing protected under the aura icon**, so the class of bug Plan 25 fixed
   cannot recur through this path.
 * **Less code**: three functions, a frame per unit frame, and a queue key.
 
-### Open, and deliberately not blocking
+### In combat — CLOSED, and it went the other way
 
-Whether the direct call still works **in combat** is unmeasured — the probe ran
-out of combat. If the client refuses it there, an `ADDON_ACTION_BLOCKED` fires
-and nothing happens, which is a graceful degradation and still strictly better
-than today. Do not gate on `InCombatLockdown` to pre-empt it: that would remove
-a working feature on the guess that it does not work.
+Shipped ungated on purpose, on the reasoning that the call was measured working
+out of combat and gating on a guess would remove a working feature. A bug report
+closed it inside the hour:
 
-`/dufprobe cancelcall` already records `inCombat`, so running it during a fight
-answers this with no new code.
+> i still get those warnings when trying to click off a buff in combat
+
+So the client **does** refuse it during a fight, and every refused click raised
+an `ADDON_ACTION_BLOCKED` naming this addon. The shipped behavior was the worst
+of both: the click did nothing *and* made noise doing it.
+
+**Canceling is therefore unprotected out of combat and protected within it** —
+narrower than either "protected" or "not protected", and a rule neither the spec
+nor the original design allowed for.
+
+The handler now checks `InCombatLockdown` before calling, and says so once every
+few seconds rather than swallowing the click. Silence would reproduce the report
+this plan started from — *"right clicking does nothing"* — and a deliberate click
+deserves an answer.
+
+**The decision to ship it ungated still reads as correct.** Had it guessed, it
+would have guessed *for* the gate and been right for the wrong reason, which is
+precisely how a retail assumption got into §FR-5.9 in the first place. The cost
+of being wrong for an hour was one bug report.
+
+**Still worth a probe run** to make it a record rather than an observation:
+`/dufprobe cancelcall` already stores `inCombat`, so running it during a fight
+captures the refusal's exact function name.
 
 ---
 
@@ -277,7 +296,7 @@ answers this with no new code.
 | `Documents/SPEC.md` | Amend §FR-5.9. The parenthetical mandating a secure button is wrong on this client and is why the feature never worked |
 | `Documents/COMPAT_FINDINGS.md` | The finding, and the §FR-5.9 deviation row rewritten. Plan 25's protection rows stay — that bug was real and its fix stands |
 | `Tests/wowstub.lua` | Record `CancelUnitBuff` calls |
-| `Tests/tests.lua` | Replace the overlay assertions with the behaviour that matters: right-click cancels, it works in combat, and nothing protected hangs under the aura icon |
+| `Tests/tests.lua` | Replace the overlay assertions with the behavior that matters: right-click cancels, it works in combat, and nothing protected hangs under the aura icon |
 | `Probe/DyrueUnitFrames_Probe/Probe.lua` | `/dufprobe cancel`, `canceltest`, `cancelcall` — done, seven builds in. Keep them; this is the third time a Classic client has disagreed with a retail assumption |
 
 ---
@@ -308,7 +327,7 @@ What can be added once the cause is known:
   creation call, the attribute set — asserted the way Plan 25 asserts the cancel
   layer;
 * a `COMPAT_FINDINGS` row, which is this project's real regression test for
-  client behaviour.
+  client behavior.
 
 Verification stays `/dufprobe cancel` plus right-clicking a buff.
 
