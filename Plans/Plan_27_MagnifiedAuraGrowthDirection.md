@@ -96,24 +96,21 @@ Check it against the shipped defaults, which is the only honest test:
 | Buffs (`auraGroup` default) | `BOTTOMLEFT → TOPLEFT`, above the frame | `RIGHT`, `UP` | up and right |
 | Target debuffs | `TOPLEFT → BOTTOMLEFT`, below the frame | `RIGHT`, `DOWN` | down and right |
 
-The first row *is* the request's first example, verbatim: an aura group anchored
-to the top left of the frame grows "to the right and upwards". The vertical in
-the second row is the request's second example too — a group at the bottom left
-grows "down".
+Both rows *are* the request's two worked examples: a group anchored to the frame's
+top left grows "to the right and upwards", and one anchored to its bottom left
+grows down and right. Neither needs a setting changed to get there.
 
-The horizontal in the second example is the one thing this reading does not
-reproduce: the request says the target's bottom-left auras should grow *left*,
-and `growthX` ships as `RIGHT` on every group. Two ways that reconciles, and
-both land in the same place:
+The request as quoted says the second one should grow "down and to the left",
+which is the one place the two disagreed. **Clarified by the requester on
+23 August 2026, the same day, immediately after this plan was first written: it
+was a misspeak, and should read "grow down and right".** The verbatim text above
+is left as it was said; this is the correction, and there is now nothing left to
+reconcile — reading A reproduces both examples exactly, at the shipped defaults.
 
-* the profile that produced the screenshot has `growthX = LEFT` on that group —
-  a mirrored target layout is a normal thing to configure, and under this
-  reading it grows left automatically; or
-* it was a loose sketch, closed with "and so on".
-
-Either way the setting that decides it already exists and is already the right
-one. Nothing in the request asks for a *new* control over the direction, and
-"grow left" is one dropdown away for any group that wants it.
+The direction stays per-group and configurable either way. A mirrored target
+layout that genuinely wants its auras running leftward sets `growthX = LEFT`,
+and magnification follows it without being told twice. Nothing in the request
+asks for a *new* control over the direction.
 
 ### Reading B — the group's anchor point (`cfg.point`). **Rejected.**
 
