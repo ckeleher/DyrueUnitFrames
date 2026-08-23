@@ -1,8 +1,48 @@
 # Plan 27 — Magnified Own Auras Grow In One Direction, Not Four
 
-**Status:** Not started.
+**Status:** Implemented on `Plan-27-magnified-aura-growth`, awaiting review.
 **Created:** 23 August 2026
 **Branch:** `Plan-27-magnified-aura-growth`
+
+**The change was measured against the old code, not just against itself.** The
+new assertions were run with the element change stashed, so the suite was
+pointed at the behaviour being replaced:
+
+```
+a scaled icon does not grow left out of its cell:   expected ~4,   got 0
+nor down, which is where the bar is:                expected ~-46, got -50
+it grows right by the whole excess:                 expected ~32,  got 28
+and up by the whole excess:                         expected ~-18, got -22
+scaled and base icons share the row's baseline:     expected ~-46, got -50
+a scaled icon draws above the icon it overhangs:    assertion failed
+```
+
+Fourteen of them fail there, in the four-pixels-in-every-direction pattern the
+diagnosis predicted. What *passed* in both directions matters as much: all four
+of Plan 20's outer-edge assertions, both box dimensions, and all four
+"an unscaled neighbour still fills its cell exactly" assertions. Those are the
+control — the first group proves Plan 20's guarantee survived, the second proves
+corner-pinning is genuinely a no-op for an icon that is not scaled, rather than
+a placement rule that happens to have two cases.
+
+Final: **1145 passed, 0 failed**, all five client shapes green (up from 1126 —
+nineteen new assertions).
+
+**Deviations from the plan as written:**
+
+* **The test helper became general, not repaired.** The plan said `ownIcon()`
+  must read the anchor point back. It needed to become `edges(button)` plus
+  `baseIcon()` and `cellEdges(i)`, because none of the Plan 27 claims can be
+  *stated* without a cell to compare an icon against and a neighbour to compare
+  a baseline against. Reading the point back is still the load-bearing part.
+* **The "unscaled icon is unmoved" assertion moved to the neighbour.** The plan
+  proposed checking a base-size icon in a `mult = 1` grid. Measured instead on
+  button two — a base-size icon in a grid that *is* scaling its own auras, on
+  all four edges. Strictly stronger, and it is the case that actually ships.
+* **One assertion not in the plan:** a sub-1 multiplier shrinks the icon *away
+  from* its pinned corner rather than around its centre. The plan named the
+  behaviour change and the corner it lands in; without the bottom edge pinned
+  too, an implementation that shrank around the centre would still pass.
 
 ---
 
