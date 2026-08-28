@@ -2599,7 +2599,8 @@ local function testSlashCommands()
 
 	local addon = stub.addon
 	local commands = { "", "help", "tags", "compat", "profile", "errors",
-		"blizzard hide", "blizzard none", "reset player", "reset nosuchunit" }
+		"blizzard hide", "blizzard none", "reset player", "reset nosuchunit",
+		"export", "import" }
 
 	local failures = {}
 	for _, command in ipairs(commands) do
@@ -2615,6 +2616,18 @@ local function testSlashCommands()
 	end
 
 	equal("slash/blizzard none applied", ns:General().blizzardFrames, "none")
+
+	-- Plan 29: both open the panel ON the Import / Export tab. Landing on the
+	-- options root instead would be a silent regression -- the command would
+	-- still "work", just not do what it says.
+	stub.selectedGroup = nil
+	addon:SlashCommand("export")
+	check("slash/export selects the Import / Export tab",
+		stub.selectedGroup ~= nil and stub.selectedGroup[2] == "portable")
+	stub.selectedGroup = nil
+	addon:SlashCommand("import")
+	check("slash/import selects the same tab",
+		stub.selectedGroup ~= nil and stub.selectedGroup[2] == "portable")
 
 	-- Toggles must round-trip rather than getting stuck.
 	local before = ns:Global().debug
@@ -6230,6 +6243,369 @@ local function testHealPrediction()
 end
 
 --------------------------------------------------------------------------------
+-- Portable: export and import strings (Plan 29)
+--
+-- The libraries are REAL here, not stubbed -- see REAL_LIBS in run_tests.py.
+-- A codec that agrees with itself proves nothing about whether a string
+-- survives a paste, so LibDeflate and AceSerializer are loaded for real and
+-- these assertions run the whole pipeline end to end.
+--------------------------------------------------------------------------------
+
+local function deepEqual(a, b, path, problems)
+	path = path or "profile"
+	if type(a) ~= type(b) then
+		problems[#problems + 1] = path .. ": type " .. type(a) .. " vs " .. type(b)
+		return
+	end
+	if type(a) ~= "table" then
+		if a ~= b then
+			problems[#problems + 1] = string.format("%s: %s vs %s", path,
+				tostring(a), tostring(b))
+		end
+		return
+	end
+	for k, v in pairs(a) do
+		if b[k] == nil then
+			problems[#problems + 1] = path .. "." .. tostring(k) .. ": missing after round trip"
+		else
+			deepEqual(v, b[k], path .. "." .. tostring(k), problems)
+		end
+	end
+	for k in pairs(b) do
+		if a[k] == nil then
+			problems[#problems + 1] = path .. "." .. tostring(k) .. ": appeared from nowhere"
+		end
+	end
+end
+
+local function assertRoundTrip(label, expected, actual)
+	local problems = {}
+	deepEqual(expected, actual, "profile", problems)
+	if #problems == 0 then
+		ok(label)
+	else
+		-- Six is enough to diagnose; a whole-schema mismatch would print
+		-- thousands and bury the first one, which is the useful one.
+		local shown = {}
+		for i = 1, math.min(6, #problems) do shown[i] = problems[i] end
+		fail(label, string.format("%d difference(s): %s", #problems,
+			table.concat(shown, "; ")))
+	end
+end
+
+local function testPortable()
+	local Portable = ns.Portable
+	local Defaults = ns.Defaults
+	local LibDeflate = LibStub("LibDeflate")
+	local AceSerializer = LibStub("AceSerializer-3.0")
+
+	check("portable/module loaded", Portable ~= nil)
+	check("portable/LibDeflate is real", type(LibDeflate.CompressZlib) == "function")
+	check("portable/AceSerializer is real", type(AceSerializer.Serialize) == "function")
+
+	-- Everything this suite does is destructive: it replaces the live profile
+	-- and switches profiles. Snapshot first, restore at the end.
+	local originalName = ns.db:GetCurrentProfile()
+	local originalProfile = Defaults.DeepCopy(ns.db.profile)
+
+	----------------------------------------------------------------------------
+	-- Round trip
+	----------------------------------------------------------------------------
+
+	-- Compare against the same transform Export applies, not against the raw
+	-- live table: Export deliberately ensures a COPY, so a sparse source gains
+	-- keys on the way out and that is correct rather than a discrepancy.
+	local expected = Defaults:EnsureProfile(Defaults.DeepCopy(ns.db.profile))
+
+	local text = Portable:Export()
+	check("portable/export produces a string", type(text) == "string" and #text > 0)
+
+	-- The whole point of EncodeForPrint: 64 printable characters, no "|" for
+	-- WoW's escape-code parser to eat and no whitespace for a forum to reflow.
+	check("portable/export string is paste-safe",
+		text:match("^%!DUF%:1%![0-9a-zA-Z%(%)]+$") ~= nil)
+
+	local envelope, message = Portable:Decode(text)
+	check("portable/round trip decodes", envelope ~= nil, tostring(message))
+	if envelope then
+		equal("portable/envelope version", envelope.version, 1)
+		equal("portable/envelope names the profile", envelope.name, originalName)
+		equal("portable/envelope records the flavor", envelope.flavor, ns.Compat.flavor)
+		assertRoundTrip("portable/profile survives the round trip",
+			expected, envelope.profile)
+	end
+
+	-- Deletions must survive. This is the property Core/Defaults.lua gave up
+	-- AceDB's metatable defaults to get: a removed text element stays removed.
+	-- An import that resurrects one has silently reintroduced that bug.
+	local player = ns.db.profile.units.player
+	local textsBefore = #player.texts
+	table.remove(player.texts)
+	-- Color rules hang off a TEXT element, not off the bar (Core/Defaults.lua's
+	-- text template). They are a user-owned list like `texts` itself, so they
+	-- have the same round-trip property to prove.
+	player.texts[1].rules[1] = { metric = "health.percent", op = "lt",
+		value = 35, color = { r = 1, g = 0, b = 0, a = 1 } }
+	player.anchor.x = -321
+	player.health.color = { r = 0.12, g = 0.34, b = 0.56, a = 1 }
+	ns:BumpSerial()
+
+	local mutatedExpected = Defaults:EnsureProfile(Defaults.DeepCopy(ns.db.profile))
+	local mutatedEnvelope = Portable:Decode(Portable:Export())
+	check("portable/mutated profile decodes", mutatedEnvelope ~= nil)
+	if mutatedEnvelope then
+		assertRoundTrip("portable/mutated profile survives the round trip",
+			mutatedExpected, mutatedEnvelope.profile)
+		equal("portable/a deleted text element stays deleted",
+			#mutatedEnvelope.profile.units.player.texts, textsBefore - 1)
+		equal("portable/a color rule survives",
+			#mutatedEnvelope.profile.units.player.texts[1].rules, 1)
+		equal("portable/a moved anchor survives",
+			mutatedEnvelope.profile.units.player.anchor.x, -321)
+		-- Floats go through AceSerializer's frexp/ldexp path, not "%.20g".
+		equal("portable/a float color survives exactly",
+			mutatedEnvelope.profile.units.player.health.color.g, 0.34)
+	end
+
+	----------------------------------------------------------------------------
+	-- Rejection
+	--
+	-- After every one of these the live profile must be untouched, which is the
+	-- actual guarantee: a bad string cannot cost you the layout you already had.
+	----------------------------------------------------------------------------
+
+	local liveBefore = Defaults.DeepCopy(ns.db.profile)
+	local liveRef = ns.db.profile
+
+	local function rejects(label, input)
+		local got, why = Portable:Decode(input)
+		check("portable/rejects " .. label, got == nil)
+		check("portable/rejects " .. label .. " with a reason",
+			type(why) == "string" and #why > 0)
+	end
+
+	rejects("an empty string", "")
+	rejects("nil", nil)
+	rejects("plain garbage", "garbage")
+	rejects("a WeakAuras string", "!WA:2!abcdefghij")
+	rejects("our prefix with an empty body", "!DUF:1!")
+	rejects("a body with characters outside the alphabet", "!DUF:1!abc-def")
+
+	-- Corruption: flip one character in the middle. This is what the zlib
+	-- framing's Adler-32 is bought with -- raw deflate carries no checksum and
+	-- would hand back plausible-looking rubbish.
+	local body = text:sub(#Portable.PREFIX + 1)
+	local at = math.floor(#body / 2)
+	local was = body:sub(at, at)
+	local flipped = Portable.PREFIX .. body:sub(1, at - 1)
+		.. ((was == "a") and "b" or "a") .. body:sub(at + 1)
+	rejects("a single flipped character", flipped)
+	rejects("a truncated string", text:sub(1, math.floor(#text / 2)))
+
+	-- Whitespace anywhere must be forgiven: a forum or a chat client will
+	-- reflow a 4,000-character string, and the alphabet contains no whitespace
+	-- so stripping it cannot destroy information.
+	local wrapped = {}
+	for i = 1, #text, 60 do wrapped[#wrapped + 1] = text:sub(i, i + 59) end
+	local reflowed = "  " .. table.concat(wrapped, "\n") .. "  \n"
+	check("portable/a reflowed paste still decodes", Portable:Decode(reflowed) ~= nil)
+
+	-- The size cap has to run BEFORE decompression or it is decoration, so
+	-- assert that rather than just the refusal.
+	local realDecompress = LibDeflate.DecompressZlib
+	local decompressCalls = 0
+	LibDeflate.DecompressZlib = function(self, ...)
+		decompressCalls = decompressCalls + 1
+		return realDecompress(self, ...)
+	end
+	local oversize = Portable.PREFIX .. string.rep("a", Portable.MAX_STRING + 1)
+	local capped, capMessage = Portable:Decode(oversize)
+	LibDeflate.DecompressZlib = realDecompress
+	check("portable/rejects an oversize string", capped == nil)
+	check("portable/oversize message names the limit",
+		capMessage ~= nil and capMessage:find(tostring(Portable.MAX_STRING), 1, true) ~= nil)
+	equal("portable/the cap runs before decompression", decompressCalls, 0)
+
+	-- Envelope-shaped rejections. Built by hand, because Export cannot produce
+	-- them.
+	local function encode(value)
+		return Portable.PREFIX .. LibDeflate:EncodeForPrint(
+			LibDeflate:CompressZlib(AceSerializer:Serialize(value), { level = 1 }))
+	end
+
+	rejects("a future envelope format", encode({ version = 2, profile = {} }))
+	rejects("an envelope that is not a table", encode("just a string"))
+	rejects("an envelope whose profile is a string",
+		encode({ version = 1, profile = "not a profile" }))
+	rejects("a profile with no units",
+		encode({ version = 1, profile = { schemaVersion = 17 } }))
+	rejects("a profile with no schema version",
+		encode({ version = 1, profile = { units = {} } }))
+
+	local problems = {}
+	deepEqual(liveBefore, ns.db.profile, "profile", problems)
+	check("portable/no rejected string touched the live profile", #problems == 0,
+		problems[1])
+	check("portable/the live profile is still the same table", ns.db.profile == liveRef)
+
+	----------------------------------------------------------------------------
+	-- A string from a newer build
+	--
+	-- The failure this feature will actually produce in the wild. Migrate
+	-- refuses to downgrade and says so; nothing is applied.
+	----------------------------------------------------------------------------
+
+	local tooNew = Portable:Decode(encode({
+		version = 1, name = "FromTheFuture", addon = "9.9.9", flavor = "tbc",
+		profile = { schemaVersion = Defaults.SCHEMA_VERSION + 5, units = {}, general = {} },
+	}))
+	check("portable/a newer schema still decodes", tooNew ~= nil)
+	if tooNew then
+		-- Visible in the preview BEFORE the button is pressed, not discovered
+		-- after it.
+		check("portable/the preview flags a newer schema",
+			Portable:Describe(tooNew):find(tostring(Defaults.SCHEMA_VERSION + 5), 1, true) ~= nil)
+
+		local applied, why = Portable:Apply(tooNew, originalName)
+		check("portable/a newer schema is refused on apply", applied == false)
+		check("portable/the refusal explains itself", type(why) == "string" and #why > 0)
+
+		local untouched = {}
+		deepEqual(liveBefore, ns.db.profile, "profile", untouched)
+		check("portable/a refused import left the profile alone", #untouched == 0,
+			untouched[1])
+	end
+
+	----------------------------------------------------------------------------
+	-- An old string migrates on import
+	--
+	-- This is the assertion the whole full-profile-not-a-diff decision rests on:
+	-- a string written by an older build imports as the layout its author had.
+	----------------------------------------------------------------------------
+
+	local old = encode({
+		version = 1, name = "Ancient", addon = "1.0.0", flavor = "tbc",
+		profile = {
+			schemaVersion = 12,
+			general = {},
+			units = {
+				target = {
+					-- Exactly the untouched schema-12 default, which is what
+					-- step 12 moves and nothing else.
+					auras = { buffs = { anchorTo = "frame", point = "BOTTOMLEFT",
+						relativePoint = "TOPLEFT", x = 0, y = 2 } },
+					texts = { { anchorTo = "health", format = "[name]" } },
+				},
+			},
+		},
+	})
+
+	local ancient = Portable:Decode(old)
+	check("portable/an old string decodes", ancient ~= nil)
+	if ancient then
+		local applied, why = Portable:Apply(ancient, originalName)
+		check("portable/an old string imports", applied == true, tostring(why))
+		local live = ns.db.profile
+		equal("portable/imported profile lands on the current schema",
+			live.schemaVersion, Defaults.SCHEMA_VERSION)
+		-- Step 12: the target's buff row lifted off the combo bar.
+		equal("portable/migration step 12 ran on import",
+			live.units.target.auras.buffs.y, 14)
+		-- Step 14: every text element gained a width mode, and a shipped name
+		-- text anchored to the health bar lands on "fit".
+		equal("portable/migration step 14 ran on import",
+			live.units.target.texts[1].maxWidthMode, "fit")
+		-- EnsureProfile filled everything the old string never had.
+		check("portable/EnsureProfile filled the gaps",
+			live.units.player ~= nil and live.units.player.health ~= nil)
+	end
+
+	----------------------------------------------------------------------------
+	-- Apply
+	----------------------------------------------------------------------------
+
+	local beforeRef = ns.db.profile
+	local simple = Portable:Decode(Portable:Export())
+	local applied = Portable:Apply(simple, ns.db:GetCurrentProfile())
+	check("portable/import into the current profile succeeds", applied == true)
+	-- AceDB holds this table by reference. Swapping it rather than replacing
+	-- its contents would strand AceDB's copy and every getter closed over it.
+	check("portable/the live table is replaced in place, not swapped",
+		ns.db.profile == beforeRef)
+
+	local globalBefore = Defaults.DeepCopy(ns.db.global)
+	local charBefore = Defaults.DeepCopy(ns.db.char)
+
+	local intoNew = Portable:Decode(Portable:Export())
+	local newOk, newWhy = Portable:Apply(intoNew, "ImportedByTests")
+	check("portable/import into a new profile succeeds", newOk == true, tostring(newWhy))
+	equal("portable/the new profile is now current",
+		ns.db:GetCurrentProfile(), "ImportedByTests")
+	check("portable/the new profile exists in the store",
+		type(ns.db.profiles.ImportedByTests) == "table")
+
+	-- Neither of these travels, and char specifically must not: it is this
+	-- character's learned heal sizes, which describe their gear rather than
+	-- anybody's layout.
+	local scopeProblems = {}
+	deepEqual(globalBefore, ns.db.global, "global", scopeProblems)
+	deepEqual(charBefore, ns.db.char, "char", scopeProblems)
+	check("portable/import leaves global and char alone", #scopeProblems == 0,
+		scopeProblems[1])
+
+	check("portable/an empty target name is refused",
+		Portable:Apply(intoNew, "   ") == false)
+
+	----------------------------------------------------------------------------
+	-- The options tab
+	----------------------------------------------------------------------------
+
+	local tab = ns.Options.table.args.portable
+	check("portable/the tab exists", tab ~= nil and tab.type == "group")
+	equal("portable/the tab sits after Profiles", tab.order, 91)
+	check("portable/the export box is multiline",
+		tab.args.exportText.multiline ~= nil and tab.args.exportText.multiline > 1)
+	check("portable/the import box is multiline",
+		tab.args.importText.multiline ~= nil and tab.args.importText.multiline > 1)
+	-- AceConfigDialog reads confirmText raw but resolves a `confirm` FUNCTION
+	-- and takes its returned string as the text. A function in confirmText
+	-- would reach the popup verbatim.
+	check("portable/the import button confirms", type(tab.args.importGo.confirm) == "function")
+	check("portable/the import button has no function confirmText",
+		type(tab.args.importGo.confirmText) ~= "function")
+
+	-- The cache. Without it the ~24 ms encode runs on every NotifyChange, and
+	-- Options.lua fires those from the combat-queue listener.
+	local realExport = Portable.Export
+	local exportCalls = 0
+	Portable.Export = function(self, ...)
+		exportCalls = exportCalls + 1
+		return realExport(self, ...)
+	end
+	ns:BumpSerial()
+	local first = tab.args.exportText.get()
+	local second = tab.args.exportText.get()
+	equal("portable/the export string is cached", exportCalls, 1)
+	equal("portable/the cached string is the same string", second, first)
+	ns:BumpSerial()
+	tab.args.exportText.get()
+	equal("portable/a config change regenerates it", exportCalls, 2)
+	Portable.Export = realExport
+
+	----------------------------------------------------------------------------
+	-- Restore, so the suites after this one see what they expect.
+	----------------------------------------------------------------------------
+
+	ns.db.profiles.ImportedByTests = nil
+	ns.db.keys.profile = originalName
+	ns.db.profile = ns.db.profiles[originalName]
+	local live = ns.db.profile
+	for k in pairs(live) do live[k] = nil end
+	for k, v in pairs(originalProfile) do live[k] = v end
+	ns:RefreshAll()
+end
+
+--------------------------------------------------------------------------------
 -- Runner
 --------------------------------------------------------------------------------
 
@@ -6277,6 +6653,7 @@ local suites = {
 	{ "bar-sweep", testBarSweep },
 	{ "highlight", testHighlight },
 	{ "heal-prediction", testHealPrediction },
+	{ "portable", testPortable },
 	{ "global-leaks", testNoGlobalLeaks },
 }
 

@@ -380,7 +380,7 @@ Roughly in order of expected value:
 
 1. Focus frame (TBC only)
 2. Player cast bar — deliberately deferred; shares no systems with anything else, so it costs the same later as now
-3. Profile import/export strings
+3. ~~Profile import/export strings~~ — **built, Plan 29 (27 August 2026).** Full profile rather than a diff, behind a `!DUF:1!` prefix; see `SPEC.md` §2.3
 4. Aura filter presets (dispellable-only, crowd-control-only)
 5. Range fading
 6. Out-of-combat frame fading

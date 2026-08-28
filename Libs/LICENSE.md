@@ -16,6 +16,7 @@ name — do not edit it here.
 | AceConsole-3.0 | 7 | Ace3 license |
 | AceDB-3.0 | 30 | Ace3 license |
 | AceDBOptions-3.0 | 15 | Ace3 license |
+| AceSerializer-3.0 | 5 | Ace3 license |
 | AceConfig-3.0 | 3 | Ace3 license |
 | AceConfigCmd-3.0 | 14 | Ace3 license |
 | AceConfigDialog-3.0 | 92 | Ace3 license |
@@ -23,6 +24,7 @@ name — do not edit it here.
 | AceGUI-3.0 | 41 (core; widgets version separately — see below) | Ace3 license |
 | AceGUI-3.0-SharedMediaWidgets | — | Public Domain / BSD (Yssaril) |
 | LibSharedMedia-3.0 | 12000001 | LGPL v2.1 / Ace3-compatible (Elkano) |
+| LibDeflate | 1.0.2-release (LibStub minor 3) | zlib License — **version-dependent, see below** |
 
 ## Ace3
 
@@ -40,6 +42,31 @@ authorship, no warranty.
 
 Copyright (c) Elkano. Distributed with the standard Ace3-ecosystem permissive
 terms; retain the copyright header inside `LibSharedMedia-3.0.lua`.
+
+## LibDeflate
+
+Copyright (c) 2018-2021 Haoqian He. **zlib License**, whose full text is in the
+header of `LibDeflate/LibDeflate.lua` — read it there rather than relying on
+this summary. Obligations: do not misrepresent the origin of the software, mark
+altered versions as altered, and do not remove the notice from the source.
+
+**The license depends on the version pin, which is why the two share a row
+above.** LibDeflate was relicensed twice:
+
+| Version | License |
+|---|---|
+| 1.0.0 | GPL v3 |
+| 1.0.1 | LGPL v3 |
+| **1.0.2 and later** | **zlib License** |
+
+1.0.2-release is embedded here precisely because it is the first permissively
+licensed version. Downgrading this library would change the terms the whole
+addon ships under — never treat a version bump here as routine, and never
+downgrade it at all.
+
+Per §11.2 this copy is unmodified. LibDeflate ships as a single file with no
+dependencies and no `.xml`, so `Libs.xml` references the `.lua` directly, the
+same way LibStub is referenced.
 
 ## Provenance
 

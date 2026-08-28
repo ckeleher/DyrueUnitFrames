@@ -478,6 +478,15 @@ function addon:SlashCommand(input)
 		return
 	end
 
+	-- Both route to the panel rather than the chat frame. An export string is
+	-- ~4,200 characters; printing one into chat is not an export, it is a wall
+	-- somebody then cannot select.
+	if cmd == "export" or cmd == "import" then
+		AceConfigDialog:SelectGroup(ADDON, "portable")
+		AceConfigDialog:Open(ADDON)
+		return
+	end
+
 	if cmd == "compat" then
 		ns:CompatReport()
 		return
@@ -540,6 +549,8 @@ function addon:SlashCommand(input)
 	Errors:Print("  |cffffcc00/duf tags|r - " .. L["list the tag vocabulary"])
 	Errors:Print("  |cffffcc00/duf blizzard hide|none|r - " .. L["hide or restore Blizzard's frames"])
 	Errors:Print("  |cffffcc00/duf safemode|r - " .. L["bars only; the patch-day escape hatch"])
+	Errors:Print("  |cffffcc00/duf export|r - " .. L["copy this profile out as a string"])
+	Errors:Print("  |cffffcc00/duf import|r - " .. L["paste a profile string in"])
 	Errors:Print("  |cffffcc00/duf profile|r - " .. L["CPU and memory report"])
 	Errors:Print("  |cffffcc00/duf compat|r - " .. L["what this client supports"])
 	Errors:Print("  |cffffcc00/duf errors|r - " .. L["errors recorded this session"])

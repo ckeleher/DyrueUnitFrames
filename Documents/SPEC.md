@@ -74,7 +74,9 @@ It does not apply. Blizzard's 12.0.7 API notes state explicitly that secret-valu
 
 ### 2.3 Deferred to v1.x (designed for, not built)
 
-Player cast bar, profile import/export strings, aura filter presets, further derived units (`pettarget`, `targettargettarget`).
+Player cast bar, ~~profile import/export strings~~, aura filter presets, further derived units (`pettarget`, `targettargettarget`).
+
+**Profile import/export strings** (Plan 29, 27 August 2026) — **built.** A profile encodes to one line of printable text: AceSerializer, then LibDeflate's zlib compression at level 9, then `EncodeForPrint`, behind a `!DUF:1!` prefix. 4,205 characters for the shipped defaults, round-tripping exactly. The **whole** profile travels rather than a diff against defaults, because a diff can only be reconstructed against *today's* defaults and would silently rewrite any key its author left at an older one — so an import goes through `Migrate:Run` exactly as a saved variable does on login. Only the `profile` scope travels; `global` and `char` deliberately do not (§5.8). Two embedded libraries, both new (§5.10).
 
 **Absorb shield indication** (Plan 12). Split from Plan 11 deliberately: heal prediction is a number the game will shortly make true, whereas nothing on these clients ever reports how much of a shield is left, so the accuracy ceiling and the failure mode are both worse. The color slot and the segment loop it needs are already built.
 
@@ -438,6 +440,7 @@ DyrueUnitFrames/
 │   ├── CallbackHandler-1.0/
 │   ├── AceAddon-3.0/  AceEvent-3.0/  AceDB-3.0/
 │   ├── AceConfig-3.0/  AceConfigDialog-3.0/  AceGUI-3.0/
+│   ├── AceSerializer-3.0/  LibDeflate/     # profile export strings (§2.3)
 │   └── LibSharedMedia-3.0/
 ├── LICENSE                     # MIT
 ├── Core/
@@ -446,6 +449,7 @@ DyrueUnitFrames/
 │   ├── Compat.lua              # ★ the only file that knows about client versions
 │   ├── Defaults.lua            # database schema + default profile
 │   ├── Migrate.lua             # versioned config migrations
+│   ├── Portable.lua            # profile export/import strings
 │   └── CombatQueue.lua         # deferral of protected operations
 ├── Systems/
 │   ├── Colors.lua              # class, reaction, power, difficulty colour resolution
@@ -470,6 +474,7 @@ DyrueUnitFrames/
     ├── Options_Layout.lua
     ├── Options_Text.lua
     ├── Options_Auras.lua
+    ├── Options_Profiles.lua    # the Import / Export tab
     ├── DragMode.lua
     └── TestMode.lua
 ```
@@ -589,6 +594,8 @@ The July patch produced "infinitely increasing Lua errors" in several addons —
 |---|---|---|
 | Ace3 (AceAddon, AceEvent, AceDB, AceConfig, AceConfigDialog, AceGUI) | Addon lifecycle, profiles, config UI | The config UI is realistically 40–50% of total effort. AceConfig's `range` control gives the slider-plus-exact-entry requirement for free, and Ace3 is maintained across every flavour. |
 | LibSharedMedia-3.0 | Bar textures, fonts | Small, stable, expected by users |
+| AceSerializer-3.0 | Profile export strings (§2.3) | Part of Ace3, so this is a file rather than a new dependency. Round-trips floats exactly (`frexp`/`ldexp`, not `%.20g`), and — the reason it is not hand-rolled — its `Deserialize` is a `gmatch` state machine with **no `loadstring`**. Import strings are written by strangers; a serializer that reads back a Lua table literal hands them arbitrary code execution |
+| LibDeflate | Compression for profile export strings | The one piece here that cannot be hand-written: pure-Lua DEFLATE is 3,605 lines and a spec-conformance problem, and without it an export string is 85 KB instead of 4.2 KB. Single file, no dependencies. **zlib License from 1.0.2 onward only** — earlier versions are GPL/LGPL, so the version pin and the license are one fact (`Libs/LICENSE.md`) |
 | LibStub, CallbackHandler-1.0 | Ace3 requirements | — |
 
 All libraries are **embedded and version-pinned**, never loaded from an external addon. Upgrading a library becomes a deliberate, testable act rather than something that happens to you.

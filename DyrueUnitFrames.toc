@@ -15,6 +15,7 @@ Core\Compat.lua
 Core\Errors.lua
 Core\Defaults.lua
 Core\Migrate.lua
+Core\Portable.lua
 Core\CombatQueue.lua
 Core\Core.lua
 
@@ -45,5 +46,6 @@ Config\Options.lua
 Config\Options_Layout.lua
 Config\Options_Text.lua
 Config\Options_Auras.lua
+Config\Options_Profiles.lua
 Config\DragMode.lua
 Config\TestMode.lua

@@ -56,6 +56,24 @@ WORLD = """
 """
 
 
+# The only real libraries the harness loads. Everything else in Libs/ stays
+# stubbed in wowstub.lua, for the reason stated there: the rest of Ace3 drags in
+# the whole AceGUI widget tree and the point of this harness is to exercise OUR
+# code. Neither of these two touches a WoW API — LibDeflate is a self-contained
+# pure-Lua DEFLATE implementation and AceSerializer is a string state machine —
+# so that reasoning does not apply to them.
+#
+# They are loaded for real because Plan 29's round-trip assertions are worthless
+# against a stub: a codec that agrees with itself proves nothing about whether
+# an export string survives a paste. Both register through the LibStub stub's
+# NewLibrary/GetLibrary unmodified, and with LibStub present LibDeflate does not
+# write _G.LibDeflate, so the global-leak test stays green.
+REAL_LIBS = [
+    "Libs/AceSerializer-3.0/AceSerializer-3.0.lua",
+    "Libs/LibDeflate/LibDeflate.lua",
+]
+
+
 def toc_files(root):
     """The exact load order the game would use, minus the libraries."""
     files = []
@@ -90,6 +108,10 @@ def build(mutate=""):
     """)
 
     load = lua.globals().__load
+    # Libraries first, exactly as Libs.xml puts them ahead of the addon files.
+    for rel in REAL_LIBS:
+        with open(os.path.join(ADDON_ROOT, rel), encoding="utf-8-sig") as fh:
+            load(rel, fh.read())
     for rel in toc_files(ADDON_ROOT):
         with open(os.path.join(ADDON_ROOT, rel), encoding="utf-8-sig") as fh:
             load(rel, fh.read())
