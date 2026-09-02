@@ -43,6 +43,15 @@
 --                        DyrueUnitFramesProbeDB.scrollRuns, which does not
 --                        truncate the way the chat frame does. Runs accumulate,
 --                        so label them and /reload once at the end.
+--   /dufprobe cast [label]
+--                        120-second trace of the PLAYER's own casts (Plan 30).
+--                        Deliberately narrow: the return signatures and the
+--                        event list are already known from `heals` and from
+--                        Systems/HealPrediction, so this asks only what nothing
+--                        has -- the signatures on Classic Era, the player's own
+--                        event payloads, whether pushback really moves the end
+--                        time, and whether instants raise a start event.
+--                        Run it on BOTH clients.
 --   /dufprobe dump       re-print the last survey
 
 local ADDON = ...
@@ -3633,6 +3642,279 @@ local function cancelCallProbe()
 end
 
 --------------------------------------------------------------------------------
+-- Plan 30 - the player's own cast, end to end
+--
+-- Deliberately narrow, because most of what a player cast bar needs is already
+-- answered and re-asking it would be noise. What is already known, and where:
+--
+--   * UnitCastingInfo's signature on Anniversary. `heals` recorded 74 raw
+--     samples and they are unambiguous:
+--         1 name  2 text  3 texture  4 startMS  5 endMS
+--         6 isTradeskill  7 castID  8 notInterruptible  9 spellID
+--     Cross-checked against known cast times -- Avenger's Shield 1000 ms,
+--     Arcane Blast 2500 ms -- so position 5 really is the END, which is what
+--     Compat.GetCastEndTime has always assumed and never had confirmed.
+--
+--   * UnitChannelInfo's signature, from the ONE channel sample the same run
+--     caught (Ritual of Souls, 60000 ms). It is NOT the same shape:
+--         ... 6 isTradeskill  7 notInterruptible  8 spellID  9 isEmpowered
+--     There is no castID. Positions 1-6 match, which is why GetCastEndTime's
+--     position-5 read works for both and why the difference has stayed
+--     invisible. Anything reading past 6 must know which function it called.
+--
+--   * notInterruptible came back as nil rather than false on both. Treat it as
+--     a tri-state, never as a boolean.
+--
+--   * The ten UNIT_SPELLCAST_* events fire for "player": Systems/HealPrediction
+--     has registered all ten against "player" since Plan 11 and works.
+--
+--   * PlayerCastingBarFrame exists on both clients and CastingBarFrame does not
+--     (survey, both SavedVariables). Only the absent one reached
+--     COMPAT_FINDINGS.md; this run puts the present one on the record.
+--
+-- So this asks the four things nothing has:
+--
+--   Q1  The signatures on CLASSIC ERA. Every sample above is Anniversary --
+--       `heals` was never run on Era, and it is a separate client branch. This
+--       is the only reason to run this probe on Era at all, and it is reason
+--       enough.
+--   Q2  The PLAYER's event payloads. `heals` skips the player outright
+--       (`if unit == "player" ... then return end`), so the argument layout of
+--       UNIT_SPELLCAST_START for one's own casts has never been recorded. It
+--       is what lets a late _FAILED be matched to the cast it belongs to
+--       instead of clearing a bar that has already moved on.
+--   Q3  Pushback. Does _DELAYED fire, and does the reported end time actually
+--       MOVE when it does? HealPrediction re-reads on that event and assumes
+--       so; nothing has checked.
+--   Q4  Instant casts. If they fire _START, a cast bar flickers on every one
+--       and has to suppress them. If they only fire _SUCCEEDED, there is
+--       nothing to do. This decides a branch either way.
+--
+-- Returns are recorded PACKED AND RAW, never unpacked into assumed names --
+-- the same rule the heals module states, and the reason its data was still
+-- worth reading three weeks later.
+--------------------------------------------------------------------------------
+
+local castTracer = CreateFrame("Frame")
+
+local CAST_EVENTS = {
+	"UNIT_SPELLCAST_SENT",
+	"UNIT_SPELLCAST_START",
+	"UNIT_SPELLCAST_STOP",
+	"UNIT_SPELLCAST_SUCCEEDED",
+	"UNIT_SPELLCAST_INTERRUPTED",
+	"UNIT_SPELLCAST_FAILED",
+	"UNIT_SPELLCAST_DELAYED",
+	"UNIT_SPELLCAST_CHANNEL_START",
+	"UNIT_SPELLCAST_CHANNEL_UPDATE",
+	"UNIT_SPELLCAST_CHANNEL_STOP",
+	-- Expected absent on both clients; recorded so "absent" is measured rather
+	-- than assumed, because a cast bar would want them if they ever appeared.
+	"UNIT_SPELLCAST_INTERRUPTIBLE",
+	"UNIT_SPELLCAST_NOT_INTERRUPTIBLE",
+}
+
+--- Both readers, packed raw, at one instant.
+local function readBoth()
+	local sample = {}
+	for _, name in ipairs({ "UnitCastingInfo", "UnitChannelInfo" }) do
+		local fn = _G[name]
+		if not fn then
+			sample[name] = { present = false }
+		else
+			local packed = { pcall(fn, "player") }
+			local returns = {}
+			-- 12 rather than 9: if this client returns MORE than the samples
+			-- above did, a loop stopping at 9 would hide exactly that.
+			for i = 2, 13 do returns[i - 1] = tostring(packed[i]) end
+			sample[name] = {
+				present = true,
+				ok = packed[1] and true or false,
+				readable = (packed[1] and packed[2] ~= nil) and true or false,
+				count = select("#", pcall(fn, "player")) - 1,
+				returns = returns,
+			}
+		end
+	end
+	return sample
+end
+
+local function startCastTrace(seconds, label)
+	seconds = seconds or 120
+
+	local record = {
+		timestamp = date("%Y-%m-%d %H:%M:%S"),
+		label = label ~= "" and label or nil,
+		build = select(2, GetBuildInfo()),
+		tocVersion = select(4, GetBuildInfo()),
+		projectId = WOW_PROJECT_ID,
+		class = select(2, UnitClass("player")),
+		eventsValid = {},
+		log = {},
+		-- Q4: a SUCCEEDED with no START before it is an instant cast.
+		startsSeen = 0,
+		succeededSeen = 0,
+		instants = 0,
+		-- Q3: end times per castID, so a _DELAYED can be compared to its _START.
+		pushbacks = {},
+	}
+
+	local runs = registerRun("cast", record)
+	local started = GetTime()
+
+	-- Q1/Q2 both want the STATIC picture too, so it is captured before any
+	-- casting happens rather than inferred from the trace.
+	record.frames = {
+		PlayerCastingBarFrame = (function()
+			local f = _G.PlayerCastingBarFrame
+			if type(f) ~= "table" or not f.GetObjectType then return { present = false } end
+			return {
+				present = true,
+				objectType = f:GetObjectType(),
+				protected = f.IsProtected and (f:IsProtected() and true or false) or nil,
+				shown = f:IsShown() and true or false,
+				-- HideBlizzardFrame unregisters these by name if they exist.
+				hasSpellbar = f.spellbar ~= nil,
+				parent = f:GetParent() and f:GetParent():GetName() or nil,
+			}
+		end)(),
+		CastingBarFrame = { present = _G.CastingBarFrame ~= nil },
+	}
+
+	for _, event in ipairs(CAST_EVENTS) do
+		local valid = eventExists(event)
+		record.eventsValid[event] = valid
+		if valid then
+			pcall(castTracer.RegisterUnitEvent, castTracer, event, "player")
+		end
+	end
+
+	-- Tracks the cast currently believed to be in flight, so pushback and
+	-- instant-detection have something to compare against.
+	local inFlight = nil
+
+	castTracer:SetScript("OnEvent", function(_, event, unit, a2, a3, a4, a5)
+		if unit ~= "player" then return end
+
+		local now = GetTime()
+		local entry = {
+			t = now - started,
+			event = event,
+			now = now,
+			-- Q2: the payload EXACTLY as delivered, positionally, with its
+			-- length. `a2` is castGUID on a modern client and a spell name on
+			-- an older one, and the whole point is not to presume which.
+			argCount = select("#", unit, a2, a3, a4, a5),
+			args = { tostring(unit), tostring(a2), tostring(a3), tostring(a4), tostring(a5) },
+			read = readBoth(),
+		}
+
+		if event == "UNIT_SPELLCAST_START" or event == "UNIT_SPELLCAST_CHANNEL_START" then
+			record.startsSeen = record.startsSeen + 1
+			local channel = event == "UNIT_SPELLCAST_CHANNEL_START"
+			local reader = channel and "UnitChannelInfo" or "UnitCastingInfo"
+			local read = entry.read[reader]
+			local startMS = tonumber(read and read.returns and read.returns[4])
+			local endMS = tonumber(read and read.returns and read.returns[5])
+			if startMS and endMS then
+				entry.duration = (endMS - startMS) / 1000
+				-- The semantic check on position 5, and the one that would
+				-- catch a start/end swap on a client the samples above did not
+				-- cover: GetTime() must sit INSIDE the reported window.
+				entry.bracketsNow = (now >= startMS / 1000 - 0.5)
+					and (now <= endMS / 1000 + 0.5)
+			end
+			inFlight = { id = tostring(a2), endMS = endMS, channel = channel }
+
+		elseif event == "UNIT_SPELLCAST_DELAYED" or event == "UNIT_SPELLCAST_CHANNEL_UPDATE" then
+			local reader = (event == "UNIT_SPELLCAST_CHANNEL_UPDATE")
+				and "UnitChannelInfo" or "UnitCastingInfo"
+			local endMS = tonumber(entry.read[reader] and entry.read[reader].returns[5])
+			if inFlight and inFlight.endMS and endMS then
+				entry.endMoved = (endMS - inFlight.endMS) / 1000
+				record.pushbacks[#record.pushbacks + 1] = {
+					event = event, moved = entry.endMoved,
+				}
+				inFlight.endMS = endMS
+			end
+
+		elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
+			record.succeededSeen = record.succeededSeen + 1
+			if not inFlight then
+				record.instants = record.instants + 1
+				entry.instant = true
+			end
+			inFlight = nil
+
+		elseif event == "UNIT_SPELLCAST_STOP" or event == "UNIT_SPELLCAST_INTERRUPTED"
+			or event == "UNIT_SPELLCAST_FAILED" or event == "UNIT_SPELLCAST_CHANNEL_STOP" then
+			inFlight = nil
+		end
+
+		record.log[#record.log + 1] = entry
+
+		out(string.format("%.2fs %s%s%s%s",
+			entry.t, event,
+			entry.duration and string.format(" |cffffcc00%.2fs|r", entry.duration) or "",
+			entry.endMoved and string.format(" |cffff5555end moved %+.2fs|r", entry.endMoved) or "",
+			entry.instant and " |cff40ff40INSTANT|r" or ""))
+	end)
+
+	header("Cast trace running for " .. seconds .. "s")
+	out("Do all of these, in any order. Each one answers something:")
+	out(" 1. Cast a |cffffcc00long spell|r and let it finish.")
+	out(" 2. Cast one and |cffffcc00move to cancel it|r partway.")
+	out(" 3. Cast one and |cffffcc00get hit|r while casting (pushback, Q3).")
+	out(" 4. |cffffcc00Channel|r something and let it run out.")
+	out(" 5. Channel something and |cffffcc00clip it|r early.")
+	out(" 6. Fire several |cffffcc00instants|r (Q4).")
+	out("Run it on |cffffcc00both clients|r - Era is the whole point of Q1.")
+
+	C_Timer.After(seconds, function()
+		castTracer:UnregisterAllEvents()
+		castTracer:SetScript("OnEvent", nil)
+		record.completed = true
+
+		header("Cast trace finished")
+		out(#record.log, "events,", record.startsSeen, "start(s),",
+			record.succeededSeen, "succeeded,", record.instants, "instant(s)")
+
+		local absent = {}
+		for _, event in ipairs(CAST_EVENTS) do
+			if not record.eventsValid[event] then absent[#absent + 1] = event end
+		end
+		if #absent > 0 then
+			out("|cffffcc00Not valid on this client:|r " .. table.concat(absent, ", "))
+		else
+			out("|cff40ff40All twelve events are valid.|r")
+		end
+
+		if #record.pushbacks > 0 then
+			out("|cff40ff40Q3: the end time moves.|r " .. #record.pushbacks
+				.. " adjustment(s) recorded -- re-reading on _DELAYED is correct.")
+		else
+			out("|cffffcc00Q3 unanswered:|r no pushback seen. Get hit while casting.")
+		end
+
+		if record.instants > 0 then
+			out("|cff40ff40Q4: instants fire SUCCEEDED with no START.|r Nothing to suppress.")
+		elseif record.succeededSeen > 0 then
+			out("|cffffcc00Q4: every SUCCEEDED had a START.|r Either no instant was")
+			out("cast, or instants DO raise a start -- cast a few and re-run.")
+		end
+
+		if record.frames.PlayerCastingBarFrame.present then
+			out("PlayerCastingBarFrame: present, protected="
+				.. yn(record.frames.PlayerCastingBarFrame.protected))
+		end
+
+		out(string.format("|cff40ff40Saved as run %d%s.|r Raw returns and payloads are in",
+			#runs, label and label ~= "" and (" '" .. label .. "'") or ""))
+		out("DyrueUnitFramesProbeDB.castRuns. |cffffcc00/reload once|r to flush it.")
+	end)
+end
+
+--------------------------------------------------------------------------------
 
 SLASH_DUFPROBE1 = "/dufprobe"
 SlashCmdList.DUFPROBE = function(input)
@@ -3662,6 +3944,8 @@ SlashCmdList.DUFPROBE = function(input)
 		secretsProbe((input or ""):match("^%s*%S+%s+(.-)%s*$"))
 	elseif cmd == "scroll" then
 		scrollProbe((input or ""):match("^%s*%S+%s+(.-)%s*$"))
+	elseif cmd == "cast" then
+		startCastTrace(120, (input or ""):match("^%s*%S+%s+(.-)%s*$"))
 	elseif cmd == "cancel" then
 		cancelProbe((input or ""):match("^%s*%S+%s+(%S+)"))
 	elseif cmd == "canceltest" then
@@ -3687,7 +3971,7 @@ SlashCmdList.DUFPROBE = function(input)
 		out("|cffff5555Unknown subcommand '" .. cmd .. "'.|r")
 		out("If you expected it to exist, the probe was updated on disk but this")
 		out("client is still running the copy it loaded at login - |cffffcc00/reload|r first.")
-		out("Known: |cffffcc00mana derived health portrait auraorder rage happiness heals healcomm incoming secrets scroll cancel canceltest cancelcall dump|r")
+		out("Known: |cffffcc00mana derived health portrait auraorder rage happiness heals healcomm incoming secrets scroll cast cancel canceltest cancelcall dump|r")
 	else
 		survey()
 		out("Also run: |cffffcc00/dufprobe mana|r, |cffffcc00derived|r, |cffffcc00health|r, |cffffcc00portrait|r, |cffffcc00auraorder|r, |cffffcc00rage|r, |cffffcc00happiness|r, |cffffcc00heals|r, |cffffcc00healcomm|r, |cffffcc00incoming|r, |cffffcc00scroll|r")
