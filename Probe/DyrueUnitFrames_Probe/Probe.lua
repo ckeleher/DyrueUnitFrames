@@ -3771,7 +3771,15 @@ local function startCastTrace(seconds, label)
 			return {
 				present = true,
 				objectType = f:GetObjectType(),
-				protected = f.IsProtected and (f:IsProtected() and true or false) or nil,
+				-- Spelled out rather than folded into one expression: the
+				-- obvious `f.IsProtected and (f:IsProtected() and true or false)
+				-- or nil` collapses a FALSE result to nil, so "not protected"
+				-- and "no such method" come back identical -- which is exactly
+				-- the distinction being asked for.
+				protected = (function()
+					if not f.IsProtected then return "no method" end
+					return f:IsProtected() and true or false
+				end)(),
 				shown = f:IsShown() and true or false,
 				-- HideBlizzardFrame unregisters these by name if they exist.
 				hasSpellbar = f.spellbar ~= nil,
@@ -3793,8 +3801,23 @@ local function startCastTrace(seconds, label)
 	-- instant-detection have something to compare against.
 	local inFlight = nil
 
-	castTracer:SetScript("OnEvent", function(_, event, unit, a2, a3, a4, a5)
+	castTracer:SetScript("OnEvent", function(_, event, ...)
+		local unit = ...
 		if unit ~= "player" then return end
+
+		-- Counted off the real vararg. The first cut of this read
+		-- `select("#", unit, a2, a3, a4, a5)` over five named parameters, which
+		-- is a count of the parameter LIST and is therefore always 5 no matter
+		-- what the client sent -- a measurement of this file rather than of the
+		-- game. The distinction matters here more than most places, because
+		-- CHANNEL_START turned out to send nil in the castGUID slot and a
+		-- trailing-nil-stripping reader cannot tell that from a short payload.
+		local argCount = select("#", ...)
+		local args = {}
+		for i = 1, (argCount > 6 and argCount or 6) do
+			args[i] = tostring((select(i, ...)))
+		end
+		local a2 = select(2, ...)
 
 		local now = GetTime()
 		local entry = {
@@ -3802,10 +3825,10 @@ local function startCastTrace(seconds, label)
 			event = event,
 			now = now,
 			-- Q2: the payload EXACTLY as delivered, positionally, with its
-			-- length. `a2` is castGUID on a modern client and a spell name on
-			-- an older one, and the whole point is not to presume which.
-			argCount = select("#", unit, a2, a3, a4, a5),
-			args = { tostring(unit), tostring(a2), tostring(a3), tostring(a4), tostring(a5) },
+			-- true length. `a2` is castGUID on a modern client and a spell name
+			-- on an older one, and the whole point is not to presume which.
+			argCount = argCount,
+			args = args,
 			read = readBoth(),
 		}
 
