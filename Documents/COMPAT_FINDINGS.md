@@ -81,7 +81,7 @@ Phase 0 is for.
 | `UNIT_HEAL_PREDICTION` | ~~**Absent**~~ **WRONG** | | **Present and fires — verified 11 Aug 2026** | The push event for the above. 900 firings in 90 s, for `party*`, `raid*` and `targettarget`. Means no ticker is needed |
 | `UNIT_ABSORB_AMOUNT_CHANGED` | Not previously asked | | **Present — verified 11 Aug 2026** | Would be Plan 12's push event on the same terms |
 | `CombatLogGetCurrentEventInfo` | Present | | | `Compat.GetCombatLogEvent`. Every amount Plan 11 predicts is learned through it |
-| `UnitCastingInfo` / `UnitChannelInfo` | Present, milliseconds | | | `Compat.GetCastEndTime`. Only ever called for `"player"` |
+| `UnitCastingInfo` / `UnitChannelInfo` | Present, milliseconds | | **Full signatures verified on both clients — 1 Sep 2026** | `Compat.GetCastEndTime`. ~~Only ever called for `"player"`~~ — it reads back for raid tokens too. **Eleven returns, identical on both clients, but the two functions diverge after position 6: `UnitChannelInfo` has no `castID`.** See the Plan 30 section below before unpacking either positionally |
 | `Texture:SetGradient` takes color **objects** | Present — 10.0 signature | | | Plan 16's overflow cap band, through `Compat.SetGradient`. Needs `CreateColor` too, which is assumed present wherever this is |
 | `Texture:SetGradientAlpha` (eight loose numbers) | **Absent** — replaced in 10.0 | | | The pre-10.0 form. Tried second and expected to fail; if it turns out to be the live one on either client, the wrapper already handles it and only this row changes |
 
@@ -1042,6 +1042,154 @@ place. The cost of being wrong for an hour was one bug report.
 **Still worth a probe run** to record it properly: `/dufprobe cancelcall`
 already stores `inCombat`, so running it during a fight turns an observation
 into a record with the refusal's exact function name.
+
+---
+
+## Plan 30 — the player's own cast
+
+`/dufprobe cast`, **1 September 2026**. Three runs on TBC Anniversary
+(2.5.6 / 20506, build 69546) and two on Classic Era (1.15.9 / 11509, build
+69547), all on a druid. Everything below held in every run on both clients
+unless a heading says otherwise.
+
+Worth recording first: **most of this was already on disk and nobody had
+looked.** The `heals` runs from Plan 19 had been storing raw `UnitCastingInfo`
+returns since 11 August because that module deliberately records them packed
+rather than unpacked into assumed names. Three of the questions this probe was
+written to ask were answerable from those runs before it was run once. The
+practice of recording raw returns is what made that true, and it is worth
+keeping.
+
+### VERIFIED — both readers, both clients, eleven returns and identical
+
+`UnitCastingInfo(unit)`:
+
+| # | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| | name | text | texture | startMS | endMS | isTradeskill | castID | notInterruptible | spellID | castCounter | delayMS |
+
+`UnitChannelInfo(unit)`:
+
+| # | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| | name | text | texture | startMS | endMS | isTradeskill | notInterruptible | spellID | isEmpowered | delayMS | castCounter |
+
+**Classic Era and Anniversary return the same eleven values in the same order
+for both functions.** That was the only open question this probe existed to
+settle and the answer is the dull one.
+
+Position 5 is confirmed as the **end**, semantically and not just positionally:
+every observed window bracketed `GetTime()`, and the durations came out at
+exactly the right values for the spells cast — Regrowth 2.000 s, Healing Touch
+3.500 s, Tranquility 8.000 s on TBC and 10.000 s on Era, which is the correct
+per-expansion difference. `Compat.GetCastEndTime` has read position 5 since it
+was written and shipped into `Systems/HealPrediction`; it had never been
+confirmed until now.
+
+Positions 10 and 11 were previously unseen because the `heals` module reads
+`for i = 2, 10`, which stops at nine. They are not a client difference.
+`castCounter` is a per-login counter that also arrives as the events' fourth
+argument — Era run 2 resumed at 10 where run 1 finished at 9 — and `delayMS` is
+accumulated pushback, which is how the pushback finding below was confirmed
+twice over.
+
+### VERIFIED — the two readers diverge after position 6, and it is a trap
+
+`UnitCastingInfo` has **`castID` at 7**, pushing `notInterruptible` to 8 and
+`spellID` to 9. `UnitChannelInfo` **has no `castID` at all**: `notInterruptible`
+is at 7 and `spellID` at 8.
+
+Positions 1–6 are identical, which is exactly why this has stayed invisible —
+`GetCastEndTime` only ever reads 1 and 5, so it is correct for both by
+accident rather than by design. Any reader that wants the icon and the spell ID,
+which is every cast bar, must know which function produced the tuple. A single
+positional unpacker over both returns a spell ID where an interrupt flag
+belongs, with no error.
+
+**`notInterruptible` reads `nil`, not `false`**, on both clients and from both
+functions. Treat it as a tri-state.
+
+### VERIFIED — a channel's `SUCCEEDED` fires at the START
+
+Tranquility, every time, on both clients: `UNIT_SPELLCAST_CHANNEL_START` and
+`UNIT_SPELLCAST_SUCCEEDED` arrive at the **same timestamp**, and
+`UNIT_SPELLCAST_CHANNEL_STOP` follows when the channel actually ends.
+
+The obvious implementation — clear the bar on `SUCCEEDED` — therefore blanks
+every channel the instant it begins. This is the sharpest edge in the data.
+
+It is latent but harmless in `Systems/HealPrediction.lua`, whose comment says
+`SUCCEEDED` "means the cast is over": channels are already forced to
+`amount = 0` there, so there is nothing to clear early. Do not read that as the
+event being safe.
+
+### VERIFIED — `INTERRUPTED` fires four times, and does not order against `STOP`
+
+One interrupted cast produces **four** `UNIT_SPELLCAST_INTERRUPTED` events plus
+one `UNIT_SPELLCAST_STOP`, on both clients. The first `INTERRUPTED` carries five
+arguments with a `nil` in the fourth slot; the three repeats carry the same five
+with the fourth and fifth both `nil`.
+
+Their order is **not stable**. Era gave `INTERRUPTED` → `STOP` → `INTERRUPTED`×3
+in all five of its interrupts; one Anniversary run gave `STOP` first. Anything
+consuming these must be idempotent about ending and must not treat a repeat as a
+new event.
+
+### VERIFIED — instants raise no start event
+
+Thirteen instants on Anniversary, five on Era: `UNIT_SPELLCAST_SUCCEEDED` with
+no preceding `_START`. Nothing needs suppressing.
+
+One of them was a **Regrowth** — a two-second cast made instant, presumably by
+Nature's Swiftness. So an instant is identified by the absence of a start event
+and never by the spell, which is the sort of thing a spell-ID exception list
+would have got wrong on a druid and nowhere else.
+
+### VERIFIED — pushback moves the reported end time (Anniversary)
+
+One `UNIT_SPELLCAST_DELAYED` on a Regrowth moved the end **+0.223 s**, and
+position 11 read `223` against `0` on every undelayed sample. `HealPrediction`
+re-reads on that event and is right to.
+
+Not reproduced on Era — nothing hit the player while casting there. This is a
+game mechanic rather than a client API difference, and the `delayMS` field
+exists identically on both, so it is recorded as Anniversary-only for accuracy
+rather than as a suspected difference.
+
+### UNOBSERVED — `UNIT_SPELLCAST_CHANNEL_UPDATE`
+
+Valid on both clients, never fired in five runs. **Clipping a channel produces
+`CHANNEL_STOP`, not `CHANNEL_UPDATE`** — confirmed three times, twice on Era and
+once on Anniversary.
+
+The remaining candidate is channel pushback, which was not produced. Anything
+handling it should re-read the times, the same as `_DELAYED`, and must not
+assume clipping is what raises it.
+
+### VERIFIED — all twelve `UNIT_SPELLCAST_*` events are valid
+
+Including `UNIT_SPELLCAST_INTERRUPTIBLE` and `UNIT_SPELLCAST_NOT_INTERRUPTIBLE`,
+which were expected absent on clients with no interrupt-immunity mechanic. They
+register; nothing observed makes them fire.
+
+### VERIFIED — `PlayerCastingBarFrame` exists, is unprotected, and is parented differently
+
+Present on both clients as an **unprotected `StatusBar`**; `CastingBarFrame`
+absent on both. The earlier survey row recorded only the absent one.
+
+The parents differ, and it matters for `Compat.HideBlizzardFrame`, which
+reparents to `hiddenHolder`:
+
+| Client | Parent |
+|---|---|
+| TBC Anniversary | `UIParent` |
+| Classic Era | `UIParentBottomManagedFrameContainer` |
+
+Era's is a **managed container**, which lays out its children and may react to
+one being reparented out of it. Hiding it is expected to work — the frame is
+unprotected — but Era is the case to actually watch rather than assume, and it
+is the reason the frame is worth its own `blizzardFrames` key rather than being
+folded in with `PlayerFrame`.
 
 ---
 
