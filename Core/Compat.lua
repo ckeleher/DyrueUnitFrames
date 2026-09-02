@@ -303,19 +303,67 @@ function Compat.GetIncomingHeals(unit, healer)
 	return amount or 0
 end
 
---- Absolute time this unit's current cast or channel ends, or nil.
--- The game reports these in milliseconds on GetTime's epoch.
-function Compat.GetCastEndTime(unit)
+--------------------------------------------------------------------------------
+-- Casting (Plan 30)
+--
+-- MEASURED on both clients, 1 September 2026, five runs -- see
+-- Documents/COMPAT_FINDINGS.md. Eleven returns each, identical between Classic
+-- Era and TBC Anniversary, so there is no per-client branch here. What there IS
+-- is a per-FUNCTION branch, and it is the whole reason this is written out
+-- twice instead of once:
+--
+--   UnitCastingInfo   1 name 2 text 3 texture 4 startMS 5 endMS 6 isTradeskill
+--                     7 castID  8 notInterruptible  9 spellID
+--   UnitChannelInfo   1 name 2 text 3 texture 4 startMS 5 endMS 6 isTradeskill
+--                     7 notInterruptible  8 spellID  9 isEmpowered
+--
+-- A channel has NO castID, so everything after position 6 sits one slot to the
+-- left. Positions 1-6 are identical, which is exactly why this went unnoticed
+-- for so long: GetCastEndTime below only ever reads 1 and 5, and is therefore
+-- correct for both by accident rather than by design. Anything reading further
+-- -- an icon, a spell id -- must know which function produced the tuple, or it
+-- silently reports a channel's spell id as its interrupt flag.
+--
+-- `notInterruptible` comes back as nil rather than false on both clients and
+-- from both functions, so it is passed through untouched as a tri-state rather
+-- than coerced. Nothing in Classic or TBC makes a cast uninterruptible, so a
+-- caller that wants a boolean should treat nil as "no".
+--------------------------------------------------------------------------------
+
+--- The unit's current cast or channel.
+-- Times are converted from the game's milliseconds to GetTime()'s seconds.
+-- @return name, icon, startTime, endTime, isChannel, notInterruptible, spellID
+function Compat.GetCastInfo(unit)
+	if not unit then return nil end
+
 	local casting = _G.UnitCastingInfo
 	if casting then
-		local ok, name, _, _, _, endTime = pcall(casting, unit)
-		if ok and name and endTime then return endTime / 1000, false end
+		local ok, name, _, icon, startMS, endMS, _, _, notInterruptible, spellID =
+			pcall(casting, unit)
+		if ok and name and startMS and endMS then
+			return name, icon, startMS / 1000, endMS / 1000, false, notInterruptible, spellID
+		end
 	end
+
 	local channel = _G.UnitChannelInfo
 	if channel then
-		local ok, name, _, _, _, endTime = pcall(channel, unit)
-		if ok and name and endTime then return endTime / 1000, true end
+		-- One slot left of the above from position 7 on. Not a copy-paste slip.
+		local ok, name, _, icon, startMS, endMS, _, notInterruptible, spellID =
+			pcall(channel, unit)
+		if ok and name and startMS and endMS then
+			return name, icon, startMS / 1000, endMS / 1000, true, notInterruptible, spellID
+		end
 	end
+
+	return nil
+end
+
+--- Absolute time this unit's current cast or channel ends, or nil.
+-- Kept as its own entry point because Systems/HealPrediction has called it
+-- since Plan 11 and wants nothing else from the tuple.
+function Compat.GetCastEndTime(unit)
+	local _, _, _, endTime, isChannel = Compat.GetCastInfo(unit)
+	if endTime then return endTime, isChannel end
 	return nil
 end
 
@@ -685,6 +733,16 @@ Compat.blizzardFrames = {
 	targettarget = { "TargetFrameToT" },
 	focus = { "FocusFrame" },
 	focustarget = { "FocusFrameToT" },
+	-- Plan 30. Its own key rather than appended to `player`, so the two can be
+	-- hidden independently and so Plan 31 can move it with the frame it belongs
+	-- to. Both names listed because resolution is lazy and skips what is absent:
+	-- measured 1 Sep 2026, `PlayerCastingBarFrame` is present on both clients
+	-- and `CastingBarFrame` on neither, but the older name costs nothing to keep.
+	--
+	-- On Classic Era this frame's parent is UIParentBottomManagedFrameContainer
+	-- rather than UIParent, and HideBlizzardFrame reparents. It is unprotected on
+	-- both clients so the hide is expected to work; Era is the case to check.
+	playercast = { "PlayerCastingBarFrame", "CastingBarFrame" },
 	party = {
 		"PartyMemberFrame1", "PartyMemberFrame2", "PartyMemberFrame3", "PartyMemberFrame4",
 		"PartyFrame", "CompactPartyFrame",

@@ -725,6 +725,204 @@ end
 -- Combo points (Plan 9)
 --------------------------------------------------------------------------------
 
+--------------------------------------------------------------------------------
+-- Cast bar (Plan 30)
+--------------------------------------------------------------------------------
+
+local function castGroup(def)
+	local unitKey = def.key
+	local function cast() local c = ns:UnitConfig(unitKey); return c and c.cast end
+	local function spellText() return cast().spellText end
+	local function timeText() return cast().timeText end
+	local apply = Options.ApplyUnit(unitKey)
+
+	--- The two labels take the same six controls, so they are generated rather
+	-- than written twice. They are NOT text elements: see the note in
+	-- Core/Defaults.lua for why a per-frame countdown cannot go through the tag
+	-- system, and why the spell name follows it out rather than being split off
+	-- into a second mechanism.
+	local function labelArgs(get, order, extra)
+		local args = {
+			enabled = {
+				type = "toggle", order = order + 1, name = L["Show"],
+				get = function() return get().enabled end,
+				set = function(_, v) get().enabled = v; apply() end,
+			},
+			font = {
+				type = "select", order = order + 2, name = L["Font"],
+				dialogControl = "LSM30_Font",
+				values = function() return LSM:HashTable("font") end,
+				get = function() return get().font end,
+				set = function(_, v) get().font = v; apply() end,
+			},
+			size = {
+				type = "range", order = order + 3, name = L["Size"],
+				min = 6, max = 32, step = 1,
+				get = function() return get().size end,
+				set = function(_, v) get().size = v; apply() end,
+			},
+			outline = {
+				type = "select", order = order + 4, name = L["Outline"],
+				values = Options.OUTLINES,
+				get = function() return get().outline end,
+				set = function(_, v) get().outline = v; apply() end,
+			},
+			color = Options.Color(L["Color"], order + 5, get, "color", apply),
+			point = {
+				type = "select", order = order + 6, name = L["Placement"],
+				values = ns.Anchoring:PointValues(),
+				get = function() return get().point end,
+				set = function(_, v) get().point = v; apply() end,
+			},
+			x = Options.Range(L["X offset"], order + 7, "offset", get, "x", apply),
+			y = Options.Range(L["Y offset"], order + 8, "offset", get, "y", apply),
+		}
+		for k, v in pairs(extra or {}) do args[k] = v end
+		return args
+	end
+
+	local args = {
+		notice = Options.CombatNotice(0),
+		breaker = Options.BreakerNotice(unitKey, "cast", 0.5),
+		explain = {
+			type = "description", order = 1,
+			name = L["Shows what this unit is casting. Like the combo bar it places itself rather than taking a slot in the bar stack, so nothing inside the frame moves when a cast starts -- it ships below the player frame. Instant casts show nothing at all, because the game raises no start event for them."],
+		},
+		enabled = {
+			type = "toggle", order = 2, name = L["Enable"],
+			get = function() return cast().enabled end,
+			set = function(_, v) cast().enabled = v; apply() end,
+		},
+		holdTime = {
+			type = "range", order = 3, name = L["Hold a failed cast for"],
+			desc = L["How long an interrupted or failed cast stays on screen in the failure color. Zero removes it the instant it fails, which is usually too fast to notice."],
+			min = 0, max = 3, step = 0.1,
+			get = function() return cast().holdTime end,
+			set = function(_, v) cast().holdTime = v; apply() end,
+		},
+
+		layoutHeader = { type = "header", order = 10, name = L["Layout"] },
+		anchorTo = {
+			type = "select", order = 11, name = L["Anchor to"],
+			desc = L["Anchoring to a bar that is switched off, or to the shapeshift mana bar while it is not showing, hides the cast bar rather than dropping it onto the middle of the frame."],
+			values = function() return ns:AnchorWidgetValues() end,
+			get = function() return cast().anchorTo end,
+			set = function(_, v) cast().anchorTo = v; apply() end,
+		},
+		point = {
+			type = "select", order = 12, name = L["Point on the bar"],
+			values = ns.Anchoring:PointValues(),
+			get = function() return cast().point end,
+			set = function(_, v) cast().point = v; apply() end,
+		},
+		relativePoint = {
+			type = "select", order = 13, name = L["Point on the anchor"],
+			values = ns.Anchoring:PointValues(),
+			get = function() return cast().relativePoint end,
+			set = function(_, v) cast().relativePoint = v; apply() end,
+		},
+		x = Options.Range(L["X offset"], 14, "offset", cast, "x", apply),
+		y = Options.Range(L["Y offset"], 15, "offset", cast, "y", apply),
+		widthMode = {
+			type = "select", order = 16, name = L["Width"],
+			values = { inherit = L["Match the anchor"], custom = L["Custom"] },
+			get = function() return cast().widthMode end,
+			set = function(_, v) cast().widthMode = v; apply() end,
+		},
+		width = Options.Range(L["Custom width"], 17, "width", cast, "width", apply, {
+			hidden = function() return cast().widthMode ~= "custom" end,
+		}),
+		height = Options.Range(L["Height"], 18, "height", cast, "height", apply),
+		texture = textureOption(L["Texture"], 19, cast, apply),
+
+		colorHeader = { type = "header", order = 30, name = L["Color"] },
+		color = Options.Color(L["Casting"], 31, cast, "color", apply),
+		channelColor = Options.Color(L["Channeling"], 32, cast, "channelColor", apply, {
+			desc = L["A channel drains where a cast fills. Two bars moving in opposite directions in the same color read as a bug, which is why this is a separate setting rather than shared."],
+		}),
+		failedColor = Options.Color(L["Interrupted"], 33, cast, "failedColor", apply),
+		uninterruptibleColor = Options.Color(L["Uninterruptible"], 34, cast,
+			"uninterruptibleColor", apply, {
+				desc = L["Nothing in Classic or TBC makes a cast uninterruptible and neither client reports the flag, so this is here for completeness and you are unlikely ever to see it."],
+			}),
+		brightness = {
+			type = "range", order = 35, name = L["Brightness"],
+			min = 0.3, max = 1.5, step = 0.01,
+			get = function() return cast().brightness end,
+			set = function(_, v) cast().brightness = v; apply() end,
+		},
+		bgMultiplier = {
+			type = "range", order = 36, name = L["Background darkness"],
+			min = 0, max = 1, step = 0.01,
+			get = function() return cast().bgMultiplier end,
+			set = function(_, v) cast().bgMultiplier = v; apply() end,
+		},
+		bgAlpha = {
+			type = "range", order = 37, name = L["Background opacity"],
+			min = 0, max = 1, step = 0.01,
+			get = function() return cast().bgAlpha end,
+			set = function(_, v) cast().bgAlpha = v; apply() end,
+		},
+
+		iconGroup = {
+			type = "group", order = 40, inline = true, name = L["Spell icon"],
+			args = {
+				enabled = {
+					type = "toggle", order = 1, name = L["Show"],
+					get = function() return cast().icon.enabled end,
+					set = function(_, v) cast().icon.enabled = v; apply() end,
+				},
+				side = {
+					type = "select", order = 2, name = L["Side"],
+					values = { LEFT = L["Left"], RIGHT = L["Right"] },
+					get = function() return cast().icon.side end,
+					set = function(_, v) cast().icon.side = v; apply() end,
+				},
+				size = {
+					type = "range", order = 3, name = L["Size"],
+					desc = L["Zero matches the bar's height, which is what keeps it square when you resize the bar."],
+					min = 0, max = 64, step = 1,
+					get = function() return cast().icon.size end,
+					set = function(_, v) cast().icon.size = v; apply() end,
+				},
+				gap = {
+					type = "range", order = 4, name = L["Gap"],
+					min = 0, max = 20, step = 1,
+					get = function() return cast().icon.gap end,
+					set = function(_, v) cast().icon.gap = v; apply() end,
+				},
+			},
+		},
+
+		spellTextGroup = {
+			type = "group", order = 50, inline = true, name = L["Spell name"],
+			args = labelArgs(spellText, 0),
+		},
+
+		timeTextGroup = {
+			type = "group", order = 60, inline = true, name = L["Countdown"],
+			args = labelArgs(timeText, 0, {
+				decimals = {
+					type = "range", order = 20, name = L["Decimals"],
+					min = 0, max = 2, step = 1,
+					get = function() return timeText().decimals end,
+					set = function(_, v) timeText().decimals = v; apply() end,
+				},
+				showTotal = {
+					type = "toggle", order = 21, name = L["Show the total too"],
+					desc = L["Reads '1.4 / 3.5' instead of '1.4'."],
+					get = function() return timeText().showTotal end,
+					set = function(_, v) timeText().showTotal = v; apply() end,
+				},
+			}),
+		},
+	}
+
+	return { type = "group", order = 4.6, name = L["Cast bar"], args = args }
+end
+
+--------------------------------------------------------------------------------
+
 local function comboGroup(def)
 	local unitKey = def.key
 	local function combo() local c = ns:UnitConfig(unitKey); return c and c.combo end
@@ -1153,6 +1351,14 @@ function Options.BuildUnit(def)
 		health = healthGroup(def),
 		power = powerGroup(def),
 		mana = manaGroup(def),
+		-- Plan 30. Offered on every unit rather than gated to the player, unlike
+		-- the combo bar below: nothing about the element is player-specific, and
+		-- the events are known to reach other units (COMPAT_FINDINGS, 11 Aug).
+		-- What is NOT yet established is the ending events for those units, so
+		-- every unit but the player ships with it switched off and Plans 32 and
+		-- 33 turn them on once that is measured. Offered-and-off is the honest
+		-- state: it works if you enable it, and nobody claimed otherwise.
+		cast = castGroup(def),
 		-- SPEC §FR-8.5: absent rather than present-and-broken. Combo points are
 		-- the player's resource against the player's target; on a party frame
 		-- the control would be meaningless.

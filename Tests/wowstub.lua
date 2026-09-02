@@ -579,20 +579,46 @@ function stub.healLine(subevent, sourceGUID, destGUID, spellID, amount, overheal
 		amount, overhealing, 0, critical and true or false)
 end
 
--- stub.casting = { endTime = <seconds> } drives both of these; the game reports
--- milliseconds, and dividing by 1000 is a real step in Compat that a stub
--- returning seconds would hide.
+-- stub.casting / stub.channeling = { startTime =, endTime = } in SECONDS drive
+-- these; the game reports milliseconds, and dividing by 1000 is a real step in
+-- Compat that a stub returning seconds would hide.
+--
+-- The tuples below are the REAL ones, at their real widths and in their real
+-- order, transcribed from /dufprobe cast on 1 September 2026 (see
+-- Documents/COMPAT_FINDINGS.md). Both are eleven values and they are NOT the
+-- same shape:
+--
+--   UnitCastingInfo   ... 6 isTradeskill  7 castID  8 notInterruptible  9 spellID
+--   UnitChannelInfo   ... 6 isTradeskill  7 notInterruptible  8 spellID  9 isEmpowered
+--
+-- A channel has no castID, so everything from position 7 shifts left. This
+-- fidelity is the entire point: the earlier stub returned five values in one
+-- shared shape, which would have let a single positional unpacker over both
+-- functions pass the suite while reporting a channel's spell id as its
+-- interrupt flag on a live client.
+--
+-- notInterruptible is nil rather than false on both clients, and position 2 of a
+-- channel is the literal string "Channeling" rather than the spell's name. Both
+-- are reproduced, because both are things a reader can get wrong.
 stub.casting = nil
 stub.channeling = nil
 
 function _G.UnitCastingInfo(u)
-	if u ~= "player" or not stub.casting then return nil end
-	return "Cast", "Cast", nil, stub.casting.startTime or 0, (stub.casting.endTime or 0) * 1000
+	local c = stub.casting
+	if u ~= "player" or not c then return nil end
+	return c.name or "Cast", c.name or "Cast", c.icon or 136041,
+		(c.startTime or 0) * 1000, (c.endTime or 0) * 1000,
+		false, c.castID or "Cast-1-2-3", c.notInterruptible, c.spellID or 26979,
+		c.castCounter or 1, c.delayMS or 0
 end
 
 function _G.UnitChannelInfo(u)
-	if u ~= "player" or not stub.channeling then return nil end
-	return "Channel", "Channel", nil, stub.channeling.startTime or 0, (stub.channeling.endTime or 0) * 1000
+	local c = stub.channeling
+	if u ~= "player" or not c then return nil end
+	return c.name or "Channel", "Channeling", c.icon or 136107,
+		(c.startTime or 0) * 1000, (c.endTime or 0) * 1000,
+		false, c.notInterruptible, c.spellID or 26983,
+		false, c.delayMS or 0, c.castCounter or 1
 end
 
 --------------------------------------------------------------------------------

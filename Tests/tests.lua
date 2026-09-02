@@ -5651,6 +5651,253 @@ end
 -- A leaked global in an addon is how two addons quietly break each other.
 --------------------------------------------------------------------------------
 
+--------------------------------------------------------------------------------
+-- Plan 30 — the cast bar
+--
+-- Roughly half of these are regression tests for bugs that were never written,
+-- because /dufprobe cast measured the behavior before the element was. Each of
+-- those names the finding it guards; see Documents/COMPAT_FINDINGS.md.
+--------------------------------------------------------------------------------
+
+local function testCastBar()
+	local Compat = ns.Compat
+	local element = ns.elements.cast
+	local player = ns.frames.player
+	local cfg = ns:UnitConfig("player").cast
+
+	local function el() return player.elements.cast end
+	local function fire(event) stub.fire(event, "player") end
+	local function quiet()
+		stub.casting, stub.channeling = nil, nil
+		fire("UNIT_SPELLCAST_STOP")
+		fire("UNIT_SPELLCAST_CHANNEL_STOP")
+	end
+
+	----------------------------------------------------------------------------
+	-- Defaults
+	----------------------------------------------------------------------------
+
+	equal("cast/ships on for the player", cfg.enabled, true)
+	-- The template default is what every OTHER unit inherits and what
+	-- EnsureProfile fills an unknown unit key from, so `true` there would light
+	-- up eleven bars whose ending events are not yet measured.
+	equal("cast/ships off in the template", ns.Defaults.Unit().cast.enabled, false)
+	equal("cast/target ships off", ns:UnitConfig("target").cast.enabled, false)
+	-- Plan 30 owns no schema version: it adds keys and rewrites no stored value,
+	-- and Migrate:Run treats a version with no registered step as unmigratable,
+	-- backs the profile up and loads defaults. An unnecessary bump wipes layouts.
+	equal("cast/adds keys without a schema bump", ns.Defaults.SCHEMA_VERSION, 17)
+	equal("cast/is offered as an anchor target", ns:AnchorWidgetValues().cast ~= nil, true)
+
+	----------------------------------------------------------------------------
+	-- Compat.GetCastInfo — the per-function unpacking
+	----------------------------------------------------------------------------
+
+	stub.time = 1000
+	stub.casting = { name = "Healing Touch", startTime = 1000, endTime = 1003.5,
+		spellID = 26979, icon = 136041 }
+
+	local name, icon, startTime, endTime, isChannel, notInterruptible, spellID =
+		Compat.GetCastInfo("player")
+	equal("cast/reads the spell name", name, "Healing Touch")
+	equal("cast/reads the icon", icon, 136041)
+	near("cast/converts start from milliseconds", startTime, 1000)
+	near("cast/converts end from milliseconds", endTime, 1003.5)
+	equal("cast/a cast is not a channel", isChannel, false)
+	equal("cast/reads the spell id", spellID, 26979)
+	-- Measured nil rather than false on both clients. Coercing it to a boolean
+	-- would throw away the distinction between "interruptible" and "unknown".
+	equal("cast/notInterruptible passes through as nil", notInterruptible, nil)
+
+	-- The regression that matters. The two readers diverge after position 6:
+	-- a channel has no castID, so spellID sits at 8 rather than 9. A single
+	-- positional unpacker over both returns 26983 where the interrupt flag
+	-- belongs and nil for the spell -- silently, and only for channels.
+	stub.casting = nil
+	stub.channeling = { name = "Tranquility", startTime = 1000, endTime = 1008,
+		spellID = 26983, icon = 136107 }
+
+	local cname, cicon, _, cend, cIsChannel, cNotInt, cSpell = Compat.GetCastInfo("player")
+	equal("cast/channel reports isChannel", cIsChannel, true)
+	equal("cast/channel spell id comes from position 8, not 9", cSpell, 26983)
+	equal("cast/channel interrupt flag is not the spell id", cNotInt, nil)
+	equal("cast/channel icon", cicon, 136107)
+	near("cast/channel end time", cend, 1008)
+	-- Position 2 of a channel is the literal string "Channeling". Reading it
+	-- instead of position 1 labels every channel identically.
+	equal("cast/channel reports the spell name, not \"Channeling\"", cname, "Tranquility")
+
+	stub.channeling = nil
+	equal("cast/nothing casting reads nil", Compat.GetCastInfo("player"), nil)
+	equal("cast/GetCastEndTime still returns nil when idle", Compat.GetCastEndTime("player"), nil)
+
+	-- Systems/HealPrediction has called this since Plan 11 and must be unmoved.
+	stub.casting = { startTime = 1000, endTime = 1002 }
+	local heEnd, heChannel = Compat.GetCastEndTime("player")
+	near("cast/GetCastEndTime still reports seconds", heEnd, 1002)
+	equal("cast/GetCastEndTime still reports the channel flag", heChannel, false)
+
+	----------------------------------------------------------------------------
+	-- The bar
+	----------------------------------------------------------------------------
+
+	quiet()
+	local running, attached = element.DriverStats()
+	equal("cast/driver is stopped with nothing casting", running, false)
+	equal("cast/nothing attached with nothing casting", attached, 0)
+
+	stub.time = 1000
+	stub.casting = { name = "Healing Touch", startTime = 1000, endTime = 1004,
+		spellID = 26979, icon = 136041 }
+	fire("UNIT_SPELLCAST_START")
+
+	equal("cast/the bar shows on a start", el().bar:IsShown(), true)
+	equal("cast/the driver runs while casting", (element.DriverStats()), true)
+	equal("cast/the spell name is on the bar", el().spellText:GetText(), "Healing Touch")
+
+	stub.time = 1001
+	element.Render(player, el(), stub.time)
+	near("cast/a cast fills as it progresses", el().bar:GetValue(), 0.25)
+	stub.time = 1003
+	element.Render(player, el(), stub.time)
+	near("cast/and keeps filling", el().bar:GetValue(), 0.75)
+
+	-- Pushback. Measured +0.223 s on a Regrowth; the window moves and the bar
+	-- must follow it rather than restarting.
+	stub.casting.endTime = 1004.5
+	fire("UNIT_SPELLCAST_DELAYED")
+	near("cast/pushback moves the end rather than restarting", el().endTime, 1004.5)
+	near("cast/and the start is unchanged", el().startTime, 1000)
+
+	fire("UNIT_SPELLCAST_SUCCEEDED")
+	equal("cast/a completed cast clears the bar", el().bar:IsShown(), false)
+	equal("cast/and detaches from the driver", (select(2, element.DriverStats())), 0)
+	equal("cast/the driver stops with the last bar", (element.DriverStats()), false)
+
+	----------------------------------------------------------------------------
+	-- Channels drain, and SUCCEEDED arrives at their START (finding 1)
+	----------------------------------------------------------------------------
+
+	quiet()
+	stub.time = 1000
+	stub.channeling = { name = "Tranquility", startTime = 1000, endTime = 1010,
+		spellID = 26983 }
+	fire("UNIT_SPELLCAST_CHANNEL_START")
+
+	equal("cast/a channel shows the bar", el().bar:IsShown(), true)
+	equal("cast/the channel label is the spell name", el().spellText:GetText(), "Tranquility")
+	stub.time = 1002
+	element.Render(player, el(), stub.time)
+	near("cast/a channel drains rather than filling", el().bar:GetValue(), 0.8)
+
+	-- THE trap. A channel's SUCCEEDED fires at the same timestamp as its
+	-- CHANNEL_START, so clearing on it unconditionally blanks every channel the
+	-- instant it begins.
+	fire("UNIT_SPELLCAST_SUCCEEDED")
+	equal("cast/SUCCEEDED during a channel does not clear it", el().bar:IsShown(), true)
+
+	-- Clipping raises CHANNEL_STOP and never CHANNEL_UPDATE (measured three
+	-- times). A bar waiting for UPDATE would hang until the next cast.
+	stub.channeling = nil
+	fire("UNIT_SPELLCAST_CHANNEL_STOP")
+	equal("cast/CHANNEL_STOP alone ends a clipped channel", el().bar:IsShown(), false)
+	equal("cast/a clipped channel detaches", (select(2, element.DriverStats())), 0)
+
+	----------------------------------------------------------------------------
+	-- Ending is idempotent (finding 2)
+	--
+	-- One interrupt produces FOUR INTERRUPTED events plus a STOP, and the order
+	-- differs between clients: Era put INTERRUPTED first every time, one
+	-- Anniversary run put STOP first. Both orders are asserted because both were
+	-- observed on a shipping client.
+	----------------------------------------------------------------------------
+
+	local function interruptSequence(label, stopFirst)
+		quiet()
+		stub.time = 1000
+		stub.casting = { name = "Regrowth", startTime = 1000, endTime = 1002, spellID = 26980 }
+		fire("UNIT_SPELLCAST_START")
+		equal("cast/" .. label .. ": bar is up before the interrupt", el().bar:IsShown(), true)
+
+		stub.casting = nil
+		if stopFirst then fire("UNIT_SPELLCAST_STOP") end
+		for _ = 1, 4 do fire("UNIT_SPELLCAST_INTERRUPTED") end
+		if not stopFirst then fire("UNIT_SPELLCAST_STOP") end
+
+		-- Held in the failure color rather than gone, and still held after the
+		-- repeats -- a repeat is not a new event.
+		equal("cast/" .. label .. ": held in the failure state", el().state, "failed")
+		equal("cast/" .. label .. ": still shown during the hold", el().bar:IsShown(), true)
+
+		stub.time = 1000 + (cfg.holdTime or 0.5) + 0.1
+		element.Render(player, el(), stub.time)
+		equal("cast/" .. label .. ": the hold expires", el().bar:IsShown(), false)
+		equal("cast/" .. label .. ": and it detaches", (select(2, element.DriverStats())), 0)
+	end
+
+	interruptSequence("interrupt then stop", false)
+	interruptSequence("stop then interrupt", true)
+
+	----------------------------------------------------------------------------
+	-- Instants (finding 4)
+	----------------------------------------------------------------------------
+
+	quiet()
+	-- No start event and nothing casting: exactly what an instant looks like.
+	-- One of the observed instants was a Regrowth under Nature's Swiftness, so
+	-- this can never be answered by a spell-id check.
+	fire("UNIT_SPELLCAST_SUCCEEDED")
+	equal("cast/an instant shows no bar", el().bar:IsShown(), false)
+	equal("cast/an instant starts no driver", (element.DriverStats()), false)
+
+	----------------------------------------------------------------------------
+	-- Picking up a cast already in progress
+	--
+	-- The path a start event cannot cover. It is unused for the player, whose
+	-- casts always begin under observation, and is the whole story for every
+	-- unit Plans 32 and 33 add -- so it is asserted now, while it is cheap.
+	----------------------------------------------------------------------------
+
+	quiet()
+	stub.time = 1002
+	stub.casting = { name = "Wrath", startTime = 1000, endTime = 1004, spellID = 5176 }
+	player:FullUpdate()
+	equal("cast/a cast already running is picked up", el().bar:IsShown(), true)
+	near("cast/and at the right point", el().bar:GetValue(), 0.5)
+
+	----------------------------------------------------------------------------
+	-- Enable / disable
+	----------------------------------------------------------------------------
+
+	quiet()
+	cfg.enabled = false
+	ns:RefreshUnit("player")
+	equal("cast/disabling removes the element", player.activeElements.cast, nil)
+	equal("cast/a disabled bar is not attached", (select(2, element.DriverStats())), 0)
+	equal("cast/and the driver is stopped", (element.DriverStats()), false)
+
+	cfg.enabled = true
+	ns:RefreshUnit("player")
+	equal("cast/re-enabling brings it back", player.activeElements.cast ~= nil, true)
+
+	----------------------------------------------------------------------------
+	-- Event registration
+	----------------------------------------------------------------------------
+
+	local registered = player.eventMap
+	equal("cast/subscribes to START", registered.UNIT_SPELLCAST_START ~= nil, true)
+	equal("cast/subscribes to CHANNEL_START", registered.UNIT_SPELLCAST_CHANNEL_START ~= nil, true)
+	equal("cast/subscribes to INTERRUPTED", registered.UNIT_SPELLCAST_INTERRUPTED ~= nil, true)
+	-- SENT is the player's own outgoing signal and carries a target rather than
+	-- cast state. HealPrediction wants it; the bar has no use for it.
+	equal("cast/does not subscribe to SENT for the bar",
+		element.events.UNIT_SPELLCAST_SENT, nil)
+
+	quiet()
+	stub.casting, stub.channeling = nil, nil
+	stub.time = 1000
+end
+
 local function testNoGlobalLeaks()
 	local allowed = {
 		DyrueUnitFrames = true,
@@ -6654,6 +6901,7 @@ local suites = {
 	{ "highlight", testHighlight },
 	{ "heal-prediction", testHealPrediction },
 	{ "portable", testPortable },
+	{ "cast-bar", testCastBar },
 	{ "global-leaks", testNoGlobalLeaks },
 }
 
