@@ -53,10 +53,28 @@ milliseconds") and its comment records that it is "only ever called for
 Widen it rather than duplicate it. `GetCastInfo(unit)` returns
 `name, icon, startTime, endTime, isChannel, notInterruptible` with the same
 pcall-per-API discipline, and `GetCastEndTime` becomes a thin caller of it so
-`Systems/BarSweep`'s existing use is untouched.
+`Systems/HealPrediction`'s existing use is untouched.
 
 Both APIs are read through `Core/Compat.lua` and nowhere else, per `SPEC.md`
 §5.5. No other file learns their names.
+
+**Measured 1 September 2026 — `/dufprobe cast`, five runs, both clients.**
+Full findings in `COMPAT_FINDINGS.md`; the two that constrain this function:
+
+> The two readers **diverge after position 6**. `UnitCastingInfo` has `castID`
+> at 7, so `notInterruptible` is 8 and `spellID` 9. `UnitChannelInfo` has **no
+> `castID` at all** — `notInterruptible` is 7 and `spellID` 8.
+
+Positions 1–6 are identical, which is why `GetCastEndTime` reading 1 and 5 is
+correct for both *by accident*. `GetCastInfo` reads the icon and would read past
+6, so it **must unpack per-function, not once**. A single positional unpacker
+returns a spell ID where an interrupt flag belongs, silently, and only for
+channels.
+
+Also: **`notInterruptible` reads `nil`, not `false`** on both clients and from
+both functions — return it as a tri-state rather than coercing to a boolean.
+And Classic Era's signatures are **identical** to Anniversary's, so there is no
+per-client branch to write, only a per-function one.
 
 ### 2. `Elements/CastBar.lua`
 
@@ -83,14 +101,45 @@ UNIT_SPELLCAST_FAILED
 ```
 
 Register each through `Compat.HasEvent` (`Core/Compat.lua:60`), which already
-skips anything invalid rather than erroring. All nine are expected present for
-`player`; the gate costs nothing and is what stops a client difference becoming
-a load error.
+skips anything invalid rather than erroring. All twelve — the nine above plus
+`SENT`, `INTERRUPTIBLE` and `NOT_INTERRUPTIBLE` — are **measured valid on both
+clients**; the gate costs nothing and is what stops a future client difference
+becoming a load error.
 
 **Channels drain rather than fill.** `UnitChannelInfo` reports the same
-start/end pair but the bar must run the other way, and `UNIT_SPELLCAST_DELAYED`
-(pushback) versus `_CHANNEL_UPDATE` (clipping) both mean "re-read the times",
-not "restart". One re-read path serves both.
+start/end pair but the bar must run the other way.
+
+### 2a. Four measured behaviors the obvious implementation gets wrong
+
+All from the 1 September runs, all reproduced on both clients. Each one is a
+bug this plan would otherwise have shipped.
+
+**`SUCCEEDED` fires at a channel's START, not its end.** Tranquility raised
+`CHANNEL_START` and `SUCCEEDED` at the *same timestamp*, with `CHANNEL_STOP`
+arriving when the channel actually ended. So `SUCCEEDED` may only clear the bar
+when no channel is running — clearing on it unconditionally blanks every channel
+the instant it begins. This is the sharpest edge in the data.
+
+**`INTERRUPTED` fires four times per interrupt, and does not order stably
+against `STOP`.** Era put `INTERRUPTED` first in all five of its interrupts;
+one Anniversary run put `STOP` first. The bar must be **idempotent about
+ending** — a repeat is not a new event, and neither event may assume it is the
+first to arrive.
+
+**Clipping a channel produces `CHANNEL_STOP`, not `CHANNEL_UPDATE`.**
+`_CHANNEL_UPDATE` is valid on both clients but **never fired in five runs**.
+Its remaining candidate trigger is channel pushback, unobserved. So it is still
+wired to the re-read path alongside `_DELAYED` — that is the right handling
+whatever raises it — but the plan must not claim it is the clipping signal,
+because clipping was measured and it is not.
+
+**A spell's cast time does not decide whether it is instant.** A Regrowth came
+through as an instant, presumably under Nature's Swiftness. Instants raise no
+`_START` at all, so the bar shows nothing for them and needs no suppression —
+but the detection is "no start event", never a spell-ID check.
+
+One more, small and easy to trip on: **`UnitChannelInfo` position 2 is the
+literal string `"Channeling"`**, not the spell name. Read position 1.
 
 ### 3. The driver — one hidden frame, shared, refcounted
 
@@ -148,13 +197,27 @@ without invalidating any of this.
 ### 5. Hide Blizzard's cast bar
 
 `Compat.blizzardFrames` (`Core/Compat.lua:681`) has no casting-bar entry.
-`COMPAT_FINDINGS.md:200` already records the finding: `CastingBarFrame` is
-**absent** and `PlayerCastingBarFrame` is the live name.
+Measured 1 September: `PlayerCastingBarFrame` is present on **both** clients as
+an **unprotected `StatusBar`**, and `CastingBarFrame` is absent on both.
 
 Add `playercast = { "PlayerCastingBarFrame", "CastingBarFrame" }` — both names,
 since `HideBlizzardFrame` resolves lazily and skips what does not exist. Keyed
 under its own name rather than appended to `player`, so Plan 31 can move it with
 the frame it belongs to.
+
+**Watch Era specifically.** The parents differ, and `HideBlizzardFrame`
+reparents to `hiddenHolder`:
+
+| Client | Parent |
+|---|---|
+| TBC Anniversary | `UIParent` |
+| Classic Era | `UIParentBottomManagedFrameContainer` |
+
+Era's is a managed container that lays out its children and may react to one
+being reparented out of it. The frame is unprotected so the hide is expected to
+work, but this is the one place in this plan to check the result on Era rather
+than assume it — and it is the reason the bar earns its own `blizzardFrames`
+key instead of being folded in with `PlayerFrame`.
 
 Ship without this and every user gets two cast bars.
 
@@ -194,17 +257,37 @@ twelve frames — before Plans 32 and 33 have established that they work.
 
 `Tests/wowstub.lua` needs `UnitCastingInfo` / `UnitChannelInfo` returning the
 full tuple with **millisecond** times, and a way to drive them from a test.
+Stub them at their **real measured widths and orders** — eleven returns each,
+with `castID` present in one and absent from the other. A stub that returns a
+tidied-up shared tuple cannot catch the divergence bug, which is the single most
+likely defect in this plan.
 
 Assertions:
 
 - `Compat.GetCastInfo` converts ms → s and returns nil cleanly for no cast;
   `GetCastEndTime` still returns what it returned before (regression guard on
-  BarSweep's existing caller).
+  `HealPrediction`'s existing caller).
+- **`GetCastInfo` returns the right `spellID` and `notInterruptible` for a
+  channel**, i.e. it unpacks per-function. Feed it the two real tuples from
+  `COMPAT_FINDINGS.md` and assert the channel does not report its spell ID as an
+  interrupt flag.
+- `notInterruptible` survives as `nil` rather than being coerced to `false`.
 - Channel path returns `isChannel = true` and the bar fills in the opposite
-  direction.
+  direction, and the label reads the **spell name**, not `"Channeling"`.
 - `_DELAYED` and `_CHANNEL_UPDATE` re-read the times rather than restarting the
   bar.
 - The bar hides on `_STOP` / `_INTERRUPTED` / `_FAILED`.
+
+The four measured behaviors from §2a, each asserted directly — these are
+regression tests for bugs the measurement caught before they were written:
+
+- **`SUCCEEDED` during a channel does not clear the bar**, and `SUCCEEDED` with
+  no channel running does.
+- **Four `INTERRUPTED` events plus a `STOP` leave the bar hidden and stable**,
+  asserted in *both* orders — `INTERRUPTED` first and `STOP` first — since the
+  observed order differs between clients.
+- A `SUCCEEDED` with no preceding `_START` shows no bar at all (instants).
+- A `CHANNEL_STOP` with no `CHANNEL_UPDATE` before it ends the channel cleanly.
 - **The driver is stopped when no bar is casting** — this is the §5.7 claim and
   it is the assertion that actually matters. Also: it stops when the only
   casting bar's frame is hidden.
