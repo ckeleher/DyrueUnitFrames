@@ -20,7 +20,7 @@ carrying real risk.
 
 ## Interpretation
 
-"Independently movable, but attached by default" is one behaviour, not two, and
+"Independently movable, but attached by default" is one behavior, not two, and
 the addon already has it. `SPEC.md` §FR-1.5's anchor graph means a frame stores
 `anchorTo` plus an offset and moves with its parent; the pet frame ships
 anchored to `player` (`Core/Defaults.lua:673`) and target-of-target to `target`
@@ -139,8 +139,8 @@ column. A cast-bar frame has one bar filling its whole rect.
 
 Branch on `self.def.kind`. A `castbar` frame calls the cast element's
 `SetGeometry` across the frame's full width and height and returns. Keep the
-existing path untouched rather than generalising it — one `if` at the top of the
-method is honest about there being exactly two shapes, and a generalised
+existing path untouched rather than generalizing it — one `if` at the top of the
+method is honest about there being exactly two shapes, and a generalized
 slot-stack abstraction serving two callers would be harder to read than both.
 
 ### 3. The options tree is unit-shaped
@@ -234,7 +234,7 @@ have never seen.
   player frame moves the cast bar with it.
 - Setting `anchor.to = "UIParent"` detaches it and it stays where it was put.
 - `Anchoring:WouldCycle` rejects `player` → `playercast` → `player`.
-- `DragMode` builds an overlay for it, labelled from the Registry, and dragging
+- `DragMode` builds an overlay for it, labeled from the Registry, and dragging
   writes to `profile.units.playercast.anchor` — through the unmodified DragMode.
 - `Options.BuildUnit` for a cast bar yields `layout`, `cast`, `reset` and no
   `health` / `auras` / `portrait` / `texts`.

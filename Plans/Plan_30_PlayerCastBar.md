@@ -132,7 +132,7 @@ Tempting to route the spell name and timer through `Elements/Text.lua` and
 - A `[cast:name]` tag is well-behaved — it changes on an event, which is exactly
   what the tag dependency map in §5.7 is built around.
 - A `[cast:time]` tag is not. It changes **every frame**, and the tag system's
-  central optimisation is caching the rendered string per element and skipping
+  central optimization is caching the rendered string per element and skipping
   `SetText` when unchanged. A tag that never matches its cache defeats that
   mechanism for every other tag on the frame.
 

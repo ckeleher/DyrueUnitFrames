@@ -169,7 +169,7 @@ with Blizzard's frames visible is a supported combination.
 
 Additive; `EnsureProfile` fills it; no migration step. Bump to 20 and note it.
 
-One judgement call to record rather than make silently: an **existing** user
+One judgment call to record rather than make silently: an **existing** user
 upgrading gets a new bar under their target frame without asking for it. That is
 the right default for a feature this useful, and it is consistent with how heal
 prediction shipped on (`Defaults.lua:277-284`, "a prediction is only useful in
@@ -182,7 +182,7 @@ note.
 ## Tests
 
 - `PLAYER_TARGET_CHANGED` mid-cast abandons the bar rather than finishing the old
-  animation — the one behaviour genuinely new in this plan.
+  animation — the one behavior genuinely new in this plan.
 - Targeting a caster mid-cast picks the bar up **already in progress**, from
   `UnitCastingInfo` rather than from a start event that already fired. This is
   the path the player bar never exercises and the most likely place for a bug.
