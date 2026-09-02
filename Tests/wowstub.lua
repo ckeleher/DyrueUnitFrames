@@ -841,6 +841,11 @@ _G.C_UnitAuras = {
 --
 -- The real libraries are not loaded: they would drag in the whole AceGUI widget
 -- tree, and the point of this harness is to exercise OUR code.
+--
+-- Two exceptions, loaded for real by run_tests.py's REAL_LIBS: LibDeflate and
+-- AceSerializer-3.0. Both are pure Lua that touch no WoW API, so the reasoning
+-- above does not apply to them, and Plan 29's round-trip assertions would prove
+-- nothing against a stubbed codec.
 --------------------------------------------------------------------------------
 
 local libs = {}
@@ -886,6 +891,29 @@ libs["AceDB-3.0"] = {
 		db.RegisterCallback = function() end
 		db.ResetProfile = function() end
 		function db:GetCurrentProfile() return self.keys.profile end
+
+		--- AceDB's own API, modeled because Plan 29's import calls both.
+		function db:GetProfiles()
+			local names = {}
+			for profileName in pairs(self.profiles) do names[#names + 1] = profileName end
+			table.sort(names)
+			return names
+		end
+
+		--- Switch, creating the profile if it does not exist. The real one also
+		-- fires the OnProfileChanged callback; that is deliberately not modeled,
+		-- because RegisterCallback above records nothing and the one caller that
+		-- depends on the callback's work (ns.Portable:Apply) invokes
+		-- addon:OnProfileChanged directly rather than relying on the firing.
+		function db:SetProfile(profileName)
+			if type(self.profiles[profileName]) ~= "table" then
+				self.profiles[profileName] = {}
+			end
+			self.keys.profile = profileName
+			self.profile = self.profiles[profileName]
+			return self.profile
+		end
+
 		--- Test helper: add an inactive profile, as another character would.
 		function db:AddProfile(profileName, contents)
 			self.profiles[profileName] = contents
@@ -903,7 +931,14 @@ libs["AceDB-3.0"] = {
 }
 
 libs["AceConfig-3.0"] = { RegisterOptionsTable = function(_, name, tbl) stub.optionsTable = tbl end }
-libs["AceConfigDialog-3.0"] = { AddToBlizOptions = function() return newWidget("Frame") end, Open = noop, OpenFrames = {} }
+libs["AceConfigDialog-3.0"] = {
+	AddToBlizOptions = function() return newWidget("Frame") end,
+	Open = noop,
+	-- Real: AceConfigDialog-3.0.lua:431. Recorded rather than dropped, so a test
+	-- can assert which tab a slash command lands on.
+	SelectGroup = function(_, appName, ...) stub.selectedGroup = { appName, ... } end,
+	OpenFrames = {},
+}
 libs["AceConfigRegistry-3.0"] = { NotifyChange = noop }
 libs["AceDBOptions-3.0"] = { GetOptionsTable = function() return { type = "group", name = "Profiles", args = {} } end }
 -- Modeled properly rather than stubbed to a constant, so that "unknown media

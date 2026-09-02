@@ -37,7 +37,7 @@ Five passes run, each building a fresh runtime:
 
 | Pass | Simulates | Verifies |
 |---|---|---|
-| 1 | TBC Anniversary — focus present, `C_UnitAuras` present, `UnitGetIncomingHeals` present | The full suite: ~1040 assertions |
+| 1 | TBC Anniversary — focus present, `C_UnitAuras` present, `UnitGetIncomingHeals` present | The full suite: ~1200 assertions |
 | 2 | Classic Era — no focus anywhere | SPEC §FR-8.5 / AC 14: no focus frame is created, no focus options are built, focus is not offered as an anchor target, and nothing else is disturbed |
 | 3 | A client with only the legacy `UnitAura` signature | Risk R3: `Compat.GetAura` produces identical results on either API |
 | 4 | A client that still has `UNIT_COMBO_POINTS` | The event is used and filtered against `player`, where it exists |
@@ -60,7 +60,8 @@ fallback · the `HasRealHealthValues` predicate · migration including refusal t
 downgrade and backup-on-failure · full frame construction and event dispatch ·
 the shapeshift mana predicate and its ticker starting and stopping · the derived
 poller idling at zero · party group layout and mid-combat roster changes · the
-circuit breaker and safe mode · options-tree well-formedness and value
+circuit breaker and safe mode · profile export/import strings, round-tripped
+through the real LibDeflate and AceSerializer · options-tree well-formedness and value
 round-tripping · drag-mode commit maths · aura filtering, sorting and own-aura
 differentiation · every slash command · global namespace leaks.
 
@@ -71,6 +72,21 @@ protected-function behavior and taint, CPU and memory budgets, and whether the
 API assumptions in `Documents/COMPAT_FINDINGS.md` are correct in the first
 place. A green run means the logic is consistent, not that the addon works —
 `Probe/DyrueUnitFrames_Probe` answers the second question.
+
+## Libraries
+
+Almost everything in `Libs/` is **stubbed**, not loaded — see the LibStub
+section of `wowstub.lua` for why. Two exceptions are loaded for real, listed as
+`REAL_LIBS` in `run_tests.py`:
+
+| Library | Why it is real |
+|---|---|
+| `LibDeflate` | Plan 29's round-trip assertions are worthless against a stub. A codec that agrees with itself proves nothing about whether an export string survives a paste |
+| `AceSerializer-3.0` | Same, and it is the half that has to round-trip floats exactly |
+
+Both are pure Lua that touch no WoW API, which is what makes them safe to load
+here when the rest of Ace3 is not. Neither writes a global when LibStub is
+present, so the global-leak suite still covers them.
 
 ## Static checks
 

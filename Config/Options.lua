@@ -609,6 +609,7 @@ function Options:Build()
 			party = partyGroupOptions(),
 			tools = toolsGroup(),
 			profiles = LibStub("AceDBOptions-3.0"):GetOptionsTable(ns.db),
+			portable = Options.BuildProfiles(),
 		},
 	}
 	self.table.args.profiles.order = 90

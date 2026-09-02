@@ -631,8 +631,20 @@ function Migrate:Fail(profile, db, name, message)
 	Defaults:EnsureProfile(profile)
 	profile.schemaVersion = Defaults.SCHEMA_VERSION
 
-	local full = (message or L["Migration failed."]) .. " " ..
-		L["Your previous settings have been kept in DyrueUnitFramesDB.backup and defaults have been loaded."]
+	-- The backup half of the message is true only when there IS a backup. It has
+	-- always been conditional in fact -- the `if db` above -- and Plan 29 made
+	-- the nil-db call an ordinary one rather than a theoretical one: an import
+	-- migrates the pasted profile with db = nil deliberately, because there is
+	-- nothing worth preserving in a string the user still has in front of them.
+	-- Telling them to go looking in DyrueUnitFramesDB.backup for it would be a
+	-- straightforward lie.
+	local full = message or L["Migration failed."]
+	if db then
+		full = full .. " " ..
+			L["Your previous settings have been kept in DyrueUnitFramesDB.backup and defaults have been loaded."]
+	else
+		full = full .. " " .. L["Defaults have been loaded."]
+	end
 	Errors:Print("|cffff5555" .. full .. "|r")
 	return false, full
 end
