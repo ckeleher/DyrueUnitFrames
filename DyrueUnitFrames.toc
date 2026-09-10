@@ -30,6 +30,7 @@ Elements\HealthBar.lua
 Elements\HealPrediction.lua
 Elements\PowerBar.lua
 Elements\ShapeshiftMana.lua
+Elements\CastBar.lua
 Elements\ComboPoints.lua
 Elements\Portrait.lua
 Elements\Text.lua

@@ -30,6 +30,13 @@ local type, pairs, ipairs, next = type, pairs, ipairs, next
 -- (Plan 6); 16 renames the portrait placements and moves the default to the
 -- new "column" (Plan 7); 17 turns the pet's indicator row on, because Plan 24
 -- put hunter pet happiness in it and the row has shipped off since 1.0.
+--
+-- Plan 30 (the cast bar) adds keys and rewrites nothing, so it does NOT bump
+-- this and deliberately owns no version. A bump is owned by whatever changes a
+-- STORED VALUE; added keys are filled by EnsureProfile and have nothing to
+-- migrate. Bumping anyway is not free and not harmless -- Migrate:Run treats a
+-- version with no registered step as a profile it cannot carry forward, so it
+-- backs the profile up and loads defaults. An unnecessary bump wipes layouts.
 Defaults.SCHEMA_VERSION = 17
 
 --------------------------------------------------------------------------------
@@ -507,6 +514,83 @@ local function unit(overrides)
 		-- slot in the bar stack and nothing inside the frame moves when it
 		-- appears. hideWhenEmpty is what keeps it invisible for the eight classes
 		-- that have no combo points at all, with no class table anywhere.
+		-- Plan 30. Ships OFF here and is switched on only for the player in
+		-- buildUnits. That split matters more than it looks: this template is
+		-- what every OTHER unit inherits and what EnsureProfile fills an unknown
+		-- unit key from, so `true` here would quietly light up a cast bar on all
+		-- twelve frames -- before Plans 32 and 33 have established that the
+		-- events even reach those units.
+		--
+		-- Like `combo` and unlike health/power/mana, it places itself rather than
+		-- taking a slot in the bar stack: it can sit outside the frame, and Plan
+		-- 31 gives it a frame of its own.
+		cast = {
+			enabled = false,           -- true on the player; see buildUnits
+			anchorTo = "frame",        -- frame | health | power | mana | portrait
+			point = "TOPLEFT",
+			relativePoint = "BOTTOMLEFT",
+			x = 0,
+			y = -4,
+			widthMode = "inherit",     -- inherit | custom
+			width = 200,
+			height = 18,
+			texture = DEFAULT_BAR_TEXTURE,
+			-- A warm gold that is not any of the power colors and not the combo
+			-- bar's magenta, so a glance at a busy frame tells you which bar is
+			-- which without reading it. Brightness is the same 0.8 the health bar
+			-- uses, for the same reason: a saturated color chosen to be legible
+			-- as small text is harsh as a block of flat fill.
+			color = color(0.9, 0.72, 0.22),
+			-- Channels get their own color rather than sharing the cast color.
+			-- A channel drains where a cast fills, and two bars moving in
+			-- opposite directions in the same color read as a bug.
+			channelColor = color(0.35, 0.6, 0.85),
+			-- Nothing in Classic or TBC makes a cast uninterruptible and the API
+			-- reports nil rather than false (measured). The color is here so the
+			-- element has something to resolve if that ever changes, and it is
+			-- deliberately drab -- it should not be the thing that catches the eye.
+			uninterruptibleColor = color(0.55, 0.55, 0.55),
+			failedColor = color(0.75, 0.2, 0.2),
+			-- How long an interrupted or failed cast holds in the failure color
+			-- before vanishing. Zero removes it instantly. Held by the driver,
+			-- which is already running, rather than by a timer -- a C_Timer here
+			-- would be a genuine fifth ticker.
+			holdTime = 0.5,
+			brightness = 0.8,
+			bgMultiplier = 0.25,
+			bgAlpha = 1,
+			icon = { enabled = true, side = "LEFT", size = 0, gap = 2 },
+			-- The spell name and the countdown are the element's own font
+			-- strings rather than text elements. The countdown changes every
+			-- frame and Systems/Tags is built on caching the rendered string and
+			-- skipping SetText when it has not changed, so a [cast:time] tag
+			-- would never match its cache and would defeat that mechanism for
+			-- every other tag on the frame. Splitting the name into the tag
+			-- system and the timer out of it would be two mechanisms for one row
+			-- of text, so both live here.
+			--
+			-- Written out rather than built from Defaults.Text(): that helper
+			-- carries format strings, color rules, gradients and the four width
+			-- modes, none of which apply to a fixed label on a bar. Inheriting
+			-- them would put a dozen inert keys in every saved profile and in
+			-- every exported string, and would invite someone to set one and
+			-- wonder why nothing happened.
+			spellText = {
+				enabled = true,
+				point = "LEFT", x = 4, y = 0,
+				font = DEFAULT_FONT, size = 11, outline = "OUTLINE", shadow = true,
+				color = color(1, 1, 1),
+			},
+			timeText = {
+				enabled = true,
+				point = "RIGHT", x = -4, y = 0,
+				font = DEFAULT_FONT, size = 11, outline = "OUTLINE", shadow = true,
+				color = color(1, 1, 1),
+				decimals = 1,
+				showTotal = false,     -- "1.4" vs "1.4 / 3.5"
+			},
+		},
+
 		combo = {
 			enabled = false,           -- true on target; see buildUnits
 			anchorTo = "frame",        -- frame | health | power | mana | portrait
@@ -640,6 +724,12 @@ local function buildUnits()
 		mana = { enabled = true },
 		indicators = { enabled = true },
 		highlight = { targetEnabled = false },
+		-- Plan 30. The only unit that ships with a cast bar, and the only one
+		-- whose cast events are verified end to end (COMPAT_FINDINGS, 1 Sep
+		-- 2026). Below the frame rather than inside it: the bar stack is already
+		-- health + power + the shapeshift mana bar on this frame, and a fourth
+		-- strip inside 48px would leave none of them readable.
+		cast = { enabled = true },
 	})
 
 	u.target = unit({

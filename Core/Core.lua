@@ -162,6 +162,13 @@ function ns:AnchorWidget(frame, key)
 		local el = elements.mana
 		if el and el.bar:IsShown() then return el.bar, true end
 		return frame.content, false
+	elseif key == "cast" then
+		-- Plan 30. Offered like any other bar, with the same rule: a text
+		-- element anchored to it hides with it. That matters more here than for
+		-- the other bars, because this one is hidden most of the time.
+		local el = elements.cast
+		if el and el.bar:IsShown() then return el.bar, true end
+		return frame.content, false
 	elseif key == "portrait" then
 		local el = elements.portrait
 		if el then
@@ -182,6 +189,7 @@ function ns:AnchorWidgetValues()
 		health = ns.L["Health bar"],
 		power = ns.L["Power bar"],
 		mana = ns.L["Shapeshift mana bar"],
+		cast = ns.L["Cast bar"],
 		portrait = ns.L["Portrait"],
 	}
 end
@@ -609,6 +617,15 @@ function ns:ProfileReport()
 
 	Errors:Print(string.format(L["Aura duration ticker: %s"],
 		ns.elements.auras.IsTicking() and L["running"] or L["stopped"]))
+
+	-- Plan 30's driver. Reported for exactly the reason the sweep driver below
+	-- is: the argument that it does not count against §5.7's closed list rests
+	-- on it being genuinely stopped whenever nothing is casting, and an
+	-- unfalsifiable claim is worth nothing. With no cast in progress this must
+	-- read "stopped, 0 attached" on any character at any time.
+	local castRunning, castAttached = ns.elements.cast.DriverStats()
+	Errors:Print(string.format(L["Cast bar driver: %s (%d attached)"],
+		castRunning and L["running"] or L["stopped"], castAttached))
 
 	-- The fourth ticker (Plans 2, 10 and 17), reported for the same reason as the
 	-- other three and with more reason than any of them: it is the one that
