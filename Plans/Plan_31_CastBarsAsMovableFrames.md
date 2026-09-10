@@ -35,6 +35,44 @@ anchor = { to = "player", point = "TOP", relativePoint = "BOTTOM", x = 0, y = -6
 and everything the request asks for — drag it anywhere, or leave it stuck to the
 frame — follows from machinery that already exists and is already tested.
 
+### Screen-centered is a destination, not just a detachment
+
+Asked for on 9 September 2026, after Plan 30 shipped:
+
+> can we make it so the center of the screen is an option for cast bars?
+
+It already falls out of the above, which is worth stating explicitly rather than
+leaving as an implication. `Anchoring:TargetValues` (`Systems/Anchoring.lua:189`)
+opens with `{ UIParent = L["Screen"] }`, so the moment a cast bar is a Registry
+entry it can anchor to the screen like any frame, and centered is
+**Screen + CENTER/CENTER + 0, 0**. No new option, no new code.
+
+The reason to record it is that it is the case most likely to be *left untested*.
+Every other frame in this addon ships anchored to something and is usually left
+there; a cast bar at screen center is a configuration people deliberately choose,
+and it is the one that exercises the parts of this plan that have nothing to do
+with anchoring:
+
+- it must keep its **own scale and strata** rather than inheriting a unit
+  frame's, which is a property of being a separate frame and is invisible while
+  it is anchored under the player;
+- it must **survive the player frame being disabled entirely**, which is exactly
+  what someone who wants only a centered cast bar would do;
+- `widthMode = "inherit"` has no sensible meaning against the screen, so a
+  cast-bar frame takes its width from its own `width` and the element fills it.
+
+All three are already consequences of §1 and §2 below. They are listed here so
+the Tests section can assert them rather than assume them.
+
+**Doing it before this plan was considered and rejected.** Plan 30's cast bar is
+an element parented to `frame.content`, so pointing it at `UIParent` gets the
+position and none of the three properties above — it would still shrink with the
+player frame's scale and still vanish with it. It would also put a `screen` entry
+in `ns:AnchorWidgetValues()`, which the combo bar and the indicator row share,
+and leave behind a setting this plan makes redundant. A redundant setting is not
+free here: carrying it across needs a migration step, and Plan 30 has already
+recorded what an unnecessary schema bump costs.
+
 **The cost is entirely in one word: *frames*.** Everything movable in this addon
 is a *unit* frame, and Plan 30's cast bar is an *element* living inside one. The
 work is making the addon able to own a movable frame that is not a unit.
@@ -234,6 +272,19 @@ have never seen.
   player frame moves the cast bar with it.
 - Setting `anchor.to = "UIParent"` detaches it and it stays where it was put.
 - `Anchoring:WouldCycle` rejects `player` → `playercast` → `player`.
+
+Screen-center, which is the configuration most likely to be left untested and
+the one that exercises everything separateness buys — see the Interpretation
+section:
+
+- Anchored to `UIParent` at CENTER/CENTER with zero offsets, the frame lands at
+  the screen's center and **not** at the player frame's.
+- Scaling the player frame does **not** scale the cast bar, and changing the
+  player frame's strata does not change the cast bar's. Both are inherited today
+  and must stop being.
+- **Disabling the player frame entirely leaves the cast bar working.** This is
+  the assertion that would have caught the rejected stopgap, and the one a user
+  who wants only a centered cast bar depends on.
 - `DragMode` builds an overlay for it, labeled from the Registry, and dragging
   writes to `profile.units.playercast.anchor` — through the unmodified DragMode.
 - `Options.BuildUnit` for a cast bar yields `layout`, `cast`, `reset` and no
