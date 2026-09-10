@@ -1,6 +1,7 @@
 # Plan 30 — Player Cast Bar
 
-**Status:** Not started.
+**Status:** Implemented on `Plan-30-player-cast-bar`, merged in PR #24 on
+9 September 2026. See Outcome at the end — two things in this plan were wrong.
 **Created:** 1 September 2026
 **Branch:** `Plan-30-player-cast-bar`
 **Depends on:** nothing. Branch from `main`.
@@ -321,3 +322,41 @@ present on both clients, no architectural change, and the one rule it bends
 
 The `PLAN.md` §14 claim that the cast bar "costs the same later as now" is
 correct **for this plan and only this plan**. Plan 31 is where the cost is.
+
+---
+
+## Outcome
+
+Merged 9 September 2026, PR #24. The estimate held — one sitting, no
+architectural change, `Units/Factory.lua` untouched. Two things this plan got
+wrong, recorded because both cost something to find:
+
+**1. "Bump `SCHEMA_VERSION` to 18 anyway, following the existing convention."**
+The convention is the opposite. A bump is owned by whatever rewrites a **stored
+value**; added keys are filled by `EnsureProfile` and have nothing to migrate.
+Two pinned assertions in the suite already said so (`portraitbg/no schema bump
+of its own`, `heal/added keys without a schema bump`) and this plan did not
+check them.
+
+It is also not the harmless belt-and-braces the plan assumed. `Migrate:Run`
+treats a version with no registered step as a profile it cannot carry forward:
+it backs the profile up and loads defaults. **An unnecessary bump wipes
+layouts.** Shipped at 17, owning no version.
+
+**2. `_CHANNEL_UPDATE` is not the clipping signal.** Already corrected in §2a
+before implementation, from the probe run. Recorded here too because the plan
+asserted it in its first draft with no measurement behind it, which is exactly
+what `COMPAT_FINDINGS.md` exists to stop.
+
+**What the sequencing bought.** Writing `/dufprobe cast` before the element —
+and writing the ordering test from the measurement rather than from the code —
+caught a real bug that would have shipped: `STOP` arriving before `INTERRUPTED`
+cleared the bar, and `fail()`'s obvious `if not el.casting then return end`
+guard then swallowed the interrupt, so an interrupted cast vanished instead of
+flashing red. On one client and not the other, which is the kind of bug that
+survives a long time. The suite caught it on its first run.
+
+The probe also answered three of its four questions from data already sitting in
+SavedVariables from Plan 19, unread for three weeks. That the `heals` module
+records raw returns rather than unpacking them into assumed names is why. Keep
+doing that.
